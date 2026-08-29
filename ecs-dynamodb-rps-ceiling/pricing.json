@@ -1,0 +1,24 @@
+{
+  "_provenance": {
+    "source": "AWS Pricing API",
+    "command": "aws pricing get-products --region us-east-1 --service-code AmazonDynamoDB --filters 'Type=TERM_MATCH,Field=location,Value=EU (Frankfurt)' 'Type=TERM_MATCH,Field=group,Value=DDB-ReadUnits|DDB-WriteUnits'",
+    "region": "eu-central-1",
+    "location": "EU (Frankfurt)",
+    "retrieved": "2026-08-29",
+    "note": "Never edit these by hand. Re-run the command above to refresh."
+  },
+  "provisioned": {
+    "rcu_hour_usd": 0.0001586,
+    "wcu_hour_usd": 0.0007930,
+    "usagetype_read": "EUC1-ReadCapacityUnit-Hrs",
+    "usagetype_write": "EUC1-WriteCapacityUnit-Hrs",
+    "free_tier_units": 25,
+    "free_tier_unit_hours_per_month": 18600
+  },
+  "on_demand": {
+    "read_request_unit_usd": 0.0000001525,
+    "write_request_unit_usd": 0.0000007625,
+    "usagetype_read": "EUC1-ReadRequestUnits",
+    "usagetype_write": "EUC1-WriteRequestUnits"
+  }
+}
