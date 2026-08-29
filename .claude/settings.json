@@ -1,5 +1,52 @@
 {
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(terraform fmt*)",
+      "Bash(terraform validate*)",
+      "Bash(terraform plan*)",
+      "Bash(terraform output*)",
+      "Bash(terraform show*)",
+      "Bash(terraform init*)",
+      "Bash(terraform workspace list*)",
+      "Bash(terraform state list*)",
+      "Bash(aws sts get-caller-identity*)",
+      "Bash(aws * describe-*)",
+      "Bash(aws * list-*)",
+      "Bash(aws resourcegroupstaggingapi get-resources*)",
+      "Bash(aws logs tail*)",
+      "Bash(k6 run*)",
+      "Bash(k6 version*)",
+      "Bash(k6 inspect*)",
+      "Bash(npm ci*)",
+      "Bash(npm test*)",
+      "Bash(npm run*)",
+      "Bash(jq *)",
+      "Bash(aws cloudwatch get-metric-statistics*)",
+      "Bash(aws cloudwatch get-metric-data*)",
+      "Bash(aws logs get-log-events*)"
+    ],
+    "deny": [
+      "Bash(aws secretsmanager get-secret-value*)",
+      "Bash(aws ssm get-parameter*)",
+      "Bash(aws kms decrypt*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-terraform.sh",
+            "timeout": 10,
+            "statusMessage": "terraform guard"
+          }
+        ]
+      }
+    ]
   }
 }

@@ -1,1 +1,25 @@
 .idea/
+
+# Secrets — global and per-project
+.env
+.env.*
+!.env.example
+*.tfvars.secret
+*.auto.tfvars
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+crash.log
+
+# Node
+node_modules/
+
+# Load-test artifacts
+summary.json
+*.k6-summary.json
+
+# direnv
+.direnv/

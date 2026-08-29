@@ -25,11 +25,29 @@ is not finished. Keep the measured results in the project's own README.
 
 Planned projects:
 
-- **ECS project** — Node.js service on AWS ECS + a database. Measure sustained RPS, add autoscaling
-  1→4 tasks, compare SLO attainment under peak vs. constant load.
-- **Lambda project** — Lambda + a database. Same measure/break/improve/re-measure loop.
+- **`ecs-document-db`** — Node.js service on AWS ECS + DocumentDB. Measure sustained RPS, add
+  autoscaling 1→4 tasks, compare SLO attainment under peak vs. constant load.
+- **`lambda-concurrency-limit`** — Lambda + a database, exploring concurrency limits. Same
+  measure/break/improve/re-measure loop.
 
 ## Layout
+
+### Naming
+
+A project directory is named for **the scenario it covers**, never for the platform alone:
+`<platform>-<scenario>`, kebab-case.
+
+There will be several scenarios on the same platform, so `ecs/` and `lambda/` are not names — they are
+categories, and the second one to arrive would have nowhere to go. Lead with the platform so related
+scenarios sort together, then name the thing under test — the datastore, the constraint, the knob:
+
+```
+ecs-document-db            ecs-rds-postgres           ecs-autoscaling-cold-start
+lambda-concurrency-limit   lambda-dynamodb            lambda-provisioned-concurrency
+```
+
+This name is also the `Project` tag value on every AWS resource and the commit scope, so it must be
+stable — renaming later orphans tagged resources from the sweep that is supposed to find them.
 
 ```
 <project>/            one directory per scenario, fully independent
@@ -53,6 +71,9 @@ creatable and destroyable in isolation.
   billable behind. Watch for the usual survivors: RDS/DocumentDB final snapshots, CloudWatch log
   groups, NAT gateways, EIPs, ECR images. Prefer `skip_final_snapshot`, explicit log-group resources
   with retention, and `force_destroy` where the data is disposable — this is a test lab, not prod.
+- **Every resource carries a `Project = <project-dir>` tag.** The teardown sweep finds orphans with a
+  single `resourcegroupstaggingapi` query; an untagged resource is invisible to it and bills forever.
+  Set it via `default_tags` on the AWS provider so it cannot be forgotten per-resource.
 - **State lives in Terraform Cloud**, one workspace per project. Never commit `.tfstate` or
   `.terraform/`.
 - **Secrets are global and never in a project folder.** AWS, Terraform Cloud, and Grafana Cloud
@@ -124,9 +145,10 @@ Subject: imperative mood, lowercase, no trailing period, ≤72 characters.
 | `chore` | tooling and housekeeping nothing observes |
 | `revert` | reverts a previous commit |
 
-**Scope** is the project directory (`ecs`, `lambda`) or the layer inside it (`terraform`, `k6`,
-`grafana`, `src`); combine them when both matter (`ecs-terraform`, `lambda-k6`). Use `repo` or `docs`
-for cross-cutting work. A commit that needs two unrelated scopes should usually be two commits.
+**Scope** is the project directory name (`ecs-document-db`, `lambda-concurrency-limit`). When the layer
+matters, append it with a slash: `ecs-document-db/terraform`, `lambda-concurrency-limit/k6`. Use `repo`
+or `docs` for cross-cutting work. A commit that needs two unrelated scopes should usually be two
+commits.
 
 **`perf` vs `feat` matters here.** The repo's whole point is the measure → improve → re-measure loop,
 so the commit that raises task count or adds a connection pool is `perf`, and its body should carry
@@ -139,7 +161,7 @@ configuration depends on. Mark both ways — `!` after the scope and a `BREAKING
 the migration:
 
 ```
-fix(lambda-terraform)!: replace rds instance to enable iam auth
+fix(lambda-concurrency-limit/terraform)!: replace rds instance to enable iam auth
 
 BREAKING CHANGE: forces replacement of the db instance. Destroy the
 environment before applying; existing data is not migrated.
@@ -158,6 +180,33 @@ By deliberate choice there is **no commit-msg hook and no CI lint**, so nothing 
 malformed message. The format holds only because the author follows this section. Before committing,
 re-read the subject line against the type table above; a wrong type is the common failure, not wrong
 syntax.
+
+## Project skills
+
+Three skills in `.claude/skills/` automate the loop. Prefer them over ad-hoc commands — each encodes
+gotchas that cost real money or produce wrong numbers:
+
+- **`/env up|down|status <project>`** — Terraform lifecycle with an approval gate before apply/destroy
+  and a billable-resource sweep after teardown. `terraform destroy` succeeding is not evidence the
+  account is clean.
+- **`/loadtest <project> <profile> [--compare]`** — runs k6, parses the summary, appends a result row
+  with the infra change that distinguishes the run. Encodes two verified k6 quirks (below).
+- **`/slo <project> [--check]`** — one `slo.yaml` generates both the k6 thresholds and the Grafana
+  alert rules, so they cannot drift apart.
+
+### k6 facts worth not re-learning
+
+Verified against the installed k6 v1.4.0:
+
+- In `--summary-export` JSON, a threshold's boolean is **"was it breached"**, not "did it pass":
+  `true` = **crossed = FAILED**, `false` = satisfied. Reading it the intuitive way inverts every verdict.
+- `http_req_failed.passes` counts requests that *were* failures. Use `.value` (0..1) for error rate.
+- k6 exits **99** when a threshold is breached, **0** when all pass. Capture the code off the k6
+  command itself — behind a pipe you get the pipe's status instead.
+
+`terraform apply` and `terraform destroy` are deliberately **absent** from the permission allowlist in
+`.claude/settings.json`, so they still prompt. That prompt is the one mechanical guard against
+unattended AWS spend — do not add them to the allowlist.
 
 ## Working commands
 

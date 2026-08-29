@@ -17,18 +17,19 @@
 #        chore    tooling and housekeeping; nothing users or infra observe
 #        revert   reverts a previous commit
 #
-# scope: the project directory (ecs, lambda) or the layer within it
-#        (terraform, k6, grafana, src), or repo/docs for cross-cutting work.
-#        Combine as ecs-terraform, lambda-k6 when both are meaningful.
+# scope: the project directory, named for its scenario -- <platform>-<scenario>,
+#        e.g. ecs-document-db, lambda-concurrency-limit. Never bare "ecs"/"lambda":
+#        there will be several scenarios per platform. Append the layer with a
+#        slash when it matters: ecs-document-db/terraform. Or repo/docs.
 #
 # BREAKING CHANGE = requires destroy/recreate rather than an in-place update,
 # or changes an interface another project's config depends on. Mark it with
 # `!` after the scope AND a `BREAKING CHANGE:` footer explaining the migration.
 #
 # Examples:
-#   feat(ecs-terraform): provision fargate service behind an alb
-#   perf(lambda): raise reserved concurrency to 200 to clear the p99 slo
-#   test(ecs-k6): add constant-load profile at 400 rps
-#   docs(ecs): record before/after slo attainment for the autoscaling change
-#   fix(lambda-terraform)!: replace rds instance to enable iam auth
+#   feat(ecs-document-db/terraform): provision fargate service behind an alb
+#   perf(lambda-concurrency-limit): raise reserved concurrency to 200 for the p99 slo
+#   test(ecs-document-db/k6): add constant-load profile at 400 rps
+#   docs(ecs-document-db): record before/after slo attainment for autoscaling
+#   fix(lambda-concurrency-limit/terraform)!: replace rds instance for iam auth
 # ---------------------------------------------------------------------------
