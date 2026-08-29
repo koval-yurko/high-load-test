@@ -1,0 +1,34 @@
+# <type>(<scope>): <subject>          <- imperative, lowercase, no trailing period, <=72 chars
+#
+# <body: why, not what. wrap at 72. blank line above.>
+#
+# <footers: BREAKING CHANGE: ... / Refs: ...>
+
+# ---------------------------------------------------------------------------
+# Conventional Commits 1.0.0 — see CLAUDE.md "Commit messages"
+#
+# type:  feat     new capability (a service, resource, dashboard, load profile)
+#        fix      corrects broken behavior or a misconfigured resource
+#        perf     change whose point is an SLO/latency/throughput improvement
+#        refactor restructure with no behavior or infrastructure change
+#        test     k6 profiles, assertions, thresholds
+#        docs     README, CLAUDE.md, specs, plans, recorded measurements
+#        build    dependencies, Dockerfile, package.json
+#        chore    tooling and housekeeping; nothing users or infra observe
+#        revert   reverts a previous commit
+#
+# scope: the project directory (ecs, lambda) or the layer within it
+#        (terraform, k6, grafana, src), or repo/docs for cross-cutting work.
+#        Combine as ecs-terraform, lambda-k6 when both are meaningful.
+#
+# BREAKING CHANGE = requires destroy/recreate rather than an in-place update,
+# or changes an interface another project's config depends on. Mark it with
+# `!` after the scope AND a `BREAKING CHANGE:` footer explaining the migration.
+#
+# Examples:
+#   feat(ecs-terraform): provision fargate service behind an alb
+#   perf(lambda): raise reserved concurrency to 200 to clear the p99 slo
+#   test(ecs-k6): add constant-load profile at 400 rps
+#   docs(ecs): record before/after slo attainment for the autoscaling change
+#   fix(lambda-terraform)!: replace rds instance to enable iam auth
+# ---------------------------------------------------------------------------
