@@ -1,0 +1,103 @@
+// test/integration.test.js
+import { test, describe, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { DynamoDBClient, CreateTableCommand } from '@aws-sdk/client-dynamodb';
+import { createRepo } from '../src/dynamo.js';
+import { createHandlers } from '../src/handlers.js';
+import { createServer } from '../src/server.js';
+import { seedItems, chunk } from '../scripts/seed.js';
+import { DynamoDBDocumentClient, BatchWriteCommand } from '@aws-sdk/lib-dynamodb';
+
+// Requires a real DynamoDB Local endpoint. Skipped by default so a bare `npm test` is green and
+// honestly reports these as skipped rather than either failing (no DynamoDB Local available) or
+// silently passing. `npm run test:integration` sets DYNAMO_ENDPOINT and runs them for real.
+describe('integration', { skip: !process.env.DYNAMO_ENDPOINT && 'set DYNAMO_ENDPOINT to run against DynamoDB Local' }, () => {
+  const config = {
+    region: 'eu-central-1', tableName: 'items-test', feedPageSize: 20,
+    pbkdf2Iterations: 50, itemTtlSeconds: 3600, dynamoEndpoint: process.env.DYNAMO_ENDPOINT,
+  };
+  process.env.AWS_ACCESS_KEY_ID ||= 'local';
+  process.env.AWS_SECRET_ACCESS_KEY ||= 'local';
+
+  let server, base, repo;
+  const url = (p) => `http://localhost:${server.address().port}${p}`;
+
+  before(async () => {
+    base = new DynamoDBClient({ region: config.region, endpoint: config.dynamoEndpoint });
+    await base.send(new CreateTableCommand({
+      TableName: config.tableName,
+      BillingMode: 'PAY_PER_REQUEST',
+      AttributeDefinitions: [{ AttributeName: 'pk', AttributeType: 'S' }, { AttributeName: 'sk', AttributeType: 'S' }],
+      KeySchema: [{ AttributeName: 'pk', KeyType: 'HASH' }, { AttributeName: 'sk', KeyType: 'RANGE' }],
+    })).catch((e) => { if (e.name !== 'ResourceInUseException') throw e; });
+
+    const doc = DynamoDBDocumentClient.from(base);
+    for (const g of chunk(seedItems(), 25))
+      await doc.send(new BatchWriteCommand({ RequestItems: { [config.tableName]: g.map((Item) => ({ PutRequest: { Item } })) } }));
+
+    repo = createRepo(config);
+    server = createServer({ handlers: createHandlers({ repo, config }) });
+    await new Promise((r) => server.listen(0, r));
+  });
+
+  after(async () => { server.close(); repo.destroy(); base.destroy(); });
+
+  test('healthz responds without a Server-Timing header', async () => {
+    const res = await fetch(url('/healthz'));
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true });
+    assert.equal(res.headers.get('server-timing'), null);
+  });
+
+  test('getItem returns a seeded item with db timing', async () => {
+    const res = await fetch(url('/items/feed-07/item-03'));
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).sk, 'item-03');
+    assert.match(res.headers.get('server-timing'), /db;dur=[\d.]+/);
+  });
+
+  test('missing item 404s', async () => {
+    assert.equal((await fetch(url('/items/feed-07/item-99'))).status, 404);
+  });
+
+  test('feed returns the full page with db and cpu timing', async () => {
+    const res = await fetch(url('/feeds/feed-07'));
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).count, 20);
+    const t = res.headers.get('server-timing');
+    assert.match(t, /db;dur=/); assert.match(t, /cpu;dur=/);
+  });
+
+  test('putItem creates a record under the w# prefix', async () => {
+    const res = await fetch(url('/items'), { method: 'POST', body: '{}' });
+    assert.equal(res.status, 201);
+    assert.match((await res.json()).pk, /^w#/);
+  });
+
+  test('report queries, hashes and writes', async () => {
+    const res = await fetch(url('/reports'), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pk: 'feed-12' }),
+    });
+    assert.equal(res.status, 200);
+    const b = await res.json();
+    assert.equal(b.count, 20);
+    assert.match(b.digest, /^[0-9a-f]{16}$/);
+  });
+
+  test('a write never lands in a seeded partition', async () => {
+    await fetch(url('/items'), { method: 'POST', body: '{}' });
+    assert.equal((await fetch(url('/feeds/feed-12'))).status, 200);
+    assert.equal((await (await fetch(url('/feeds/feed-12'))).json()).count, 20, 'feed page size must be unchanged by writes');
+  });
+
+  test('stats reports event-loop lag in milliseconds', async () => {
+    const s = await (await fetch(url('/stats'))).json();
+    assert.ok(Number.isFinite(s.eventLoopDelayMs.p99));
+    assert.ok(s.eventLoopDelayMs.max < 5000);
+  });
+
+  test('unknown route 404s', async () => {
+    assert.equal((await fetch(url('/nope'))).status, 404);
+  });
+});

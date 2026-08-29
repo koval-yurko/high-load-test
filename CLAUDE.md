@@ -93,9 +93,25 @@ Its skills are the process for all non-trivial work here. The pipeline:
 - **Never start with Terraform.** Each new project or subsystem is the *architectural* path in
   `brainstorming`: questions, approaches, a sectioned design, then a written spec — and an explicit
   approval gate before any code or infra is written.
-- **One spec and one plan per project directory.** A spec covering both the ECS and Lambda projects
-  must be split; each has to produce working, measurable infrastructure on its own.
+- **A spec covers exactly one project directory — but a project may accrue several specs and
+  plans over time.** A spec covering both the ECS and Lambda projects must be split; each has to
+  produce working, measurable infrastructure on its own. What must never happen is one document
+  spanning two projects. A second spec for the *same* project is normal and expected: a new
+  subsystem, or a design decision that turns out to be wrong once real numbers arrive.
+- **When a later document changes an earlier decision, both must say so.** The new spec names what
+  it amends and why the original reasoning failed; the older spec gets a forward-pointer **at the
+  decision itself**, not only in a header. This is the single rule that makes multiple specs safe —
+  without it a reader lands on the older document, finds a decision stated with full confidence,
+  and acts on guidance that was reversed months ago. Superseding in silence is worse than never
+  having written the second spec.
+- **Every spec and plan carries a `Status:` line** near the top, one of: `draft`, `approved`,
+  `in progress`, `partially executed (on hold)`, `complete`, `superseded by <doc>`. A plan sitting
+  at `in progress` that nobody is working is a lie the next reader will act on. A partially
+  executed plan must also say **which tasks are done** and **what is blocking the rest** — "on
+  hold" without a reason is an invitation to redo finished work.
 - Specs live in `docs/superpowers/specs/`, plans in `docs/superpowers/plans/YYYY-MM-DD-<name>.md`.
+  The date prefix is what lets several coexist and orders them; never overwrite an executed plan
+  in place, because the ledger and the commit history reference its task numbers.
 - `verification-before-completion` applies literally to SLO claims: **an SLO or RPS number may not be
   reported without the k6 output or Grafana query that produced it, from a run in that same session.**
   No remembered numbers, no extrapolation.

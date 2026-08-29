@@ -1,0 +1,35 @@
+// test/config.test.js
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { loadConfig } from '../src/config.js';
+
+test('applies defaults when env is empty', () => {
+  const c = loadConfig({});
+  assert.equal(c.port, 8080);
+  assert.equal(c.tableName, 'items');
+  assert.equal(c.pbkdf2Iterations, 0);
+  assert.equal(c.feedPageSize, 20);
+  assert.equal(c.itemTtlSeconds, 3600);
+  assert.equal(c.dynamoEndpoint, undefined);
+  assert.equal(c.region, 'eu-central-1');
+});
+
+test('reads values from env', () => {
+  const c = loadConfig({ PORT: '3000', TABLE_NAME: 't', PBKDF2_ITERATIONS: '1200' });
+  assert.equal(c.port, 3000);
+  assert.equal(c.tableName, 't');
+  assert.equal(c.pbkdf2Iterations, 1200);
+});
+
+test('AWS_REGION overrides the default region', () => {
+  const c = loadConfig({ AWS_REGION: 'us-east-1' });
+  assert.equal(c.region, 'us-east-1');
+});
+
+test('rejects a non-numeric numeric field', () => {
+  assert.throws(() => loadConfig({ PORT: 'abc' }), /PORT/);
+});
+
+test('rejects a negative iteration count', () => {
+  assert.throws(() => loadConfig({ PBKDF2_ITERATIONS: '-1' }), /PBKDF2_ITERATIONS/);
+});

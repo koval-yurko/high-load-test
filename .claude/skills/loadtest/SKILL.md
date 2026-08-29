@@ -71,13 +71,52 @@ one you are quoting.
 Append to `<project>/results.md` — create it with a header row if absent:
 
 ```markdown
-| date | profile | infra change | RPS | p95 ms | err % | thresholds | notes |
-|---|---|---|---|---|---|---|---|
-| 2026-08-29 | constant-400 | 2→4 tasks, autoscaling on | 412 | 180 | 0.02 | all ok | plateau 430 |
+| date | profile | infra change | RPS | bound resource | evidence | SLO attainment | budget burn x | p95 fast/std/heavy | db ms | cpu ms | EL lag p99 | throttles | RCU/WCU | $/hr |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 ```
 
 `infra change` is the most important column — it is what makes the row mean something. A row whose
 infra change is blank is not a result, it is a number.
+
+`bound resource` and `evidence` are not optional. A ceiling with no attributed cause is a number,
+not a result — DynamoDB `ThrottledRequests` climbing means DB-bound; event-loop lag climbing with
+flat `db_ms` means service-bound.
+
+`budget burn x` is the burn-rate multiple: observed error rate / budgeted error rate. A k6 run is
+minutes and a Grafana SLO window is 30 days, so a raw "0.03% of budget" figure does not travel
+between runs. The multiple does.
+
+### Cloud runs
+
+This repo's projects run from Grafana Cloud so the generator is not the bottleneck and RTT is not
+charged against the latency budget. The command is `k6 cloud run`, not `k6 run`.
+
+Verified against the installed k6 v1.4.0:
+
+- **`--summary-export` IS supported on `k6 cloud run`.** `k6 cloud run --help` lists
+  `--summary-export string   output the end-of-test summary report to JSON file`, and — unlike
+  `--linger`, `--no-usage-report` and `--no-archive-upload` — it carries no "only in local-execution
+  mode" caveat. So this is the favourable case: everything in "Reading the results" above (the
+  `jq` parsing, the inverted-threshold-boolean gotcha, the `passes`/`.value` gotcha) applies to
+  `k6 cloud run --summary-export=...` unchanged.
+- **`k6 cloud load-zone list` does not exist in this k6 version.** `k6 cloud --help` lists exactly
+  three subcommands: `login`, `run`, `upload`. There is no CLI command to enumerate or confirm load
+  zones. Do not chase this command — it cannot work on the installed k6. If you need to *see* the
+  zone catalog, that lives in the Grafana Cloud UI/API, not the k6 binary.
+- **Zone validity is confirmed at test submission, not by a separate lookup.** Grafana Cloud
+  validates `options.cloud.distribution.<name>.loadZone` (e.g. `amazon:de:frankfurt`) when the test
+  is submitted, before any load is generated and before VU-hours are spent. An invalid zone fails
+  fast and free on the first `k6 cloud run` — so the practical verification step is: submit the run
+  and watch for an immediate rejection, not a pre-flight `load-zone list` call.
+
+Capture the exit code on the k6 line itself — behind a pipe you get the pipe's status. `99` means a
+threshold was breached; `0` means all passed.
+
+```bash
+k6 cloud run --summary-export=/tmp/k6-<project>-<profile>.json \
+  -e BASE_URL=<url> <project>/k6/<profile>.js
+echo "exit: $?"
+```
 
 ## `--compare`
 

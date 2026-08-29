@@ -1,0 +1,8 @@
+node_modules
+test
+terraform
+k6
+grafana
+*.md
+*.html
+docker-compose.test.yml

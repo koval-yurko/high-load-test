@@ -1,0 +1,21 @@
+{
+  "name": "ecs-dynamodb-rps-ceiling",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test",
+    "test:integration": "node --test test/integration.test.js",
+    "seed": "node scripts/seed.js",
+    "calibrate": "node scripts/calibrate.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.716.0",
+    "@aws-sdk/lib-dynamodb": "^3.716.0"
+  },
+  "devDependencies": {
+    "aws-sdk-client-mock": "^4.1.0"
+  }
+}

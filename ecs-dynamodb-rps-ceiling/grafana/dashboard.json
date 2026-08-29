@@ -1,0 +1,1046 @@
+{
+  "title": "ecs-dynamodb-rps-ceiling \u2014 attribution",
+  "description": "Live attribution dashboard: which resource is the RPS ceiling during a k6 run \u2014 DynamoDB, the ECS task, or the edge. Read top-to-bottom while a run is in flight.",
+  "tags": [
+    "ecs-dynamodb-rps-ceiling"
+  ],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "table_name",
+        "type": "textbox",
+        "label": "DynamoDB table",
+        "description": "Table name used in every DynamoDB CloudWatch dimension on this dashboard.",
+        "query": "ecs-dynamodb-rps-ceiling",
+        "current": {
+          "text": "ecs-dynamodb-rps-ceiling",
+          "value": "ecs-dynamodb-rps-ceiling"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "1. Attribution \u2014 which resource is the ceiling?",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "DynamoDB ThrottledRequests (headline)",
+      "description": "The whole decision in one line: zero = DynamoDB is not the ceiling, non-zero = it is. This is the total across read+write throttling; if it climbs while the service is still hitting its SLI, the ceiling is the database, not the app or the ALB.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/DynamoDB",
+          "metricName": "ThrottledRequests",
+          "statistic": "Sum",
+          "dimensions": {
+            "TableName": "$table_name"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Read vs write throttling",
+      "description": "Splits the headline ThrottledRequests by side. ReadThrottleEvents currently reads zero because reads have not throttled yet in any run so far \u2014 keep the panel, it will populate once reads saturate. WriteThrottleEvents rising alone points at write capacity/WCU specifically, not the table as a whole.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/DynamoDB",
+          "metricName": "ReadThrottleEvents",
+          "statistic": "Sum",
+          "dimensions": {
+            "TableName": "$table_name"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/DynamoDB",
+          "metricName": "WriteThrottleEvents",
+          "statistic": "Sum",
+          "dimensions": {
+            "TableName": "$table_name"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "row",
+      "title": "2. DynamoDB server-side latency (the uncontaminated clock)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "panels": []
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "SuccessfulRequestLatency by operation (Average & Maximum)",
+      "description": "The DynamoDB-reported clock, split by GetItem/PutItem/Query. This is what db_ms is compared against \u2014 db_ms is wall-clock around the SDK await and absorbs event-loop queueing (measured 12.1x inflation with the database unchanged), so a gap between this panel and db_ms is the queueing signal, not extra DB time. Average and Maximum both shown: Maximum surfaces tail spikes Average hides.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/DynamoDB",
+          "metricName": "SuccessfulRequestLatency",
+          "statistic": "Average",
+          "dimensions": {
+            "TableName": "$table_name",
+            "Operation": [
+              "GetItem",
+              "PutItem",
+              "Query"
+            ]
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/DynamoDB",
+          "metricName": "SuccessfulRequestLatency",
+          "statistic": "Maximum",
+          "dimensions": {
+            "TableName": "$table_name",
+            "Operation": [
+              "GetItem",
+              "PutItem",
+              "Query"
+            ]
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "3. Capacity headroom (saturation as convergence, not a number)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "panels": []
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Read capacity: consumed vs provisioned",
+      "description": "Consumed*CapacityUnits is a Sum-per-period metric (units used in the preceding 60s); Provisioned*CapacityUnits is already expressed as units/second. To compare them as rates, divide the consumed line by 60 (the period below) \u2014 this panel shows the raw values, not pre-divided. Consumed converging on or crossing provisioned is read capacity becoming the ceiling, and should line up with ReadThrottleEvents in row 1.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/DynamoDB",
+          "metricName": "ConsumedReadCapacityUnits",
+          "statistic": "Sum",
+          "dimensions": {
+            "TableName": "$table_name"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/DynamoDB",
+          "metricName": "ProvisionedReadCapacityUnits",
+          "statistic": "Average",
+          "dimensions": {
+            "TableName": "$table_name"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Write capacity: consumed vs provisioned",
+      "description": "Same units caveat as the read panel: ConsumedWriteCapacityUnits is Sum-per-60s, ProvisionedWriteCapacityUnits is already units/second \u2014 divide consumed by 60 to compare rates. Convergence here should line up with WriteThrottleEvents in row 1.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/DynamoDB",
+          "metricName": "ConsumedWriteCapacityUnits",
+          "statistic": "Sum",
+          "dimensions": {
+            "TableName": "$table_name"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/DynamoDB",
+          "metricName": "ProvisionedWriteCapacityUnits",
+          "statistic": "Average",
+          "dimensions": {
+            "TableName": "$table_name"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "4. Service (ECS) \u2014 rule out the app/task before blaming the DB",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "ECS CPUUtilization (Average & Maximum)",
+      "description": "If CPU is pinned near 100% while ThrottledRequests is flat at zero, the ceiling is the 0.25 vCPU task, not DynamoDB \u2014 the pbkdf2 CPU knob or event-loop queueing is the bottleneck, not capacity.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 29
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ECS",
+          "metricName": "CPUUtilization",
+          "statistic": "Average",
+          "dimensions": {
+            "ClusterName": "ecs-dynamodb-rps-ceiling",
+            "ServiceName": "ecs-dynamodb-rps-ceiling"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ECS",
+          "metricName": "CPUUtilization",
+          "statistic": "Maximum",
+          "dimensions": {
+            "ClusterName": "ecs-dynamodb-rps-ceiling",
+            "ServiceName": "ecs-dynamodb-rps-ceiling"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "ECS MemoryUtilization (Average & Maximum)",
+      "description": "Rules out memory pressure as a confound before trusting a CPU- or DB-bound verdict.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 29
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ECS",
+          "metricName": "MemoryUtilization",
+          "statistic": "Average",
+          "dimensions": {
+            "ClusterName": "ecs-dynamodb-rps-ceiling",
+            "ServiceName": "ecs-dynamodb-rps-ceiling"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ECS",
+          "metricName": "MemoryUtilization",
+          "statistic": "Maximum",
+          "dimensions": {
+            "ClusterName": "ecs-dynamodb-rps-ceiling",
+            "ServiceName": "ecs-dynamodb-rps-ceiling"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "ECS LiveTaskCount",
+      "description": "Task count over time. Currently pinned at 1; once autoscaling is enabled this is the panel that shows 1->4 actually happening under load, not just being configured.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 29
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ECS",
+          "metricName": "LiveTaskCount",
+          "statistic": "Average",
+          "dimensions": {
+            "ClusterName": "ecs-dynamodb-rps-ceiling",
+            "ServiceName": "ecs-dynamodb-rps-ceiling"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "5. Edge (ALB) \u2014 confirm load actually arrived as intended",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
+      "panels": []
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "ALB RequestCount",
+      "description": "Requests actually reaching the target group per period. Compare against k6's arrival rate to confirm the offered load and the delivered load match \u2014 a gap here means the ceiling is upstream of the app entirely (connection limits, DNS, the load generator).",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 38
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "RequestCount",
+          "statistic": "Sum",
+          "dimensions": {
+            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "ALB TargetResponseTime (p95, Average, Maximum)",
+      "description": "Edge-measured response time, independent of anything the service reports about itself. p95 via the CloudWatch extended statistic where supported; Average and Maximum are always included as a fallback and to show tail spread.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 38
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "TargetResponseTime",
+          "statistic": "p95",
+          "dimensions": {
+            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "TargetResponseTime",
+          "statistic": "Average",
+          "dimensions": {
+            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "TargetResponseTime",
+          "statistic": "Maximum",
+          "dimensions": {
+            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "HTTP status codes (2XX / 4XX / 5XX)",
+      "description": "5XX rising is the app or its dependencies failing outright, not just slowing down \u2014 a distinct failure mode from throttling or latency. 4XX at the target vs. at the ELB itself separates application-level rejections from load-balancer-level ones (e.g. malformed requests never reaching a task).",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 38
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HTTPCode_Target_2XX_Count",
+          "statistic": "Sum",
+          "dimensions": {
+            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HTTPCode_Target_4XX_Count",
+          "statistic": "Sum",
+          "dimensions": {
+            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HTTPCode_Target_5XX_Count",
+          "statistic": "Sum",
+          "dimensions": {
+            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HTTPCode_ELB_4XX_Count",
+          "statistic": "Sum",
+          "dimensions": {
+            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "ALB HealthyHostCount",
+      "description": "Healthy targets in the target group. A drop here during a run means tasks are failing health checks under load \u2014 a service-side ceiling that will masquerade as a DynamoDB problem if this panel isn't checked.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 38
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HealthyHostCount",
+          "statistic": "Average",
+          "dimensions": {
+            "TargetGroup": "targetgroup/ecs-dynamodb-rps-ceiling/901238716f26dd35",
+            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ]
+}

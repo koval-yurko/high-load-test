@@ -1,0 +1,26 @@
+service: ecs-dynamodb-rps-ceiling
+window: 30d
+
+slos:
+  - name: latency-classes
+    sli: class_threshold_ratio
+    objective: 99.0
+    tail_objective: 99.9
+    tail_multiplier: 3
+    classes:
+      fast:     { threshold_ms: 50,  endpoints: [getItem, putItem] }
+      standard: { threshold_ms: 200, endpoints: [feed] }
+      heavy:    { threshold_ms: 800, endpoints: [report] }
+
+  - name: availability
+    sli: success_rate
+    objective: 99.9
+
+capacity:
+  target_rps: 1000
+  mix: { read: 0.55, write: 0.15, feed: 0.25, report: 0.05 }
+  cost_per_request:
+    read:   { rcu: 0.5, wcu: 0 }
+    write:  { rcu: 0,   wcu: 1 }
+    feed:   { rcu: 2.5, wcu: 0 }
+    report: { rcu: 2.5, wcu: 1 }

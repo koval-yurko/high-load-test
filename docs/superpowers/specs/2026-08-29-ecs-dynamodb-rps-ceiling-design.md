@@ -1,9 +1,33 @@
 # ecs-dynamodb-rps-ceiling — design
 
 - **Date:** 2026-08-29
-- **Status:** awaiting review (revision 2)
+- **Status:** **partially executed (on hold)** — revision 2. §4, §5, §6, §8 and §9 are built and in
+  force. **D7 is reversed** and its replacement is being designed; see the banner below.
 - **Project directory:** `ecs-dynamodb-rps-ceiling/`
 - **Supersedes:** nothing. This is the repo's first project spec.
+- **Amended by:** the SLI-collection spec (in design as of 2026-08-30), which reverses **D7**.
+
+> ### ⚠️ D7 is no longer in force — read this before acting on §7
+>
+> This spec makes k6 metrics the SLI source (D7). **That decision is wrong and is being replaced.**
+> Two reasons:
+>
+> 1. **Its stated justification has evaporated.** D7 avoided CloudWatch because it "needs a
+>    CloudWatch datasource plus an IAM role for Grafana". Both already exist on the Grafana stack,
+>    verified on 2026-08-30 against this AWS account.
+> 2. **An SLI that only exists while a load test runs is not a service level indicator.** No error
+>    budget accrues between runs, nothing is alertable, and a healthy service is indistinguishable
+>    from an untested one. k6 measures a generator's experience of synthetic traffic — that is a
+>    test result.
+>
+> **What does NOT change:** the *shape* of the objective in §7 — a class-threshold ratio, not a
+> percentile — is still right, and for the reason §7 gives. Note the obvious substitute does not
+> work either: the ALB cannot express per-class thresholds (one target group, no per-path routing),
+> so falling back to `TargetResponseTime` would silently regress to the aggregate percentile §7
+> already rejected. The SLI has to be emitted by the service, which is the only component that
+> knows which route was hit and therefore which threshold applies.
+>
+> §7's objective stands. Its *source* does not.
 
 **Revision 2 changes:** the service grows from two endpoints to four with different natural costs; the
 SLO changes form from a percentile to a **ratio with per-class thresholds**; the capacity model becomes
@@ -46,7 +70,7 @@ and should be revisited for project #2, not treated as a general preference.
 | D4 | Four endpoints with different natural costs, frozen mix | A single cheap `GetItem` measures a DB proxy, not a service. Endpoints spanning DB-bound to CPU-bound make the ceiling composite and let the two constraints be released independently (§9). |
 | D5 | **Ratio SLI with per-class thresholds**, not a percentile | A percentile cannot compose across endpoints with different natural costs, and cannot produce an error budget. See §7 — this is forced, not preferred. |
 | D6 | `billing_mode = "PROVISIONED"` | Provisioned capacity converts overload into **throttling**, on-demand converts it into **bill**. Note the cost argument does *not* hold: provisioned is 3.46× cheaper only at full utilisation, break-even is ~29%, and a lab environment that idles between runs sits near that line. The reason to provision is the **hard, visible ceiling** — not savings. |
-| D7 | SLI source is k6 metrics, not CloudWatch | Making ALB `TargetResponseTime` authoritative needs a CloudWatch datasource plus an IAM role for Grafana. The `Server-Timing` instrumentation in §5 delivers server-side phase attribution into k6 directly, which removes most of the motivation. CloudWatch metrics still appear on dashboards; they are not what the SLO is computed from. |
+| ~~D7~~ | ~~SLI source is k6 metrics, not CloudWatch~~ **REVERSED 2026-08-30 — do not act on this row.** The SLI is emitted by the service itself; k6 thresholds are a run gate, not the SLO. See the banner at the top of this document. | ~~Making ALB `TargetResponseTime` authoritative needs a CloudWatch datasource plus an IAM role for Grafana.~~ **This justification was false by the time it was tested — both already exist on the stack.** The `Server-Timing` instrumentation in §5 is still valuable for *attribution*, but attribution is not the same thing as an SLI, and conflating them is the error this row made. CloudWatch metrics still appear on dashboards. |
 | D8 | Seed via `npm run seed`, not Terraform resources | Thousands of `aws_dynamodb_table_item` resources would bloat state and slow every plan. This is seed *data*, not infrastructure, and it dies with the table on destroy. A deliberate, recorded deviation from the repo's "Terraform is the only way" rule — scoped to data only. |
 | D9 | CPU work is `pbkdf2Sync`, tunable by iteration count | Deterministic, allocation-free, no GC noise, therefore the most reproducible option. Blocks the event loop **by design**: that produces a sharp knee (throughput ≈ 1/cpu_time on one thread) and catastrophic queueing past it, which is exactly what a latency SLO should catch. It is also honest work an API really performs. A spin loop would measure an invented benchmark. |
 | D10 | `Server-Timing` + event-loop lag instrumentation | Splitting load across service and database is easy; **attributing the ceiling is the hard part**. Without it, run A reports "it stopped at N" with no cause. |

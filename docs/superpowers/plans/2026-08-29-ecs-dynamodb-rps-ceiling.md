@@ -10,6 +10,87 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-29-ecs-dynamodb-rps-ceiling-design.md`
 
+---
+
+## Status — **partially executed (on hold)**, updated 2026-08-30
+
+**Tasks 1–17 complete. Tasks 18–23 are ON HOLD** — not abandoned, and not blocked by anything in
+this plan. They are blocked on a design change.
+
+**What is blocking them.** Tasks 18–21 write **SLO attainment** and **error budget burned** into
+`results.md`, and that file is this project's actual deliverable. Those figures would currently be
+computed from k6 metrics — and spec D7, which made k6 the SLI source, has been **reversed** (see
+the banner at the top of the spec). Under the corrected decision those numbers are a *test-run
+pass rate*, not SLO attainment. Running these tasks now would write mislabeled results into the
+deliverable and burn VU-hours, which spec §10 names as the binding budget, to produce them.
+
+**Resume Tasks 18–23 only after** the SLI-collection spec is approved and its plan has built
+service-emitted metrics. Nothing already executed is invalidated: Tasks 1–17 stand, the
+infrastructure is live and correct, and the k6 thresholds remain a valid *run gate*. Only the
+label "SLO" moves off k6 and onto the service's own metrics.
+
+**Do not renumber Tasks 18–23 in place.** The SDD ledger and the commit history reference task
+numbers; the follow-up work belongs in its own dated plan alongside this one, per `CLAUDE.md`.
+
+**The environment is LIVE in `eu-central-1`, account `042945885621`**, up since
+`2026-08-29T18:27:55Z` and billing at roughly **$0.041/hour** idle. Capacity is still 25/25
+(free tier); Task 18 raises it to 1025/200 (~$0.3212/hour). `terraform destroy` has not run.
+
+| | |
+|---|---|
+| Service | deployed, healthy, 1 task at 0.25 vCPU / 512 MB |
+| DynamoDB | seeded — all 50 partitions at exactly 20 items, verified |
+| Tests | 52 unit passing; 9 integration passing against pinned `dynamodb-local:2.5.2` |
+| Container | built, pushed, smoke-tested as non-root, prod deps only |
+| Terraform | applied, 23 resources; state in HCP workspace `ecs-dynamodb-rps-ceiling` |
+| CPU knob | calibrated on real Fargate: `pbkdf2_iterations = 2675` |
+| k6 | mix verified 55/15/25/5; all three profiles pass `k6 inspect` |
+
+### Corrections to this plan found during execution
+
+Each was verified before acting, not assumed. Full reasoning in the SDD ledger at
+`.superpowers/sdd/2026-08-29-ecs-dynamodb-rps-ceiling/progress.md`.
+
+1. **`"test": "node --test test/"` does not work** on Node 22.13.1 — it hands the directory to
+   the CJS loader and dies with `MODULE_NOT_FOUND`. Corrected to `"node --test"` (Task 1).
+2. **Task 2's `cpu.js` used `keylen = 16`**, producing 32 hex chars against four places in this
+   plan requiring 16. Corrected to `keylen = 8`. CPU cost is unaffected (one PRF block either way).
+3. **Task 5's `getItem` `ConsistentRead: false` was unasserted.** A silent flip inflates required
+   capacity 1.025 → 1.300 RCU/rps (+26.8%). Assertion added.
+4. **Task 7's seed counted unwritten items as written** and, separately, handled only one of
+   DynamoDB's two throttling paths. It crashed live at 900/1000, leaving 5 partitions empty.
+   `writeAll()` now retries both paths, paces batches, and throws truthfully.
+5. **Task 16's `k6 cloud load-zone list` does not exist** in k6 v1.4.0 (`login`, `run`, `upload`
+   only). Spec §14's provenance claim is wrong. Load-zone validity is confirmed at cloud-run
+   submission instead — before load or VU-hours are spent. `--summary-export` *is* supported on
+   `k6 cloud run`, so `/loadtest`'s JSON parsing applies unchanged.
+6. **`k6 inspect` ignores the shell environment; `k6 run` honours it**
+   (`--include-system-env-vars` defaults differ). Task 16 step 4's command is wrong as written.
+   Use `-e` flags, which work under both. `BASE_URL` has no guard, so unset it silently targets
+   `undefined/…`.
+7. **Spec §5 estimated 700–1400 pbkdf2 iterations** for the ~1.4 ms budget; measured on a real
+   0.25 vCPU Fargate slice it is **~2675** — about 2× the estimate.
+
+### Open issues that affect Task 18 and beyond
+
+- **The Task 18 step 7 attribution table cannot work as written.** `db_ms` is wall-clock around
+  an `await`, so it absorbs event-loop queueing: measured, it inflated **12.1×** (10.9 ms → 131.9
+  ms) with the database unchanged. The row "`db_ms` flat + `el_delay` climbing ⇒ service-bound"
+  can never occur. Use `ThrottledRequests == 0` as the DB-bound discriminator, plus DynamoDB's
+  `SuccessfulRequestLatency`; the gap between it and `db_ms` *is* the queueing signal.
+  **Rewrite that table before relying on it.**
+- **`/slo` has no generation script** — it is documentation only. Task 14's four outputs were
+  hand-written to its spec, so "one file, four outputs, cannot drift" is currently enforced by
+  discipline, not tooling.
+- **`grafana/alerts.tf` has never been validated** against the Grafana provider (none is wired
+  here). Its queries also carry no label selector, so on a shared datasource they would aggregate
+  unrelated k6 runs. Scope them before applying.
+- **Fast-class 50 ms threshold looks achievable but is unproven**: server-side `db` is ~4 ms
+  unloaded. Laptop-measured client totals (~80 ms) are RTT to Frankfurt and will not apply to
+  runs originating in-zone.
+
+---
+
 ## Global Constraints
 
 - **Project name is fixed:** `ecs-dynamodb-rps-ceiling`. It is the directory name, the AWS `Project` tag value, and the commit scope. Renaming orphans tagged resources from the teardown sweep.
@@ -90,7 +171,7 @@ Files are split by responsibility, not layer: `handlers.js` holds no routing so 
 - Consumes: nothing.
 - Produces: `loadConfig(env = process.env) -> {port:number, tableName:string, region:string, pbkdf2Iterations:number, feedPageSize:number, itemTtlSeconds:number, dynamoEndpoint:string|undefined}`. Throws `Error` on an invalid numeric value. Every later task imports this.
 
-- [ ] **Step 1: Create `package.json`**
+- [x] **Step 1: Create `package.json`**
 
 ```json
 {
@@ -116,7 +197,7 @@ Files are split by responsibility, not layer: `handlers.js` holds no routing so 
 }
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```javascript
 // test/config.test.js
@@ -150,12 +231,12 @@ test('rejects a negative iteration count', () => {
 });
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `cd ecs-dynamodb-rps-ceiling && npm install && npm test`
 Expected: FAIL — `Cannot find module '../src/config.js'`
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 ```javascript
 // src/config.js
@@ -180,12 +261,12 @@ export function loadConfig(env = process.env) {
 }
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `npm test`
 Expected: PASS — 4 tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/package.json ecs-dynamodb-rps-ceiling/src/config.js ecs-dynamodb-rps-ceiling/test/config.test.js
@@ -206,7 +287,7 @@ git commit -m "feat(ecs-dynamodb-rps-ceiling): add service scaffold and config"
 
 This is the knob §9 of the spec calibrates so the service ceiling lands at ~70% of the DB ceiling. `pbkdf2Sync` is chosen deliberately: it blocks the event loop, which produces a sharp knee and catastrophic queueing past it — the behaviour a latency SLO should catch.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```javascript
 // test/cpu.test.js
@@ -238,12 +319,12 @@ test('cost scales with iteration count', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- test/cpu.test.js`
 Expected: FAIL — `Cannot find module '../src/cpu.js'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```javascript
 // src/cpu.js
@@ -258,12 +339,12 @@ export function burn(iterations, seed) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npm test -- test/cpu.test.js`
 Expected: PASS — 5 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/src/cpu.js ecs-dynamodb-rps-ceiling/test/cpu.test.js
@@ -284,7 +365,7 @@ git commit -m "feat(ecs-dynamodb-rps-ceiling): add tunable pbkdf2 cpu work unit"
 
 This is half of the spec's D10 attribution: it puts `db_ms` and `cpu_ms` into the k6 output, so a latency breach can be attributed without a CloudWatch datasource.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```javascript
 // test/timing.test.js
@@ -326,12 +407,12 @@ test('records the phase even when the function throws', async () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- test/timing.test.js`
 Expected: FAIL — `Cannot find module '../src/timing.js'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```javascript
 // src/timing.js
@@ -357,12 +438,12 @@ export function createTimer() {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npm test -- test/timing.test.js`
 Expected: PASS — 5 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/src/timing.js ecs-dynamodb-rps-ceiling/test/timing.test.js
@@ -383,7 +464,7 @@ git commit -m "feat(ecs-dynamodb-rps-ceiling): add per-request phase timing"
 
 The other half of D10. Event-loop lag climbing while `db_ms` stays flat is the signal that the Node process, not DynamoDB, is the ceiling — which is what turns "it stopped at N" into an attributed result.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```javascript
 // test/stats.test.js
@@ -414,12 +495,12 @@ test('resetStats clears the histogram', async () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- test/stats.test.js`
 Expected: FAIL — `Cannot find module '../src/stats.js'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```javascript
 // src/stats.js
@@ -450,12 +531,12 @@ export function snapshot() {
 export function resetStats() { histogram.reset(); }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npm test -- test/stats.test.js`
 Expected: PASS — 3 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/src/stats.js ecs-dynamodb-rps-ceiling/test/stats.test.js
@@ -480,7 +561,7 @@ git commit -m "feat(ecs-dynamodb-rps-ceiling): expose event-loop lag stats"
 
 **`ConsistentRead: false` is load-bearing**, not a default to leave implicit: eventually consistent reads cost half an RCU. Flipping it doubles every read coefficient in the model.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```javascript
 // test/dynamo.test.js
@@ -549,12 +630,12 @@ test('queryFeed returns an empty array when the partition is empty', async () =>
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- test/dynamo.test.js`
 Expected: FAIL — `Cannot find module '../src/item.js'`
 
-- [ ] **Step 3: Write `src/item.js`**
+- [x] **Step 3: Write `src/item.js`**
 
 ```javascript
 // src/item.js
@@ -580,7 +661,7 @@ export function itemSizeBytes(item) {
 }
 ```
 
-- [ ] **Step 4: Write `src/dynamo.js`**
+- [x] **Step 4: Write `src/dynamo.js`**
 
 ```javascript
 // src/dynamo.js
@@ -622,12 +703,12 @@ export function createRepo(config) {
 }
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `npm test -- test/dynamo.test.js`
 Expected: PASS — 9 tests. If the block-count test fails, `PAYLOAD_BYTES` was changed; fix the constant rather than the test.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/src/item.js ecs-dynamodb-rps-ceiling/src/dynamo.js ecs-dynamodb-rps-ceiling/test/dynamo.test.js
@@ -652,7 +733,7 @@ git commit -m "feat(ecs-dynamodb-rps-ceiling): add item shape and dynamodb acces
 
 **Routing note.** `GET /feeds/:pk` rather than the spec's `GET /items/:pk/feed` — see the deviations section. `/items/:pk/:sk` and `/items/:pk/feed` overlap, and ordering-based resolution is a latent bug.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```javascript
 // test/handlers.test.js
@@ -749,12 +830,12 @@ test('report queries, burns cpu, then writes', async () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- test/handlers.test.js`
 Expected: FAIL — `Cannot find module '../src/handlers.js'`
 
-- [ ] **Step 3: Write `src/handlers.js`**
+- [x] **Step 3: Write `src/handlers.js`**
 
 ```javascript
 // src/handlers.js
@@ -830,12 +911,12 @@ export function createHandlers({ repo, config }) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npm test -- test/handlers.test.js`
 Expected: PASS — 10 tests.
 
-- [ ] **Step 5: Write `src/server.js`**
+- [x] **Step 5: Write `src/server.js`**
 
 ```javascript
 // src/server.js
@@ -897,12 +978,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 ```
 
-- [ ] **Step 6: Run the whole suite**
+- [x] **Step 6: Run the whole suite**
 
 Run: `npm test`
 Expected: PASS — all tests from Tasks 1-6.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/src/handlers.js ecs-dynamodb-rps-ceiling/src/server.js ecs-dynamodb-rps-ceiling/test/handlers.test.js
@@ -923,7 +1004,7 @@ git commit -m "feat(ecs-dynamodb-rps-ceiling): add four endpoints, router and se
 
 50 partitions × 20 items. Fifty rather than a handful because a narrow key range concentrates traffic on few physical partitions and can hit per-partition throughput limits — which would present as a service ceiling while being nothing of the kind.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```javascript
 // test/seed.test.js
@@ -972,12 +1053,12 @@ test('chunk splits into BatchWriteItem-legal groups of 25', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npm test -- test/seed.test.js`
 Expected: FAIL — `Cannot find module '../scripts/seed.js'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```javascript
 // scripts/seed.js
@@ -1042,12 +1123,12 @@ async function main() {
 if (import.meta.url === `file://${process.argv[1]}`) main().catch((e) => { console.error(e); process.exit(1); });
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npm test -- test/seed.test.js`
 Expected: PASS — 6 tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/scripts/seed.js ecs-dynamodb-rps-ceiling/test/seed.test.js
@@ -1070,7 +1151,7 @@ git commit -m "feat(ecs-dynamodb-rps-ceiling): add deterministic seed script"
 
 This task exists to keep Task 10's `apply` gate cheap. Every bug found here is a bug not debugged at 25 minutes per provision cycle.
 
-- [ ] **Step 1: Write `docker-compose.test.yml`**
+- [x] **Step 1: Write `docker-compose.test.yml`**
 
 ```yaml
 services:
@@ -1080,7 +1161,7 @@ services:
     ports: ["8000:8000"]
 ```
 
-- [ ] **Step 2: Write the failing integration test**
+- [x] **Step 2: Write the failing integration test**
 
 ```javascript
 // test/integration.test.js
@@ -1183,7 +1264,7 @@ test('unknown route 404s', async () => {
 });
 ```
 
-- [ ] **Step 3: Start DynamoDB Local and run the test**
+- [x] **Step 3: Start DynamoDB Local and run the test**
 
 ```bash
 docker compose -f docker-compose.test.yml up -d
@@ -1191,7 +1272,7 @@ npm run test:integration
 ```
 Expected: PASS — 9 tests. If `getItem` fails with a credentials error, the `AWS_ACCESS_KEY_ID` defaults at the top of the test were not applied.
 
-- [ ] **Step 4: Write the `Dockerfile`**
+- [x] **Step 4: Write the `Dockerfile`**
 
 ```dockerfile
 FROM node:22-alpine AS deps
@@ -1211,7 +1292,7 @@ EXPOSE 8080
 CMD ["node", "src/server.js"]
 ```
 
-- [ ] **Step 5: Write `.dockerignore`**
+- [x] **Step 5: Write `.dockerignore`**
 
 ```
 node_modules
@@ -1224,7 +1305,7 @@ grafana
 docker-compose.test.yml
 ```
 
-- [ ] **Step 6: Build the image and smoke it against DynamoDB Local**
+- [x] **Step 6: Build the image and smoke it against DynamoDB Local**
 
 ```bash
 docker build -t ecs-dynamodb-rps-ceiling:local .
@@ -1240,7 +1321,7 @@ docker compose -f docker-compose.test.yml down
 ```
 Expected: `{"ok":true}` and a `Server-Timing` header naming both `db` and `cpu`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/Dockerfile ecs-dynamodb-rps-ceiling/.dockerignore ecs-dynamodb-rps-ceiling/docker-compose.test.yml ecs-dynamodb-rps-ceiling/test/integration.test.js ecs-dynamodb-rps-ceiling/package-lock.json
@@ -1265,7 +1346,7 @@ git commit -m "build(ecs-dynamodb-rps-ceiling): add container and dynamodb-local
 - Consumes: nothing.
 - Produces: `aws_vpc.main`, `aws_subnet.public[*]`, `aws_route_table.public`, `aws_security_group.alb`, `aws_security_group.task`, `aws_lb.main`, `aws_lb_target_group.app`, `aws_lb_listener.http`, `aws_ecr_repository.app`, and the full variable set consumed by Task 10.
 
-- [ ] **Step 1: Write `versions.tf`**
+- [x] **Step 1: Write `versions.tf`**
 
 ```hcl
 terraform {
@@ -1299,7 +1380,7 @@ data "aws_availability_zones" "available" {
 }
 ```
 
-- [ ] **Step 2: Write `variables.tf`**
+- [x] **Step 2: Write `variables.tf`**
 
 ```hcl
 variable "project" {
@@ -1388,7 +1469,7 @@ variable "log_retention_days" {
 }
 ```
 
-- [ ] **Step 3: Write `network.tf`**
+- [x] **Step 3: Write `network.tf`**
 
 ```hcl
 resource "aws_vpc" "main" {
@@ -1504,7 +1585,7 @@ resource "aws_security_group" "task" {
 }
 ```
 
-- [ ] **Step 4: Write `alb.tf`**
+- [x] **Step 4: Write `alb.tf`**
 
 ```hcl
 resource "aws_lb" "main" {
@@ -1548,7 +1629,7 @@ resource "aws_lb_listener" "http" {
 }
 ```
 
-- [ ] **Step 5: Write `ecr.tf`**
+- [x] **Step 5: Write `ecr.tf`**
 
 ```hcl
 resource "aws_ecr_repository" "app" {
@@ -1563,7 +1644,7 @@ resource "aws_ecr_repository" "app" {
 }
 ```
 
-- [ ] **Step 6: Format and validate**
+- [x] **Step 6: Format and validate**
 
 ```bash
 cd ecs-dynamodb-rps-ceiling
@@ -1574,7 +1655,7 @@ terraform -chdir=terraform validate
 
 Expected: `fmt -check` silent, `validate` reports "Success!". Two likely failures: `TF_CLOUD_ORGANIZATION` unset (`init` cannot resolve `cloud {}` — export it from the global `.env`), and `data.aws_region.current.region` unknown on AWS provider 5.x (this plan pins `~> 6.0`; on 5.x the attribute is `.name`).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/terraform
@@ -1598,7 +1679,7 @@ git commit -m "feat(ecs-dynamodb-rps-ceiling/terraform): add network, alb and ec
 
 **Starting capacity is deliberately 25/25** — the DynamoDB monthly free tier. Enough to smoke test in Task 12, costs nothing, and keeps the first provisioning step a cheap mistake. Real capacity is derived from `slo.yaml` in Task 18.
 
-- [ ] **Step 1: Write `dynamodb.tf`**
+- [x] **Step 1: Write `dynamodb.tf`**
 
 ```hcl
 resource "aws_dynamodb_table" "items" {
@@ -1628,7 +1709,7 @@ resource "aws_dynamodb_table" "items" {
 }
 ```
 
-- [ ] **Step 2: Write `ecs.tf`**
+- [x] **Step 2: Write `ecs.tf`**
 
 ```hcl
 resource "aws_cloudwatch_log_group" "app" {
@@ -1746,7 +1827,7 @@ resource "aws_ecs_service" "app" {
 }
 ```
 
-- [ ] **Step 3: Write `autoscaling.tf`**
+- [x] **Step 3: Write `autoscaling.tf`**
 
 ```hcl
 # Gated by a variable so enabling it is a one-line tfvars change — which is
@@ -1783,7 +1864,7 @@ resource "aws_appautoscaling_policy" "cpu" {
 }
 ```
 
-- [ ] **Step 4: Write `outputs.tf`**
+- [x] **Step 4: Write `outputs.tf`**
 
 ```hcl
 output "base_url" {
@@ -1816,7 +1897,7 @@ output "provisioned_capacity" {
 }
 ```
 
-- [ ] **Step 5: Write `dev.tfvars`**
+- [x] **Step 5: Write `dev.tfvars`**
 
 ```hcl
 # Starting capacity is the DynamoDB free tier (25/25) so the first provisioning
@@ -1835,7 +1916,7 @@ feed_page_size    = 20
 autoscaling_enabled = false
 ```
 
-- [ ] **Step 6: Format, validate, and review the plan**
+- [x] **Step 6: Format, validate, and review the plan**
 
 ```bash
 terraform -chdir=terraform fmt -check -recursive
@@ -1845,7 +1926,7 @@ terraform -chdir=terraform plan -var-file=dev.tfvars
 
 Expected: `validate` succeeds; `plan` shows resources to add and **no** resources to destroy. Read the plan and confirm every billable item is expected: **1 ALB** (~$0.023/hr + LCU), **1 Fargate task** at 0.25 vCPU, **1 DynamoDB table at 25/25** (free tier), **1 ECR repository**, **1 log group**. If a NAT gateway appears anywhere, stop — the design has been broken.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/terraform
@@ -1862,7 +1943,7 @@ git commit -m "feat(ecs-dynamodb-rps-ceiling/terraform): add dynamodb, ecs servi
 
 **This task creates billable AWS resources and STOPS for explicit human approval.** A subagent must not proceed past step 3 without it. The `PreToolUse` hook in `.claude/hooks/guard-terraform.sh` will prompt, and it hard-denies any attempt to skip the prompt with an approval-bypass flag.
 
-- [ ] **Step 1: Assert the account before anything else**
+- [x] **Step 1: Assert the account before anything else**
 
 ```bash
 [ -n "$AWS_ACCESS_KEY_ID" ] || { echo "no AWS creds loaded — create .env and run: set -a && source .env && set +a"; exit 1; }
@@ -1873,7 +1954,7 @@ echo "account $ACTUAL confirmed"
 
 **As of writing this plan there is no `.env` in the repo**, so this check fails closed — and without it the machine's default profile would be used silently. Create `.env` from `.env.example` first; this is step 1 of §13 in the spec, not an optional preliminary.
 
-- [ ] **Step 2: Re-plan and summarize in chat**
+- [x] **Step 2: Re-plan and summarize in chat**
 
 ```bash
 terraform -chdir=terraform plan -var-file=dev.tfvars -out=tfplan
@@ -1881,15 +1962,15 @@ terraform -chdir=terraform plan -var-file=dev.tfvars -out=tfplan
 
 Report counts of add/change/destroy and name every resource that costs money while idle.
 
-- [ ] **Step 3: STOP — get explicit approval**
+- [x] **Step 3: STOP — get explicit approval**
 
 Do not run step 4 until a human has said yes to the plan output from step 2.
 
-- [ ] **Step 4: Run it**
+- [x] **Step 4: Run it**
 
 Use `/env up ecs-dynamodb-rps-ceiling`, which performs the account assertion, the plan summary and the gate in one place. It ends by applying the saved `tfplan`.
 
-- [ ] **Step 5: Record the outputs and the time**
+- [x] **Step 5: Record the outputs and the time**
 
 ```bash
 terraform -chdir=terraform output
@@ -1908,7 +1989,7 @@ Note the time so idle cost is visible later. The service will be unhealthy until
 - Consumes: `ecr_repository_url`, `base_url`, `table_name` from Task 11's outputs.
 - Produces: a healthy service and the first real per-class latency numbers, which Task 14 uses to check that the class thresholds are achievable at all.
 
-- [ ] **Step 1: Build and push**
+- [x] **Step 1: Build and push**
 
 ```bash
 cd ecs-dynamodb-rps-ceiling
@@ -1920,7 +2001,7 @@ docker push "$REPO:latest"
 
 `--platform linux/amd64` is required on Apple Silicon — Fargate rejects an arm64 image on an x86 task definition with a cryptic `CannotPullContainerError`.
 
-- [ ] **Step 2: Force a new deployment and wait for health**
+- [x] **Step 2: Force a new deployment and wait for health**
 
 ```bash
 CL=$(terraform -chdir=terraform output -raw cluster_name)
@@ -1929,7 +2010,7 @@ aws ecs update-service --cluster "$CL" --service "$SV" --force-new-deployment >/
 aws ecs wait services-stable --cluster "$CL" --services "$SV"
 ```
 
-- [ ] **Step 3: Seed the table**
+- [x] **Step 3: Seed the table**
 
 ```bash
 TABLE_NAME=$(terraform -chdir=terraform output -raw table_name) npm run seed
@@ -1937,7 +2018,7 @@ TABLE_NAME=$(terraform -chdir=terraform output -raw table_name) npm run seed
 
 Expected: `seeded 1000 items`. At 25 WCU this is throttled and slow — the retry loop handles it; give it a few minutes. If it fails outright, the capacity is too low for even a seed, which is information worth recording.
 
-- [ ] **Step 4: Smoke every endpoint against the ALB**
+- [x] **Step 4: Smoke every endpoint against the ALB**
 
 ```bash
 BASE=$(terraform -chdir=terraform output -raw base_url)
@@ -1951,7 +2032,7 @@ curl -fsS "$BASE/stats" | head -c 300; echo
 
 Expected: every call 2xx; `Server-Timing` present with `db` on item reads and both `db` and `cpu` on feed and report.
 
-- [ ] **Step 5: Record the baseline latency of each class**
+- [x] **Step 5: Record the baseline latency of each class**
 
 ```bash
 for p in "/items/feed-07/item-03" "/feeds/feed-07"; do
@@ -1962,7 +2043,7 @@ done
 
 Write these numbers down. If the *fast* class baseline is already near 50 ms, the class thresholds in `slo.yaml` are not achievable and Task 14 must revisit them before any run — a threshold that can never pass is not an SLO.
 
-- [ ] **Step 6: Report findings**
+- [x] **Step 6: Report findings**
 
 No files change in this task. Report the smoke results and the baseline latencies in chat.
 
@@ -1980,7 +2061,7 @@ No files change in this task. Report the smoke results and the baseline latencie
 - Consumes: nothing.
 - Produces: a documented `class_threshold_ratio` SLI type and a documented `capacity:` block, both consumed by Task 14.
 
-- [ ] **Step 1: Add the new SLI type to the skill's source-file section**
+- [x] **Step 1: Add the new SLI type to the skill's source-file section**
 
 Insert after the existing `slo.yaml` example:
 
@@ -2014,7 +2095,7 @@ per-class entries are diagnostic and are **not** the gate — the gate is the ra
 directly; `latency_percentile` does not, and never did.
 ````
 
-- [ ] **Step 2: Add the `capacity:` block to the same section**
+- [x] **Step 2: Add the `capacity:` block to the same section**
 
 ````markdown
 ### The `capacity:` block
@@ -2045,7 +2126,7 @@ The `mix` shares must sum to 1.0. Refuse to generate otherwise — a mix that do
 produces capacity numbers that are quietly wrong rather than obviously wrong.
 ````
 
-- [ ] **Step 3: Add a third generated output to the skill's output list**
+- [x] **Step 3: Add a third generated output to the skill's output list**
 
 ````markdown
 ## Generated output 3 — Terraform capacity variables
@@ -2057,12 +2138,12 @@ Into `<project>/terraform/capacity.auto.tfvars`, from the `capacity:` block. Ter
 `slo.yaml` it came from.
 ````
 
-- [ ] **Step 4: Verify the skill still parses as a skill**
+- [x] **Step 4: Verify the skill still parses as a skill**
 
 Run: `head -5 .claude/skills/slo/SKILL.md`
 Expected: the YAML frontmatter (`name: slo`, `description: ...`) is intact and first in the file.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add .claude/skills/slo/SKILL.md
@@ -2086,7 +2167,7 @@ git commit -m "feat(repo): teach /slo the class-threshold ratio sli and capacity
 
 **Before writing this file, check it against Task 12's measured baselines.** If the *fast* class already measures near 50 ms unloaded, the threshold is unachievable and must be raised now — a threshold that can never pass is not an SLO, and every subsequent run would be meaningless.
 
-- [ ] **Step 1: Write `slo.yaml`**
+- [x] **Step 1: Write `slo.yaml`**
 
 ```yaml
 service: ecs-dynamodb-rps-ceiling
@@ -2117,7 +2198,7 @@ capacity:
     report: { rcu: 2.5, wcu: 1 }
 ```
 
-- [ ] **Step 2: Generate the outputs**
+- [x] **Step 2: Generate the outputs**
 
 Run: `/slo ecs-dynamodb-rps-ceiling`
 
@@ -2153,7 +2234,7 @@ read_capacity  = 1025
 write_capacity = 200
 ```
 
-- [ ] **Step 3: Un-ignore the generated tfvars**
+- [x] **Step 3: Un-ignore the generated tfvars**
 
 Append to `.gitignore`:
 
@@ -2162,7 +2243,7 @@ Append to `.gitignore`:
 !ecs-dynamodb-rps-ceiling/terraform/capacity.auto.tfvars
 ```
 
-- [ ] **Step 4: Remove the hand-written capacity from `dev.tfvars`**
+- [x] **Step 4: Remove the hand-written capacity from `dev.tfvars`**
 
 Delete the `read_capacity` / `write_capacity` lines from `terraform/dev.tfvars` — they now come from the generated file, and two sources for one number is exactly the drift this design exists to prevent. Leave a comment in their place:
 
@@ -2170,12 +2251,12 @@ Delete the `read_capacity` / `write_capacity` lines from `terraform/dev.tfvars` 
 # read_capacity / write_capacity come from capacity.auto.tfvars, generated by /slo.
 ```
 
-- [ ] **Step 5: Verify no drift**
+- [x] **Step 5: Verify no drift**
 
 Run: `/slo ecs-dynamodb-rps-ceiling --check`
 Expected: no drift reported. Then `terraform -chdir=terraform plan -var-file=dev.tfvars` and confirm the only change is DynamoDB capacity 25/25 → 1025/200. **Do not apply yet** — that is Task 18.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/slo.yaml ecs-dynamodb-rps-ceiling/k6/lib/slo.js \
@@ -2196,7 +2277,7 @@ git commit -m "feat(ecs-dynamodb-rps-ceiling): define slo and generate threshold
 - Consumes: `CLASS_THRESHOLD_MS`, `TAIL_MULTIPLIER` from `k6/lib/slo.js` (Task 14).
 - Produces: `pick(iteration) -> 'read'|'write'|'feed'|'report'`; `doRequest(baseUrl)`; `pollStats(baseUrl)`; and the metrics `slo_met`, `slo_met_tail`, `db_ms`, `cpu_ms`, `el_delay_p99_ms`. All three profiles in Task 16 import these, so no profile can quietly assert something different.
 
-- [ ] **Step 1: Write `k6/lib/mix.js`**
+- [x] **Step 1: Write `k6/lib/mix.js`**
 
 ```javascript
 // The frozen 55/15/25/5 mix, expressed deterministically over a 20-iteration
@@ -2215,7 +2296,7 @@ export function pick(iteration) {
 }
 ```
 
-- [ ] **Step 2: Verify the cycle really is 55/15/25/5**
+- [x] **Step 2: Verify the cycle really is 55/15/25/5**
 
 ```bash
 node -e "
@@ -2230,7 +2311,7 @@ console.log('mix OK: 55/15/25/5');
 
 Expected: `mix OK: 55/15/25/5`. This check is cheap and catches a mis-typed cycle array, which would silently change every capacity coefficient.
 
-- [ ] **Step 3: Write `k6/lib/request.js`**
+- [x] **Step 3: Write `k6/lib/request.js`**
 
 ```javascript
 import http from 'k6/http';
@@ -2305,7 +2386,7 @@ export function pollStats(baseUrl) {
 
 **Note on `http_req_failed`:** the 1 RPS stats scenario contributes to it. At one request per second against hundreds it cannot move a 0.1% threshold, but if the primary load ever drops below ~1000 RPS *and* stats starts failing, check it before blaming the service.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/k6/lib
@@ -2334,7 +2415,7 @@ knee_rps = START_RATE + (MAX_RATE - START_RATE) x (elapsed_seconds / RAMP_SECOND
 
 This also saves VU-hours, which §10 of the spec names as the binding budget.
 
-- [ ] **Step 1: Write `k6/discovery.js`**
+- [x] **Step 1: Write `k6/discovery.js`**
 
 ```javascript
 import { thresholds } from './lib/slo.js';
@@ -2383,7 +2464,7 @@ export default function () { doRequest(BASE_URL); }
 export function stats() { pollStats(BASE_URL); }
 ```
 
-- [ ] **Step 2: Write `k6/constant.js`**
+- [x] **Step 2: Write `k6/constant.js`**
 
 ```javascript
 import { thresholds } from './lib/slo.js';
@@ -2422,7 +2503,7 @@ export default function () { doRequest(BASE_URL); }
 export function stats() { pollStats(BASE_URL); }
 ```
 
-- [ ] **Step 3: Write `k6/stress.js`**
+- [x] **Step 3: Write `k6/stress.js`**
 
 ```javascript
 import { thresholds } from './lib/slo.js';
@@ -2473,7 +2554,7 @@ export function stats() { pollStats(BASE_URL); }
 
 The 2-minute hold at peak is deliberate: DynamoDB banks burst capacity for ~300 s, so a shorter spike could be absorbed entirely and would prove nothing.
 
-- [ ] **Step 4: Verify the scripts parse without running them**
+- [x] **Step 4: Verify the scripts parse without running them**
 
 ```bash
 cd ecs-dynamodb-rps-ceiling
@@ -2484,7 +2565,7 @@ BASE_URL=http://x RATE=100 k6 inspect k6/stress.js    >/dev/null && echo "stress
 
 Expected: three OK lines. `k6 inspect` parses options without generating load, so this costs nothing.
 
-- [ ] **Step 5: Establish how cloud runs produce a machine-readable summary**
+- [x] **Step 5: Establish how cloud runs produce a machine-readable summary**
 
 ```bash
 k6 cloud run --help | grep -iE 'summary|export|out' || echo "no summary-export flag on cloud run"
@@ -2497,7 +2578,7 @@ This is a genuine unknown and must be resolved before Task 18, not during it. Tw
 
 Also confirm `amazon:de:frankfurt` appears in the zone list for this stack — the whole load-origin decision in the spec rests on it.
 
-- [ ] **Step 6: Extend `.claude/skills/loadtest/SKILL.md`**
+- [x] **Step 6: Extend `.claude/skills/loadtest/SKILL.md`**
 
 Add a cloud-run section recording what step 5 found, and replace the results table header with the columns the spec requires:
 
@@ -2524,7 +2605,7 @@ minutes and a Grafana SLO window is 30 days, so a raw "0.03% of budget" figure d
 between runs. The multiple does.
 ````
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/k6 .claude/skills/loadtest/SKILL.md
@@ -2547,7 +2628,7 @@ git commit -m "test(ecs-dynamodb-rps-ceiling/k6): add discovery, constant and st
 
 **This must run on the target CPU, not a laptop.** An M-series core is several times faster than a 0.25 vCPU Fargate slice, so a locally-calibrated iteration count would be badly wrong. Run it in the deployed container.
 
-- [ ] **Step 1: Write `scripts/calibrate.js`**
+- [x] **Step 1: Write `scripts/calibrate.js`**
 
 ```javascript
 import { burn } from '../src/cpu.js';
@@ -2580,7 +2661,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 ```
 
-- [ ] **Step 2: Run it inside a task on the real CPU**
+- [x] **Step 2: Run it inside a task on the real CPU**
 
 ```bash
 CL=$(terraform -chdir=terraform output -raw cluster_name)
@@ -2597,7 +2678,7 @@ docker run --rm --cpus 0.25 ecs-dynamodb-rps-ceiling:local node scripts/calibrat
 
 `--cpus 0.25` is what makes this representative; without it the number is a laptop's, not a task's.
 
-- [ ] **Step 3: Record the result in `dev.tfvars`**
+- [x] **Step 3: Record the result in `dev.tfvars`**
 
 ```hcl
 # Calibrated on a 0.25 vCPU slice for ~1.4ms per report request (Task 17).
@@ -2605,7 +2686,7 @@ docker run --rm --cpus 0.25 ecs-dynamodb-rps-ceiling:local node scripts/calibrat
 pbkdf2_iterations = <the number from step 2>
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add ecs-dynamodb-rps-ceiling/scripts/calibrate.js ecs-dynamodb-rps-ceiling/terraform/dev.tfvars
@@ -2668,20 +2749,75 @@ If the run completes without aborting, the ceiling is above `MAX_RATE` — raise
 
 - [ ] **Step 7: Attribute the ceiling — this is the actual deliverable**
 
-| observation | bound resource |
-|---|---|
-| `el_delay_p99_ms` climbing, `db_ms` flat, `ThrottledRequests` zero | **service** |
-| `db_ms` climbing, `ThrottledRequests` rising, `el_delay_p99_ms` flat | **database** |
-| both climbing | re-check the calibration; the two ceilings are too close to separate |
+> **Corrected 2026-08-29. The original table here could not work, and read literally it would
+> have attributed a service ceiling to the database — the exact inversion this project exists to
+> avoid.** It relied on `db_ms` staying flat while the service saturated. It cannot:
+> `timer.measure('db', …)` is wall-clock around an `await`, so the `finally` cannot run while
+> another request's `pbkdf2Sync` blocks the event loop. Measured against the committed code with
+> the database held constant, `db;dur` went **10.884 ms → 131.945 ms, a 12.1× inflation**. Under
+> CPU saturation `db_ms` climbs hard with DynamoDB perfectly healthy, so the row "`db_ms` flat"
+> never occurs and both original rows appear to match at once.
 
-```bash
-aws cloudwatch get-metric-statistics --namespace AWS/DynamoDB \
-  --metric-name ThrottledRequests --dimensions Name=TableName,Value=ecs-dynamodb-rps-ceiling \
-  --start-time "$(date -u -v-30M +%Y-%m-%dT%H:%M:%SZ)" --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --period 60 --statistics Sum --output table
+**`ThrottledRequests` is the discriminator.** It is the only signal here that cannot be
+contaminated by the Node event loop — it is measured inside DynamoDB.
+
+| `ThrottledRequests` | `SuccessfulRequestLatency` | `el_delay_p99_ms` (windowed) | bound resource |
+|---|---|---|---|
+| **zero** | flat | **climbing** | **service** — the DB is keeping up; the queue is in Node |
+| **rising** | **climbing** | flat or mildly up | **database** |
+| rising | climbing | climbing | both — the two ceilings are too close to separate; re-check the CPU calibration |
+| zero | flat | flat | neither yet — the knee is elsewhere (ALB, generator, network). Do not report a ceiling. |
+
+**`db_ms` is still worth recording, but never on its own.** Its value is the *gap*:
+
+```
+queueing_delay ≈ db_ms − SuccessfulRequestLatency
 ```
 
-(On GNU date, `-v-30M` becomes `-d '30 minutes ago'`.)
+`SuccessfulRequestLatency` is measured server-side by DynamoDB and carries no event-loop
+contamination; `db_ms` is measured by the service and carries all of it. **A widening gap with
+`ThrottledRequests` at zero is the strongest positive evidence of a service-bound ceiling** —
+stronger than event-loop lag alone, because it is a difference between two independent clocks
+rather than one absolute number.
+
+Note `el_delay_p99_ms` is only meaningful because `/stats` was changed to report a **windowed**
+histogram. The original reported a since-boot value that was monotonic — it could never fall, so
+"climbing" was not a distinguishable state and a prior stress run would poison every later run on
+the same task.
+
+```bash
+WINDOW_START="$(date -u -v-30M +%Y-%m-%dT%H:%M:%SZ)"   # GNU date: -d '30 minutes ago'
+NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+# The discriminator. Sum over 60s buckets; anything above zero means the DB is the constraint.
+aws cloudwatch get-metric-statistics --namespace AWS/DynamoDB \
+  --metric-name ThrottledRequests --dimensions Name=TableName,Value=ecs-dynamodb-rps-ceiling \
+  --start-time "$WINDOW_START" --end-time "$NOW" --period 60 --statistics Sum --output table
+
+# Server-side DB latency, uncontaminated by the Node event loop. Compare against db_ms.
+for OP in GetItem PutItem Query; do
+  echo "== $OP =="
+  aws cloudwatch get-metric-statistics --namespace AWS/DynamoDB \
+    --metric-name SuccessfulRequestLatency \
+    --dimensions Name=TableName,Value=ecs-dynamodb-rps-ceiling Name=Operation,Value=$OP \
+    --start-time "$WINDOW_START" --end-time "$NOW" --period 60 \
+    --statistics Average Maximum --output table
+done
+
+# Which side throttled, when both paths are in play (report does Query + PutItem).
+aws cloudwatch get-metric-statistics --namespace AWS/DynamoDB \
+  --metric-name ReadThrottleEvents --dimensions Name=TableName,Value=ecs-dynamodb-rps-ceiling \
+  --start-time "$WINDOW_START" --end-time "$NOW" --period 60 --statistics Sum --output table
+aws cloudwatch get-metric-statistics --namespace AWS/DynamoDB \
+  --metric-name WriteThrottleEvents --dimensions Name=TableName,Value=ecs-dynamodb-rps-ceiling \
+  --start-time "$WINDOW_START" --end-time "$NOW" --period 60 --statistics Sum --output table
+```
+
+All four metrics are free with basic CloudWatch and need no Grafana datasource — read them
+directly here. **Throttling presents as latency before it presents as errors** (spec §10): the
+SDK retries `ProvisionedThroughputExceededException` with backoff, and those retries sit *inside*
+`db_ms`. So a latency breach must always be checked against `ThrottledRequests` before it is
+attributed to the service.
 
 - [ ] **Step 8: FREEZE the scripts**
 
