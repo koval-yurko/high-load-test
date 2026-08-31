@@ -1,0 +1,6 @@
+{
+  "/items/:pk/:sk": "fast",
+  "/items": "fast",
+  "/feeds/:pk": "standard",
+  "/reports": "heavy"
+}

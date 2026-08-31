@@ -71,9 +71,26 @@ one you are quoting.
 Append to `<project>/results.md` — create it with a header row if absent:
 
 ```markdown
-| date | profile | infra change | RPS | bound resource | evidence | SLO attainment | budget burn x | p95 fast/std/heavy | db ms | cpu ms | EL lag p99 | throttles | RCU/WCU | $/hr |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| date | profile | infra change | RPS | bound resource | evidence | k6 attainment | service attainment | budget burn x | p95 fast/std/heavy | db ms | cpu ms | EL lag p99 | throttles | RCU/WCU | $/hr |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 ```
+
+**Two attainment columns, because two different numbers both legitimately answer "did it meet the
+SLO", and they are not interchangeable:**
+
+| column | source | what it includes |
+|---|---|---|
+| `k6 attainment` | the k6 run's `slo_met` rate — the run **gate** | client-side: load-zone RTT, ALB queueing, the client's own scheduling |
+| `service attainment` | the Grafana SLO query over the run window — the **SLO** | server-side only: callback start to response finish |
+
+The service figure is the one that means "SLO". The k6 figure is a pass/fail gate for the run.
+Expect the k6 number to be lower; if it is *higher*, something is wrong with one of them. **Never
+record one number in both columns, and never leave a bare "attainment"** — an unlabelled pair is how
+a deliverable stops being trusted.
+
+Read `service attainment` from the same PromQL the alert rules use, over the run's own window. Note
+the SLO population is restricted to classified traffic (`class=~"fast|standard|heavy"`); an
+internet-facing ALB collects scanner 404s that would otherwise count as violations.
 
 `infra change` is the most important column — it is what makes the row mean something. A row whose
 infra change is blank is not a result, it is a number.
@@ -82,9 +99,10 @@ infra change is blank is not a result, it is a number.
 not a result — DynamoDB `ThrottledRequests` climbing means DB-bound; event-loop lag climbing with
 flat `db_ms` means service-bound.
 
-`budget burn x` is the burn-rate multiple: observed error rate / budgeted error rate. A k6 run is
-minutes and a Grafana SLO window is 30 days, so a raw "0.03% of budget" figure does not travel
-between runs. The multiple does.
+`budget burn x` is the burn-rate multiple: observed miss rate / sustainable miss rate. A k6 run is
+minutes and the SLO window is days, so a raw "0.03% of budget" figure does not travel between runs.
+The multiple does. Compute it from `service attainment`, not the k6 figure — the budget belongs to
+the SLO.
 
 ### Cloud runs
 

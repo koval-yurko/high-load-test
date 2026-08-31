@@ -1,5 +1,14 @@
 service: ecs-dynamodb-rps-ceiling
-window: 30d
+window: 7d
+
+# endpoint name -> route TEMPLATE as handlers.js matches it. The collector keys
+# its class mapping on the template; a test cross-checks both directions, so a
+# renamed route fails the build instead of silently leaving traffic unclassified.
+endpoints:
+  getItem: /items/:pk/:sk
+  putItem: /items
+  feed:    /feeds/:pk
+  report:  /reports
 
 slos:
   - name: latency-classes

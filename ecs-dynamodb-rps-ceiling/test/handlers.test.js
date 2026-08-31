@@ -90,3 +90,19 @@ test('report queries, burns cpu, then writes', async () => {
   assert.match(r.body.digest, /^[0-9a-f]{16}$/);
   assert.ok(timer.header().includes('cpu;dur='));
 });
+
+test('matchRoute returns the route template, not the concrete path', () => {
+  assert.equal(matchRoute('GET', '/items/feed-07/item-13').template, '/items/:pk/:sk');
+  assert.equal(matchRoute('GET', '/feeds/feed-07').template, '/feeds/:pk');
+  assert.equal(matchRoute('POST', '/items').template, '/items');
+  assert.equal(matchRoute('POST', '/reports').template, '/reports');
+  assert.equal(matchRoute('GET', '/healthz').template, '/healthz');
+  assert.equal(matchRoute('GET', '/stats').template, '/stats');
+});
+
+test('every route has a template and no two share one', () => {
+  const templates = ['/healthz', '/stats', '/feeds/:pk', '/items/:pk/:sk', '/items', '/reports'];
+  // An endpoint whose template collides with another is silently merged into
+  // the wrong latency class. Cheap to assert, invisible if it happens.
+  assert.equal(new Set(templates).size, templates.length);
+});

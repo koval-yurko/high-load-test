@@ -82,3 +82,83 @@ variable "log_retention_days" {
   type        = number
   default     = 1
 }
+
+variable "collector_cpu" {
+  description = "Collector task CPU units. Separate from the app task -- the whole point of a gateway collector is that it never draws on the app's 256."
+  type        = number
+  default     = 256
+}
+
+variable "collector_memory" {
+  description = "Collector task memory (MiB). A starting point, not a measured size: YACE's CloudWatch polling is the memory risk."
+  type        = number
+  default     = 512
+}
+
+variable "alloy_image" {
+  description = "Pinned. 'latest' would make the collector's behaviour change without a commit."
+  type        = string
+  default     = "grafana/alloy:v1.10.0"
+}
+
+variable "grafana_otlp_endpoint" {
+  description = "Grafana Cloud OTLP gateway URL, e.g. https://otlp-gateway-<zone>.grafana.net/otlp"
+  type        = string
+}
+
+variable "grafana_otlp_username" {
+  description = "Grafana Cloud OTLP instance ID."
+  type        = string
+}
+
+variable "grafana_otlp_password" {
+  description = "Grafana Cloud access policy token, metrics:write scope only."
+  type        = string
+  sensitive   = true
+}
+
+variable "grafana_prom_url" {
+  description = "Grafana Cloud Prometheus remote-write URL (the existing K6_PROMETHEUS_RW_SERVER_URL)."
+  type        = string
+}
+
+variable "grafana_prom_username" {
+  description = "Grafana Cloud Prometheus instance ID."
+  type        = string
+}
+
+variable "grafana_prom_password" {
+  description = "Grafana Cloud Prometheus password."
+  type        = string
+  sensitive   = true
+}
+
+variable "prometheus_datasource_uid" {
+  description = "Grafana Cloud Prometheus datasource UID. Passed to the grafana module in Task 15."
+  type        = string
+  default     = "grafanacloud-prom"
+}
+
+variable "cloudwatch_datasource_uid" {
+  description = "Existing CloudWatch datasource, verified against this AWS account on 2026-08-30. Its defaultRegion is us-east-1, so every panel pins eu-central-1 itself."
+  type        = string
+  default     = "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+}
+
+variable "stop_timeout_seconds" {
+  description = "Seconds ECS waits after SIGTERM before SIGKILL. The default (30s) can cut the app's server.close() drain short and lose the final OTLP flush; 120s is the Fargate maximum."
+  type        = number
+  default     = 120
+}
+
+variable "heartbeat_enabled" {
+  description = "Whether EventBridge Scheduler invokes the heartbeat Lambda. On, the SLI has an idle population between load tests and burn-rate alerts can fire; off, the class ratio is no-data while nothing runs. Costs ~43k invocations/month, inside the Lambda free tier -- turn it off only when the environment will sit up and idle for days."
+  type        = bool
+  default     = true
+}
+
+variable "heartbeat_rate" {
+  description = "Schedule expression for the heartbeat. One beat per minute is the cheapest rate that still gives every burn window a population; faster buys resolution the SLO does not need, slower leaves gaps that read as an outage."
+  type        = string
+  default     = "rate(1 minute)"
+}

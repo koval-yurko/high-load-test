@@ -100,4 +100,36 @@ describe('integration', { skip: !process.env.DYNAMO_ENDPOINT && 'set DYNAMO_ENDP
   test('unknown route 404s', async () => {
     assert.equal((await fetch(url('/nope'))).status, 404);
   });
+
+  test('a served request produces one exponential-histogram datapoint per route', async (t) => {
+    const { AggregationTemporality, DataPointType, MetricReader } = await import('@opentelemetry/sdk-metrics');
+    const { resourceFromAttributes } = await import('@opentelemetry/resources');
+    const { REQUEST_DURATION, bindHistogram, buildMeterProvider } = await import('../src/otel.js');
+
+    class TestReader extends MetricReader {
+      selectAggregationTemporality() { return AggregationTemporality.CUMULATIVE; }
+      async onForceFlush() {}
+      async onShutdown() {}
+    }
+    const reader = new TestReader();
+    const provider = buildMeterProvider({
+      resource: resourceFromAttributes({ 'service.name': 'itest', 'service.instance.id': 'itest-1' }),
+      readers: [reader],
+    });
+    bindHistogram(provider);
+    t.after(() => provider.shutdown());
+
+    await fetch(url('/healthz'));
+    await fetch(url('/items/feed-00/item-00'));
+    await fetch(url('/nope/whatever'));
+
+    const { resourceMetrics } = await reader.collect();
+    const metric = resourceMetrics.scopeMetrics[0].metrics.find((m) => m.descriptor.name === REQUEST_DURATION);
+    const routes = metric.dataPoints.map((p) => p.attributes['http.route']).sort();
+
+    assert.equal(metric.dataPointType, DataPointType.EXPONENTIAL_HISTOGRAM);
+    // /healthz IS emitted -- it is excluded in the SLO QUERY, not at the source
+    // (spec S15). 'unmatched' proves a scanner cannot mint series from raw paths.
+    assert.deepEqual(routes, ['/healthz', '/items/:pk/:sk', 'unmatched']);
+  });
 });

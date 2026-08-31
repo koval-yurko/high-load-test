@@ -12,10 +12,65 @@
 
 ---
 
-## Status — **partially executed (on hold)**, updated 2026-08-30
+## Status — **in progress**, updated 2026-08-31 (third revision)
 
-**Tasks 1–17 complete. Tasks 18–23 are ON HOLD** — not abandoned, and not blocked by anything in
-this plan. They are blocked on a design change.
+**Tasks 1–17 complete. Tasks 18–23 are UNBLOCKED and ready to resume** — the design change they
+waited on has shipped. See the note directly below for what changed underneath them; two of those
+changes alter what Task 18 does and how Task 22 records results.
+
+> ### 2026-08-31 — UNBLOCKED. Tasks 18-23 may resume.
+>
+> The SLI-collection plan
+> (`docs/superpowers/plans/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection.md`) is **complete**.
+> The service emits its own latency distribution and the SLO is computed from it, continuously —
+> verified on 2026-08-31 with no load test running: **SLI = 0.99874** against a 99% objective, from
+> a heartbeat-generated population. The premise that blocked Tasks 18–23 — "attainment cannot be
+> reported because there is no SLI" — no longer holds.
+>
+> **Both former gates are cleared:**
+>
+> 1. **`pbkdf2_iterations` is re-derived and applied: `2662`.** Two Fargate runs, 2665 and 2659,
+>    0.23% apart. Read `terraform/dev.tfvars`, never this document. Note the move from 2675 is
+>    −0.49%, **inside the measurement's own noise** — and `scripts/calibrate.js` measures `burn()`
+>    in isolation, so it cannot see instrumentation cost at all. The real overhead is 0.51 µs/request
+>    (0.036% of the 1.4 ms target, about one iteration). Do not read the new number as "the cost of
+>    OpenTelemetry".
+> 2. **`grafana_slo` and four burn-rate rule groups exist and evaluate**, all `health=ok`, all
+>    generated from `slo.yaml`. `service attainment` and `budget burn x` can now be reported from
+>    the SLO rather than inferred from k6.
+>
+> **Task 18 of this plan now starts by DELETING two lines.** Capacity is pinned to 25/25 in
+> `terraform/dev.tfvars` (see that plan's Deviation 3), which outranks the generated
+> `capacity.auto.tfvars`. Removing `read_capacity = 25` / `write_capacity = 25` from `dev.tfvars`
+> is what lets 1025/200 apply. **Also delete the matching HCP workspace variables**
+> `read_capacity` and `write_capacity`, or they will override the file and silently hold the free
+> tier. Do not edit `capacity.auto.tfvars`; it is generated and byte-checked by `npm run slo:check`.
+>
+> **Two operational changes since this plan last ran:**
+>
+> - The workspace is on **remote execution** with `working-directory = "terraform"`. Credentials
+>   come from HCP workspace variables, not your shell.
+> - **Terraform does not rebuild the container image.** Any change under `src/` needs an explicit
+>   build/push/force-new-deployment cycle — see that plan's Task 11 Step 7. This was missing and
+>   cost a full debugging cycle.
+>
+> **Task 22's schema changed.** `results.md` now carries **two** attainment columns —
+> `k6 attainment` (the run gate, client-side, includes load-zone RTT and ALB queueing) and
+> `service attainment` (the SLO, server-side only). Never put one number in both. The `awk` check in
+> Task 22 has been extended; its existing `$4`/`$6` indices still resolve, verified rather than
+> assumed. Schema lives in `.claude/skills/loadtest/SKILL.md`.
+>
+> **Two things to know before reading the first run's numbers.**
+>
+> - **The SLO population is restricted to classified traffic** (`class=~"fast|standard|heavy"`).
+>   The ALB is internet-facing and scanner 404s were 68% of the idle population, every one counted
+>   as a violation. If a route is added to `handlers.js` without a `slo.yaml` entry it is silently
+>   unmeasured — that is deliberate, and the cross-check test in `test/generate-slo.test.js` catches
+>   renames but not additions.
+> - **The idle SLI and the under-load SLI measure different regimes.** At ~4 req/min the fast class
+>   sits at 98.3% against its 50 ms threshold, because DynamoDB connections go cold between beats
+>   and `GetItem` peaks at 105 ms. Under sustained load connections stay warm. Do not read an idle
+>   dip as a regression, and do not expect the two figures to line up.
 
 **What is blocking them.** Tasks 18–21 write **SLO attainment** and **error budget burned** into
 `results.md`, and that file is this project's actual deliverable. Those figures would currently be
@@ -24,16 +79,32 @@ the banner at the top of the spec). Under the corrected decision those numbers a
 pass rate*, not SLO attainment. Running these tasks now would write mislabeled results into the
 deliverable and burn VU-hours, which spec §10 names as the binding budget, to produce them.
 
-**Resume Tasks 18–23 only after** the SLI-collection spec is approved and its plan has built
-service-emitted metrics. Nothing already executed is invalidated: Tasks 1–17 stand, the
-infrastructure is live and correct, and the k6 thresholds remain a valid *run gate*. Only the
-label "SLO" moves off k6 and onto the service's own metrics.
+**The blocking spec now exists:** `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`
+(status: draft). ~~Its plan is not yet written.~~ **Its plan is written and Tasks 1–11 are executed**
+— see the 2026-08-31 note above. **Resume Tasks 18–23 only after that plan has built
+service-emitted metrics** — the SLI has to be collectable before a run can report attainment against
+it. That condition is now met; the remaining gates are its Tasks 13–16.
+
+Nothing already executed is invalidated: Tasks 1–17 stand, the infrastructure is live and correct,
+and the k6 thresholds remain a valid *run gate*. Only the label "SLO" moves off k6 and onto the
+service's own metrics.
+
+**Two things will have changed by the time Tasks 18–23 resume**, and both affect what they record:
+
+1. **`pbkdf2_iterations` will no longer be 2675.** The new spec adds OpenTelemetry instrumentation to
+   the request path, which costs CPU, and 2675 was calibrated against an *uninstrumented* service to
+   place the service ceiling at ~70% of the DB ceiling. It is re-derived on real Fargate hardware in
+   the new plan. Read `terraform/dev.tfvars`, never this document, for the live value.
+2. **The SLO window is `7d`, not `30d`,** and the burn thresholds in `grafana/alerts.tf` change with
+   it (14.4×/**14m** and 6×/**84m**). Grafana Cloud Free retains metrics for 14 days, so 30 days was
+   never evaluable.
 
 **Do not renumber Tasks 18–23 in place.** The SDD ledger and the commit history reference task
 numbers; the follow-up work belongs in its own dated plan alongside this one, per `CLAUDE.md`.
 
 **The environment is LIVE in `eu-central-1`, account `042945885621`**, up since
-`2026-08-29T18:27:55Z` and billing at roughly **$0.041/hour** idle. Capacity is still 25/25
+`2026-08-29T18:27:55Z` and billing at roughly **$0.041/hour** idle — a figure the new plan
+roughly doubles when it adds the always-on collector task. Capacity is still 25/25
 (free tier); Task 18 raises it to 1025/200 (~$0.3212/hour). `terraform destroy` has not run.
 
 | | |
@@ -43,7 +114,7 @@ numbers; the follow-up work belongs in its own dated plan alongside this one, pe
 | Tests | 52 unit passing; 9 integration passing against pinned `dynamodb-local:2.5.2` |
 | Container | built, pushed, smoke-tested as non-root, prod deps only |
 | Terraform | applied, 23 resources; state in HCP workspace `ecs-dynamodb-rps-ceiling` |
-| CPU knob | calibrated on real Fargate: `pbkdf2_iterations = 2675` |
+| CPU knob ⚠ | calibrated on real Fargate: `pbkdf2_iterations = 2675` — **to be re-derived**, see above |
 | k6 | mix verified 55/15/25/5; all three profiles pass `k6 inspect` |
 
 ### Corrections to this plan found during execution
@@ -78,13 +149,20 @@ Each was verified before acting, not assumed. Full reasoning in the SDD ledger a
   ms) with the database unchanged. The row "`db_ms` flat + `el_delay` climbing ⇒ service-bound"
   can never occur. Use `ThrottledRequests == 0` as the DB-bound discriminator, plus DynamoDB's
   `SuccessfulRequestLatency`; the gap between it and `db_ms` *is* the queueing signal.
-  **Rewrite that table before relying on it.**
+  **Rewrite that table before relying on it.** Note `@opentelemetry/instrumentation-aws-sdk`, added by
+  the new spec, measures wall-clock around the same `await` and therefore **inherits this flaw rather
+  than curing it** — it is kept for call counts, errors and SDK retries, not attribution.
 - **`/slo` has no generation script** — it is documentation only. Task 14's four outputs were
   hand-written to its spec, so "one file, four outputs, cannot drift" is currently enforced by
-  discipline, not tooling.
+  discipline, not tooling. **Addressed by the new plan**, which adds the generator; its first step
+  regenerates against the committed `window: 30d` to prove the generator is faithful *before*
+  changing anything.
 - **`grafana/alerts.tf` has never been validated** against the Grafana provider (none is wired
   here). Its queries also carry no label selector, so on a shared datasource they would aggregate
-  unrelated k6 runs. Scope them before applying.
+  unrelated k6 runs. Scope them before applying. **Addressed by the new plan**: the file is rewritten
+  against service-emitted series, wired into the root module and validated, and its selector becomes
+  `job="ecs-dynamodb-rps-ceiling"` derived from the service's own resource attributes rather than a
+  `--tag` that a run can forget to pass.
 - **Fast-class 50 ms threshold looks achievable but is unproven**: server-side `db` is ~4 ms
   unloaded. Laptop-measured client totals (~80 ms) are RTT to Frankfurt and will not apply to
   runs originating in-zone.
@@ -2711,9 +2789,38 @@ terraform -chdir=terraform plan -var-file=dev.tfvars
 
 Expected changes: DynamoDB `read_capacity` 25 → 1025, `write_capacity` 25 → 200, and the task definition's `PBKDF2_ITERATIONS`. Capacity changes are in-place — if the plan proposes to *replace* the table, stop: the seeded data would be lost.
 
+> **AMENDED 2026-08-31 by the SLI-collection plan. This step no longer works as written — the
+> capacity raise is now pinned shut in TWO places and both must be released.**
+>
+> ```bash
+> # 1. delete these two lines from terraform/dev.tfvars
+> read_capacity  = 25
+> write_capacity = 25
+>
+> # 2. delete the matching HCP WORKSPACE variables, or they silently win anyway
+> #    (workspace vars outrank both dev.tfvars and capacity.auto.tfvars in a remote run)
+> #    Terraform-category vars named read_capacity and write_capacity, workspace ws-pPiZ7mfesjrzZ8sx
+> ```
+>
+> Miss the second and the plan comes back `No changes` on the table while you wonder why. Do **not**
+> edit `capacity.auto.tfvars` — it is generated and byte-checked by `npm run slo:check`.
+>
+> **`PBKDF2_ITERATIONS` is no longer part of this step.** It was re-derived to **2662** and applied
+> on 2026-08-31, so the task definition already carries it. Expect the plan to show the DynamoDB
+> table only.
+>
+> Note also that the workspace now runs in **remote execution** — the plan runs in HCP and reads
+> credentials from workspace variables, not your shell.
+
 - [ ] **Step 2: STOP — get explicit approval, then run `/env up ecs-dynamodb-rps-ceiling`**
 
 - [ ] **Step 3: Redeploy so the new iteration count takes effect**
+
+> **AMENDED 2026-08-31.** The iteration count is already live, so this redeploy is a no-op for that
+> purpose. Keep the step anyway: it is also how a **new container image** reaches the service.
+> Terraform does not rebuild the image — any change under `src/` needs an explicit
+> build / push / `--force-new-deployment` cycle (see the SLI plan's Task 11 Step 7). If you have not
+> changed `src/`, this step is harmless and fast.
 
 ```bash
 CL=$(terraform -chdir=terraform output -raw cluster_name)
@@ -2760,6 +2867,22 @@ If the run completes without aborting, the ceiling is above `MAX_RATE` — raise
 
 **`ThrottledRequests` is the discriminator.** It is the only signal here that cannot be
 contaminated by the Node event loop — it is measured inside DynamoDB.
+
+> **AMENDED 2026-08-31: the discriminator is unchanged, but you no longer need the CloudWatch CLI
+> to read it.** The Alloy collector scrapes CloudWatch by `Project` tag and forwards to Grafana
+> Cloud, so all three signals in the table below are queryable from one datasource alongside the
+> service-side histogram:
+>
+> ```
+> aws_dynamodb_throttled_requests_sum          aws_dynamodb_successful_request_latency_average
+> aws_dynamodb_consumed_read_capacity_units_sum   aws_applicationelb_target_response_time_p95
+> ```
+>
+> Verified working for DynamoDB, ALB **and** ECS discovery on this account.
+>
+> Event-loop delay is also now emitted directly as `nodejs_eventloop_delay_*` by
+> `instrumentation-runtime-node`, in addition to the `/stats` poll the k6 scripts read. Prefer the
+> OTel series for attribution: `/stats` resets on read, so two consumers race for the same window.
 
 | `ThrottledRequests` | `SuccessfulRequestLatency` | `el_delay_p99_ms` (windowed) | bound resource |
 |---|---|---|---|
@@ -2831,6 +2954,33 @@ git commit --allow-empty -m "test(ecs-dynamodb-rps-ceiling/k6): freeze load prof
 
 ### Task 19: Baseline runs B and C
 
+> **AMENDED 2026-08-31.** Every run from here on records **two** attainment figures, not one:
+>
+> | column | where it comes from |
+> |---|---|
+> | `k6 attainment` | the run's `slo_met` rate — the **gate**, client-side, includes Frankfurt RTT and ALB queueing |
+> | `service attainment` | the Grafana SLO query over the run's own window — the **SLO**, server-side only |
+>
+> Expect the k6 number to be the lower of the two. If it is *higher*, one of them is wrong.
+>
+> **Query the service figure through the Grafana datasource proxy** — `K6_PROMETHEUS_RW_*` is
+> write-scoped and returns `invalid scope requested`, which a naive parser reads as "no data":
+>
+> ```bash
+> PROXY="$GRAFANA_URL/api/datasources/proxy/uid/grafanacloud-prom/api/v1"
+> curl -s -H "Authorization: Bearer $GRAFANA_AUTH" --data-urlencode "query=<class-ratio>" "$PROXY/query"
+> ```
+>
+> **k6 traffic will label itself.** `traffic_source` is derived from the User-Agent in
+> `src/otel.js`, and k6 sends `k6/x.y.z`, so runs appear as `traffic_source="k6"` while the
+> heartbeat stays `heartbeat`. That is the evidence spec §17.1 needs — whether load-generator
+> traffic belongs in the SLO population — and it is now decidable, because the split exists from
+> before the first run.
+>
+> **The heartbeat keeps running during load tests.** At 4 req/min against thousands it is
+> statistically irrelevant, but it is not zero: exclude it with `traffic_source="k6"` if a run's
+> population needs to be exactly the generated load.
+
 **Files:** none changed.
 
 - [ ] **Step 1: Drain 6 minutes, then run shape B at the knee**
@@ -2861,6 +3011,20 @@ with `RATE=<knee>`. Expected: thresholds breached (k6 exit `99`). **A stress run
 - Modify: `ecs-dynamodb-rps-ceiling/terraform/dev.tfvars`
 
 **One change only.** If Task 18 attributed the ceiling to the *database* rather than the service, autoscaling tasks will change nothing — skip to Task 21, raise capacity instead, and record why the order was swapped. That is a result, not a deviation.
+
+> **AMENDED 2026-08-31 — this is the task the `instance` label fix exists for.** Scaling 1→4 is the
+> first time more than one task serves the SLI, and until 2026-08-31 **every task reported
+> `instance="local-1"`**: the AWS resource detector supplies no `service.instance.id` on Fargate, so
+> the fallback `local-${process.pid}` applied, and the app is PID 1 in every container. Four tasks
+> would have collapsed onto one series and the ratio behind this comparison would have been
+> silently wrong — in the one task whose entire purpose is a before/after comparison.
+>
+> It now reads the task id from `ECS_CONTAINER_METADATA_URI_V4`, verified with two distinct
+> `instance` values under `desired-count 2`. Nothing to do here; recorded because a reader who
+> hits a corrupt-looking 4-task ratio should know this was already found and fixed.
+>
+> Series growth is not a concern: roughly 10–20 active series per task against a 10,000 free-tier
+> ceiling.
 
 - [ ] **Step 1: Flip the flag**
 
@@ -2957,10 +3121,23 @@ Sections, in this order: what it provisions and the hourly cost; how to run it (
 
 ```bash
 grep -c '^|' ecs-dynamodb-rps-ceiling/results.md
-awk -F'|' 'NR>2 && NF>3 && ($4 ~ /^ *$/ || $6 ~ /^ *$/) { print "INCOMPLETE ROW:", $0 }' ecs-dynamodb-rps-ceiling/results.md
+awk -F'|' 'NR>2 && NF>3 && ($4 ~ /^ *$/ || $6 ~ /^ *$/ || $8 ~ /^ *$/ || $9 ~ /^ *$/) \
+  { print "INCOMPLETE ROW:", $0 }' ecs-dynamodb-rps-ceiling/results.md
 ```
 
 A row with a blank `infra change` or a blank `bound resource` is not a result. Fill it or delete it.
+
+> **UPDATED 2026-08-31 by the SLI-collection plan.** The schema gained a second attainment column
+> (`k6 attainment` and `service attainment`; see `.claude/skills/loadtest/SKILL.md`).
+>
+> That plan expected the column positions to shift and this check to break. **They did not.** The new
+> column is inserted at position 7, and this check reads `$4` (`infra change`) and `$6`
+> (`bound resource`), so both still resolve correctly — verified by running the header through `awk`
+> rather than by counting pipes in a text editor.
+>
+> The check is extended anyway, to `$8` (`k6 attainment`) and `$9` (`service attainment`). Those two
+> columns are the entire reason the schema changed, and a row carrying only one of them is exactly
+> the ambiguity the split exists to remove.
 
 - [ ] **Step 3: Update the repo README project table**
 
@@ -3000,6 +3177,30 @@ aws resourcegroupstaggingapi get-resources --tag-filters Key=Project,Values=ecs-
 ```
 
 Then the known survivors, which AWS often creates untagged: NAT gateways (there should be none by design — one appearing means the design was broken somewhere), unattached EIPs, log groups, and ECR repositories.
+
+> **AMENDED 2026-08-31 — the SLI-collection plan added resources this sweep does not mention, and
+> one of them can make `destroy` itself fail.**
+>
+> - **Cloud Map** (`aws_service_discovery_private_dns_namespace.internal`, `..._service.collector`).
+>   A namespace **refuses deletion while a service is still registered**, which surfaces as a
+>   `destroy` error rather than a silent survivor. If `destroy` fails here, let it finish removing
+>   the ECS service first and re-run; do not delete the namespace by hand while Terraform still
+>   tracks it.
+> - **The collector**: ECS service, task definition, security group, IAM role + inline policy, and
+>   log group `/ecs/ecs-dynamodb-rps-ceiling-collector`.
+> - **The heartbeat**: Lambda `ecs-dynamodb-rps-ceiling-heartbeat`, its EventBridge **Scheduler**
+>   schedule (not an EventBridge *rule* — check `aws scheduler list-schedules`, it does not appear
+>   under `aws events`), two IAM roles, and log group `/aws/lambda/ecs-dynamodb-rps-ceiling-heartbeat`.
+>   **The schedule keeps firing until it is deleted**, so a half-torn-down environment goes on
+>   generating traffic and Lambda invocations.
+> - **Grafana Cloud is not in the AWS tag sweep at all.** `terraform destroy` removes the folder,
+>   dashboard, four rule groups and `grafana_slo`, but nothing in `resourcegroupstaggingapi` would
+>   ever have told you if it had not. Confirm separately:
+>   `curl -H "Authorization: Bearer $GRAFANA_AUTH" "$GRAFANA_URL/api/prometheus/grafana/api/v1/rules"`
+>   should list no `latency-classes` rules afterwards.
+>
+> Metrics already shipped to Grafana Cloud are **not** deleted by teardown and age out on the
+> 14-day free-tier retention. That is fine, and worth knowing before someone hunts for a leak.
 
 - [ ] **Step 4: Report the sweep output**
 

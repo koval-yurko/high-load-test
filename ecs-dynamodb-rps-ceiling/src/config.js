@@ -15,5 +15,10 @@ export function loadConfig(env = process.env) {
     feedPageSize: num(env, 'FEED_PAGE_SIZE', 20),
     itemTtlSeconds: num(env, 'ITEM_TTL_SECONDS', 3600),
     dynamoEndpoint: env.DYNAMO_ENDPOINT || undefined,
+    serviceName: env.OTEL_SERVICE_NAME ?? 'ecs-dynamodb-rps-ceiling',
+    // Absent => no exporter is started and recordRequest stays a no-op. That is
+    // what lets every unit and integration test run with no collector present.
+    otlpEndpoint: env.OTLP_ENDPOINT || undefined,
+    exportIntervalMs: num(env, 'OTEL_EXPORT_INTERVAL_MS', 15_000),
   };
 }

@@ -33,3 +33,14 @@ test('rejects a non-numeric numeric field', () => {
 test('rejects a negative iteration count', () => {
   assert.throws(() => loadConfig({ PBKDF2_ITERATIONS: '-1' }), /PBKDF2_ITERATIONS/);
 });
+
+test('otel config has safe defaults and is disabled without an endpoint', () => {
+  const off = loadConfig({});
+  assert.equal(off.otlpEndpoint, undefined);
+  assert.equal(off.exportIntervalMs, 15000);
+  assert.equal(off.serviceName, 'ecs-dynamodb-rps-ceiling');
+
+  const on = loadConfig({ OTLP_ENDPOINT: 'http://collector.local:4318', OTEL_EXPORT_INTERVAL_MS: '5000' });
+  assert.equal(on.otlpEndpoint, 'http://collector.local:4318');
+  assert.equal(on.exportIntervalMs, 5000);
+});

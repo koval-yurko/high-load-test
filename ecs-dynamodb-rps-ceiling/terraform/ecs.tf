@@ -65,12 +65,19 @@ resource "aws_ecs_task_definition" "app" {
       protocol      = "tcp"
     }]
 
+    # src/server.js flushes OpenTelemetry inside the server.close() callback, and
+    # keepAliveTimeout is 65s. ECS's default stopTimeout is 30s, which can SIGKILL
+    # the task mid-drain and lose the final export -- the very interval a
+    # deploy or a scale-in is most likely to land in. 120s is the Fargate maximum.
+    stopTimeout = var.stop_timeout_seconds
+
     environment = [
       { name = "PORT", value = tostring(var.container_port) },
       { name = "TABLE_NAME", value = aws_dynamodb_table.items.name },
       { name = "AWS_REGION", value = data.aws_region.current.region },
       { name = "PBKDF2_ITERATIONS", value = tostring(var.pbkdf2_iterations) },
       { name = "FEED_PAGE_SIZE", value = tostring(var.feed_page_size) },
+      { name = "OTLP_ENDPOINT", value = "http://collector.${aws_service_discovery_private_dns_namespace.internal.name}:4318" },
     ]
 
     logConfiguration = {

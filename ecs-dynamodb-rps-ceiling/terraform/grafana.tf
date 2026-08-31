@@ -1,23 +1,31 @@
-# Grafana resources for this project's dashboards/alerts, per CLAUDE.md: "SLOs are code —
-# Grafana dashboards, SLO definitions, and alert rules are checked in under the project's
-# grafana/ and applied via Terraform (Grafana provider)."
-#
-# Provider auth comes from the GRAFANA_URL / GRAFANA_AUTH environment variables (sourced from
-# the root .env) — never hardcode a token here or in a .tfvars file. The empty provider block
-# below is intentional: the grafana provider reads those two env vars itself.
+# CLAUDE.md requires alert rules and SLO definitions to live under the project's
+# grafana/. Terraform cannot include a .tf from outside the root module, so
+# grafana/ IS a module. Auth still comes from GRAFANA_URL / GRAFANA_AUTH in the
+# environment -- never a token in a .tf or .tfvars file.
 provider "grafana" {}
 
-resource "grafana_folder" "project" {
-  title = var.project
+module "grafana" {
+  source = "../grafana"
+
+  project                   = var.project
+  prometheus_datasource_uid = var.prometheus_datasource_uid
+  cloudwatch_datasource_uid = var.cloudwatch_datasource_uid
 }
 
-resource "grafana_dashboard" "attribution" {
-  folder      = grafana_folder.project.uid
-  config_json = file("${path.module}/../grafana/dashboard.json")
+# The folder and dashboard were declared here before grafana/ became a module.
+# `moved` relocates them in state with no manual `terraform state mv`.
+#
+# These are NOT no-ops. The plan that introduced them assumed the resources might
+# never have been applied -- Task 11's apply created both, and `terraform state
+# list` shows grafana_folder.project and grafana_dashboard.attribution at the
+# ROOT module. The moved blocks are load-bearing: get them wrong and the folder
+# is destroyed and recreated, orphaning the dashboard.
+moved {
+  from = grafana_folder.project
+  to   = module.grafana.grafana_folder.project
 }
 
-# alerts.tf is deliberately NOT wired in here yet — it declares its own variables
-# (grafana_folder_uid, k6_prometheus_datasource_uid) and its rules have an unresolved
-# precondition (see the comment block at the top of grafana/alerts.tf): they require k6
-# metrics reaching the grafanacloud-prom datasource, which today means a local `k6 run -o
-# experimental-prometheus-rw`, not `k6 cloud run`. Wire it in once that path is resolved.
+moved {
+  from = grafana_dashboard.attribution
+  to   = module.grafana.grafana_dashboard.attribution
+}

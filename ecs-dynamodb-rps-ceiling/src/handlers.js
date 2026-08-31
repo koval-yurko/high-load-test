@@ -3,13 +3,16 @@ import { burn } from './cpu.js';
 import { snapshot } from './stats.js';
 import { buildItem, randomId } from './item.js';
 
+// `template` is the route PATTERN, never the concrete path. It is the metric's
+// http.route attribute and the key the collector maps to a latency class, so a
+// raw path here would mint one time series per item id.
 const ROUTES = [
-  { name: 'health',  method: 'GET',  re: /^\/healthz$/,                 keys: [] },
-  { name: 'stats',   method: 'GET',  re: /^\/stats$/,                   keys: [] },
-  { name: 'feed',    method: 'GET',  re: /^\/feeds\/([^/]+)$/,          keys: ['pk'] },
-  { name: 'getItem', method: 'GET',  re: /^\/items\/([^/]+)\/([^/]+)$/, keys: ['pk', 'sk'] },
-  { name: 'putItem', method: 'POST', re: /^\/items$/,                   keys: [] },
-  { name: 'report',  method: 'POST', re: /^\/reports$/,                 keys: [] },
+  { name: 'health',  method: 'GET',  re: /^\/healthz$/,                 keys: [],           template: '/healthz' },
+  { name: 'stats',   method: 'GET',  re: /^\/stats$/,                   keys: [],           template: '/stats' },
+  { name: 'feed',    method: 'GET',  re: /^\/feeds\/([^/]+)$/,          keys: ['pk'],       template: '/feeds/:pk' },
+  { name: 'getItem', method: 'GET',  re: /^\/items\/([^/]+)\/([^/]+)$/, keys: ['pk', 'sk'], template: '/items/:pk/:sk' },
+  { name: 'putItem', method: 'POST', re: /^\/items$/,                   keys: [],           template: '/items' },
+  { name: 'report',  method: 'POST', re: /^\/reports$/,                 keys: [],           template: '/reports' },
 ];
 
 export function matchRoute(method, path) {
@@ -17,7 +20,7 @@ export function matchRoute(method, path) {
     if (r.method !== method) continue;
     const m = r.re.exec(path);
     if (!m) continue;
-    return { name: r.name, params: Object.fromEntries(r.keys.map((k, i) => [k, m[i + 1]])) };
+    return { name: r.name, params: Object.fromEntries(r.keys.map((k, i) => [k, m[i + 1]])), template: r.template };
   }
   return null;
 }

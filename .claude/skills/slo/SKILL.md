@@ -7,6 +7,23 @@ description: Define a project's SLIs and SLOs in one file and generate both the 
 
 Usage: `/slo <project>` (generate/refresh) · `/slo <project> --check` (report drift only)
 
+Both run the project's own generator — there is no skill-level script:
+
+```bash
+cd <project> && npm run slo:generate     # rewrite the generated outputs
+cd <project> && npm run slo:check        # exit 1 if any output has drifted
+```
+
+`--check` is what makes "one file, many outputs" a property rather than a promise. Run it before
+any commit that touches `slo.yaml` or a generated file. The authoritative list of what is
+generated is the `OUTPUTS` array in `<project>/scripts/generate-slo.js` — read it there rather
+than trusting this page, because a file absent from that array is not checked for drift no matter
+what the section headings below imply.
+
+Until 2026-08-30 this skill was documentation only: the outputs were hand-written to the spec
+below and "cannot drift" was enforced by discipline. It is a real generator now, proven by
+regenerating the committed outputs and requiring them back byte for byte.
+
 ## Why this exists
 
 Each SLO otherwise gets written twice — once as a k6 `threshold`, once as a Grafana alert — in two
@@ -88,9 +105,29 @@ write_capacity = 200    # 0.200 x 1000 rps
 The `mix` shares must sum to 1.0. Refuse to generate otherwise — a mix that does not sum to one
 produces capacity numbers that are quietly wrong rather than obviously wrong.
 
+### `window:` and why the burn thresholds move with it
+
+The familiar 14.4×/1h (page) and 6×/6h (ticket) burn rates are **derived**, not conventional. They
+encode a fraction of the error budget consumed over the alert window:
+
+```
+14.4 x (1h / 720h) = 2% of budget      6 x (6h / 720h) = 5% of budget
+```
+
+Both fractions assume a **30-day** window. Shorten the window and leave the alert windows alone and
+the same rules quietly mean something else — on a 3-day window, 20% and 50%. The generator therefore
+scales the alert windows by `window / 30d` and holds the multipliers fixed.
+
+Check your plan's retention before choosing a window. **Grafana Cloud Free retains metrics for 14
+days**, so a 30-day objective on the free tier can never be evaluated over the window it claims.
+
+Pick a window that divides cleanly. The scaled windows are rendered as whole units, so a window
+that scales an alert window to a fraction of a second would emit a value the Grafana provider's
+`^\d+(ms|s|m|h|d|w|y)$` duration regex rejects.
+
 ## Generated output 1 — k6 thresholds
 
-Into `<project>/k6/thresholds.js`, imported by every profile so no profile can quietly assert
+Into `<project>/k6/lib/slo.js`, imported by every profile so no profile can quietly assert
 something different:
 
 ```javascript

@@ -1,0 +1,24 @@
+# GENERATED from slo.yaml by /slo. Do not edit by hand.
+#
+# The SLO object's inputs. objective and window come from slo.yaml so grafana_slo
+# and the burn rules in alerts.tf cannot state different numbers, and the query is
+# the same ratio those rules read -- differing only in $__rate_interval, which
+# grafana_slo REQUIRES (it rejects a hardcoded range), and var.project for the
+# job name.
+locals {
+  # 99% of requests meet their own class threshold, over 7d.
+  slo_objective = 0.99
+  slo_window    = "7d"
+
+  class_ratio_query = <<-PROMQL
+    (
+        sum(histogram_fraction(0, 0.05, rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="fast"}[$__rate_interval])) * histogram_count(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="fast"}[$__rate_interval])))
+      +
+        sum(histogram_fraction(0, 0.2, rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="standard"}[$__rate_interval])) * histogram_count(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="standard"}[$__rate_interval])))
+      +
+        sum(histogram_fraction(0, 0.8, rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="heavy"}[$__rate_interval])) * histogram_count(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="heavy"}[$__rate_interval])))
+      )
+      /
+      sum(histogram_count(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz|/stats", class=~"fast|standard|heavy"}[$__rate_interval])))
+  PROMQL
+}

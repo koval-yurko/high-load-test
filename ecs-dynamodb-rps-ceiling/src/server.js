@@ -1,8 +1,10 @@
 // src/server.js
 import http from 'node:http';
+import { performance } from 'node:perf_hooks';
 import { loadConfig } from './config.js';
 import { createRepo } from './dynamo.js';
 import { createHandlers, matchRoute } from './handlers.js';
+import { recordRequest, startOtel } from './otel.js';
 import { createTimer } from './timing.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
@@ -22,9 +24,26 @@ async function readJson(req) {
 
 export function createServer({ handlers }) {
   return http.createServer(async (req, res) => {
+    // First line: as close to "the event loop reached this request" as Node
+    // allows. Everything before it -- accept queue, header parse -- is
+    // invisible to the process by construction. See spec section 11.
+    const startedAt = performance.now();
     const timer = createTimer();
     const path = req.url.split('?')[0];
     const route = matchRoute(req.method, path);
+    // Unmatched paths collapse to one bounded label value. Recording req.url
+    // here would let any internet scanner mint new time series.
+    const template = route ? route.template : 'unmatched';
+
+    res.on('finish', () => recordRequest({
+      route: template,
+      method: req.method,
+      status: res.statusCode,
+      durationSeconds: (performance.now() - startedAt) / 1000,
+      // Mapped to a closed set inside recordRequest; the raw value never reaches
+      // the histogram, so an internet scanner cannot mint a time series.
+      userAgent: req.headers['user-agent'],
+    }));
 
     const send = (status, body) => {
       const header = timer.header();
@@ -55,6 +74,10 @@ export function createServer({ handlers }) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const config = loadConfig();
   const repo = createRepo(config);
+  // Started before the listener so no request is served unrecorded.
+  const otel = config.otlpEndpoint
+    ? await startOtel({ ...config, instanceIdFallback: `local-${process.pid}` })
+    : null;
   const server = createServer({ handlers: createHandlers({ repo, config }) });
   // The ALB's idle_timeout is 60s (terraform/alb.tf). AWS requires the target's keep-alive to
   // exceed the load balancer's idle timeout, or the ALB can dispatch a request onto a connection
@@ -65,6 +88,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   server.headersTimeout   = 66_000;   // must exceed keepAliveTimeout
   server.listen(config.port, () => console.log(JSON.stringify({ msg: 'listening', ...config })));
   for (const sig of ['SIGTERM', 'SIGINT']) {
-    process.on(sig, () => server.close(() => { repo.destroy(); process.exit(0); }));
+    process.on(sig, () => server.close(async () => {
+      // ECS sends SIGTERM then waits stopTimeout. Flushing here is worth doing:
+      // at 1000 RPS an unflushed 15s interval is 15,000 requests missing from
+      // the window. Counters are cumulative, but only for a task still alive to
+      // send them.
+      if (otel) await otel.shutdown().catch(() => {});
+      repo.destroy();
+      process.exit(0);
+    }));
   }
 }

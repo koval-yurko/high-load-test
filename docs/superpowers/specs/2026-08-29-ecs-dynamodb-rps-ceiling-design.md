@@ -5,7 +5,9 @@
   force. **D7 is reversed** and its replacement is being designed; see the banner below.
 - **Project directory:** `ecs-dynamodb-rps-ceiling/`
 - **Supersedes:** nothing. This is the repo's first project spec.
-- **Amended by:** the SLI-collection spec (in design as of 2026-08-30), which reverses **D7**.
+- **Amended by:** `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`
+  (2026-08-30), which reverses **D7** and amends §4, §5, §7, §8, §11 and §12. Each of those
+  carries a pointer at the decision itself — do not rely on this line alone.
 
 > ### ⚠️ D7 is no longer in force — read this before acting on §7
 >
@@ -70,7 +72,7 @@ and should be revisited for project #2, not treated as a general preference.
 | D4 | Four endpoints with different natural costs, frozen mix | A single cheap `GetItem` measures a DB proxy, not a service. Endpoints spanning DB-bound to CPU-bound make the ceiling composite and let the two constraints be released independently (§9). |
 | D5 | **Ratio SLI with per-class thresholds**, not a percentile | A percentile cannot compose across endpoints with different natural costs, and cannot produce an error budget. See §7 — this is forced, not preferred. |
 | D6 | `billing_mode = "PROVISIONED"` | Provisioned capacity converts overload into **throttling**, on-demand converts it into **bill**. Note the cost argument does *not* hold: provisioned is 3.46× cheaper only at full utilisation, break-even is ~29%, and a lab environment that idles between runs sits near that line. The reason to provision is the **hard, visible ceiling** — not savings. |
-| ~~D7~~ | ~~SLI source is k6 metrics, not CloudWatch~~ **REVERSED 2026-08-30 — do not act on this row.** The SLI is emitted by the service itself; k6 thresholds are a run gate, not the SLO. See the banner at the top of this document. | ~~Making ALB `TargetResponseTime` authoritative needs a CloudWatch datasource plus an IAM role for Grafana.~~ **This justification was false by the time it was tested — both already exist on the stack.** The `Server-Timing` instrumentation in §5 is still valuable for *attribution*, but attribution is not the same thing as an SLI, and conflating them is the error this row made. CloudWatch metrics still appear on dashboards. |
+| ~~D7~~ | ~~SLI source is k6 metrics, not CloudWatch~~ **REVERSED 2026-08-30 — do not act on this row.** The SLI is emitted by the service itself; k6 thresholds are a run gate, not the SLO. Replaced by `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md` — see the banner at the top of this document. | ~~Making ALB `TargetResponseTime` authoritative needs a CloudWatch datasource plus an IAM role for Grafana.~~ **This justification was false by the time it was tested — both already exist on the stack.** The `Server-Timing` instrumentation in §5 is still valuable for *attribution*, but attribution is not the same thing as an SLI, and conflating them is the error this row made. CloudWatch metrics still appear on dashboards. |
 | D8 | Seed via `npm run seed`, not Terraform resources | Thousands of `aws_dynamodb_table_item` resources would bloat state and slow every plan. This is seed *data*, not infrastructure, and it dies with the table on destroy. A deliberate, recorded deviation from the repo's "Terraform is the only way" rule — scoped to data only. |
 | D9 | CPU work is `pbkdf2Sync`, tunable by iteration count | Deterministic, allocation-free, no GC noise, therefore the most reproducible option. Blocks the event loop **by design**: that produces a sharp knee (throughput ≈ 1/cpu_time on one thread) and catastrophic queueing past it, which is exactly what a latency SLO should catch. It is also honest work an API really performs. A spin loop would measure an invented benchmark. |
 | D10 | `Server-Timing` + event-loop lag instrumentation | Splitting load across service and database is easy; **attributing the ceiling is the hard part**. Without it, run A reports "it stopped at N" with no cause. |
@@ -91,8 +93,15 @@ tagged resources from the teardown sweep that exists to find them. **Fixed as of
 
 ## 4. Infrastructure (`terraform/`)
 
+> **⚠ Amended by `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`.** Two changes: the workspace
+> moves to **remote execution** (S12 — HCP workspace variables are only injected in remote mode, so
+> credentials held in Terraform Cloud would otherwise be silently ignored), and the resource list
+> below gains a **Grafana Alloy collector service**, a Cloud Map private DNS namespace, a collector
+> security group and a CloudWatch-read IAM role. The collector is always-on and billable: it roughly
+> doubles this environment's idle cost.
+
 All resources carry `Project = "ecs-dynamodb-rps-ceiling"` via `default_tags` on the AWS provider.
-State lives in a dedicated Terraform Cloud workspace, local execution mode.
+State lives in a dedicated Terraform Cloud workspace, ~~local~~ **remote** execution mode.
 
 | resource | configuration | notes |
 |---|---|---|
@@ -161,15 +170,28 @@ Items are kept **under 1 KB**. Item size is a direct multiplier on required capa
 
 ### Attribution instrumentation (D10)
 
+> **⚠ Amended by `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`.** This section is no longer the
+> only source, and one sentence in it is now false. `Server-Timing` and `/stats` **remain in place** —
+> the k6 scripts are frozen and parse both — but OpenTelemetry instrumentation is primary, exporting
+> to a cluster-wide collector. The false sentence is flagged inline below.
+
 **`Server-Timing` response header** carrying per-request phase timings — `db;dur=3.1, cpu;dur=0.24`.
 k6 reads response headers and records them as custom `Trend` metrics, so `db_ms` and `cpu_ms` land
-directly in the k6 output — which §7 makes the authoritative SLI source. This delivers server-side
-phase attribution *without* the CloudWatch datasource D7 scoped out.
+directly in the k6 output — ~~which §7 makes the authoritative SLI source~~ **(no longer true: §7's
+source is now the service's own metrics)**. This delivers server-side phase attribution *without* the
+CloudWatch datasource D7 scoped out.
 
 **Event-loop lag** via `perf_hooks.monitorEventLoopDelay()`, exposed on `/stats` and scraped by a
 separate 1 RPS k6 scenario. Event-loop lag is the single best signal that the Node process rather than
 the database is the constraint: when it climbs while `db_ms` stays flat, the CPU is the ceiling
 regardless of what total latency says.
+
+> **⚠ The last clause cannot happen.** The plan's execution found `db_ms` inflating **12.1×
+> (10.9 ms → 131.9 ms) with the database unchanged**, because it is wall-clock around an `await` and
+> therefore absorbs event-loop queueing. "`db_ms` flat while lag climbs" is unreachable. Use
+> `ThrottledRequests == 0` plus DynamoDB's `SuccessfulRequestLatency` as the DB-bound discriminator;
+> the gap between that and `db_ms` *is* the queueing signal. `@opentelemetry/instrumentation-aws-sdk`
+> inherits the same flaw and does not fix it — see §11 of `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`.
 
 Together these make success criterion #2 achievable — DynamoDB `ThrottledRequests` climbing means DB
 bound; event-loop lag climbing with flat `db_ms` means service bound.
@@ -247,6 +269,11 @@ number in the project.
 
 ## 7. SLO (`slo.yaml`)
 
+> **⚠ Amended by `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`.** The **objective is
+> unchanged** — a class-threshold ratio, for exactly the reasons this section gives, and that argument
+> is why it survived. What changed is its **source** (k6 → the service's own OpenTelemetry native
+> histograms, queried with `histogram_fraction`) and its **window** (see the subsection below).
+
 ### Why revision 1's `p95 < 200 ms` could not survive §5
 
 A percentile across heterogeneous endpoints measures the traffic mix, not the system. With 55% of
@@ -290,7 +317,15 @@ Secondary objectives are alerted on but do not gate decisions.
 
 ### The window mismatch, stated explicitly
 
-A Grafana SLO window is 28–30 days; a k6 run is minutes. Same SLI, different windows. `results.md`
+> **⚠ The window is now `7d`, not 28–30 days** (S13 of `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`, corrected from `3d` on 2026-08-31 — Grafana's SLO API refuses any window outside 7–32 days).
+> Grafana Cloud Free retains metrics for **14 days**, so a 30-day objective could never have been
+> evaluated over the window it claimed. The argument below survives intact — run-scoped attainment
+> plus a burn-rate multiple is still what makes a 5-minute run comparable to a budget — but every
+> derived burn threshold changes with it. The committed 14.4×/1h and 6×/6h encode "2% and 5% of
+> budget"; against 72 hours they would silently mean 20% and 50%, so the alert windows become **6m**
+> and **36m**.
+
+A Grafana SLO window is ~~28–30 days~~ ~~3 days~~ **7 days**; a k6 run is minutes. Same SLI, different windows. `results.md`
 therefore records **run-scoped attainment** *and* the **burn-rate multiple** — observed error rate ÷
 budgeted error rate — which is what `fastburn`/`slowburn` alert on and what makes a short observation
 comparable to a long-window budget. "Burned budget 14× faster than sustainable" travels between runs;
@@ -328,9 +363,18 @@ calibration of shape A, then pinned.
 mapped to the 55/15/25/5 split (11/3/5/1 of every 20 iterations) — giving the exact ratio off a single
 stage array with no sampling variance between runs. Not `Math.random()`.
 
-**Metrics recorded per run:** the `slo_met` `Rate` (the primary SLI), `http_req_duration` tagged by
-endpoint class as sub-metrics, the `db_ms` and `cpu_ms` `Trend`s from `Server-Timing`, event-loop lag,
-and DynamoDB `ThrottledRequests`.
+**Metrics recorded per run:** the `slo_met` `Rate` (~~the primary SLI~~ **the run gate** — see below),
+`http_req_duration` tagged by endpoint class as sub-metrics, the `db_ms` and `cpu_ms` `Trend`s from
+`Server-Timing`, event-loop lag, and DynamoDB `ThrottledRequests`.
+
+> **⚠ Amended by `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`.** k6's `slo_met` is a **run
+> gate**, not the SLO: an in-band assertion that this particular run passed, evaluated by k6 itself
+> with no datasource involved. It keeps working exactly as written and nothing here needs changing.
+> The scripts stay frozen, so the 1 RPS `stats` scenario also stays even though the service now
+> exports event-loop lag continuously — a profile is only comparable to itself.
+>
+> Expect the two attainment figures to **disagree**: k6's is client-side and includes Frankfurt RTT
+> and ALB queueing; the service's includes neither. `results.md` must label which is which.
 
 **Mandatory warm-up/drain before every run** — see §10. Not optional.
 
@@ -419,7 +463,7 @@ Each has a defined resolution method. None blocks writing the implementation pla
 | DynamoDB hourly budget | user decision, informed by `capacity-model.html` |
 | Baseline RCU/WCU | derived from the §6 weighted model once the budget is set |
 | Fargate task size (0.25 vs 0.5 vCPU) | §5 calibration — size up if the CPU knob has no usable range at 0.25 |
-| `pbkdf2` iteration count | calibrated so the service ceiling lands at ~70% of the budgeted DB ceiling |
+| `pbkdf2` iteration count ⚠ | calibrated so the service ceiling lands at ~70% of the budgeted DB ceiling. **Re-opened:** the measured `2675` was calibrated against an *uninstrumented* service; OpenTelemetry costs CPU per request, so it must be re-derived. See `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`. |
 | Shape A ramp stages and ceiling | first exploratory calibration run, then pinned |
 | Shape C multiplier (~3× nominal) | set after the shape A knee is known |
 | Warm-up/drain duration | chosen to exceed DynamoDB's ~300 s burst window, then fixed |
@@ -430,7 +474,10 @@ Each has a defined resolution method. None blocks writing the implementation pla
 
 ## 12. Out of scope
 
-- CloudWatch as the authoritative SLI source (D7) — dashboards only.
+- CloudWatch as the authoritative SLI source (D7) — dashboards only. **Still true**, but note that
+  `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md` routes CloudWatch metrics into the
+  *same* Prometheus datasource as the service metrics, so DB-side attribution now sits beside
+  service-side latency in one query. It is attribution, never the SLI.
 - DynamoDB table autoscaling — deliberately excluded from the baseline, since autoscaling within a max
   weakens the strict-ceiling property of D6. Available as a later improvement lever.
 - Moving CPU work off the event loop (worker threads, async crypto) — a legitimate future "change one

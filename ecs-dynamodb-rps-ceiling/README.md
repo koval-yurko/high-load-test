@@ -4,10 +4,46 @@ Find the request rate at which a Node.js service on ECS Fargate + DynamoDB stops
 class-based SLO — and, the part that actually matters, **prove which resource bound first: the
 service or the database.** A ceiling without an attributed cause is a number, not a result.
 
-> **Status — 2026-08-30.** Tasks 1–17 of the implementation plan are complete. The environment is
-> **live** and has been since `2026-08-29T18:27:55Z`. No load test has run yet.
-> Capacity is deliberately still at the free-tier 25/25 — **raising it is a separate decision**
-> (see Phase 3).
+> **Status — 2026-08-31.** The environment is **live** and has been since `2026-08-29T18:27:55Z`.
+> **No load test has run yet.** Capacity is deliberately still at the free-tier 25/25 — **raising it
+> is a separate decision** (see Phase 3), and it is now *pinned* in `terraform/dev.tfvars`, which
+> outranks the generated `capacity.auto.tfvars`.
+>
+> The service now **emits its own SLI**: an OpenTelemetry exponential histogram, exported through a
+> cluster-wide Grafana Alloy collector, landing in Grafana Cloud as a native histogram. Class
+> thresholds are applied at query time, so changing the objective needs no deploy. A Lambda
+> heartbeat generates traffic every minute, so an error budget accrues between load tests.
+>
+> Measured 2026-08-31 with nothing running: **SLI = 0.99874** against a 99% objective.
+
+## The SLI, and the two numbers that are not the same
+
+The SLO is the **service-side** figure: the proportion of requests meeting their own class
+threshold, measured from the first line of the request callback to the response's `finish` event.
+It is emitted continuously and does not depend on a k6 run having happened.
+
+A k6 run reports a *different* number — client-side, including Frankfurt RTT and ALB queueing. Both
+legitimately answer "did it meet the SLO", and `results.md` therefore has two columns,
+`k6 attainment` and `service attainment`. Never record one number in both.
+
+```bash
+# the SLI, as the alert rules compute it (needs a READ-capable Grafana token;
+# K6_PROMETHEUS_RW_* is write-scoped and cannot query)
+PROXY="$GRAFANA_URL/api/datasources/proxy/uid/grafanacloud-prom/api/v1"
+curl -s -H "Authorization: Bearer $GRAFANA_AUTH" --data-urlencode 'query=<the class-ratio query>' "$PROXY/query"
+```
+
+**Two things to know before reading any number from it:**
+
+- **The population is classified traffic only** (`class=~"fast|standard|heavy"`). The ALB is
+  internet-facing, and scanner 404s on unmatched paths were 68% of the idle population — every one
+  counted as an SLO violation until the population was restricted. A route added to `handlers.js`
+  without a `slo.yaml` entry is silently unmeasured; that is the safe direction, but it is a
+  direction.
+- **Idle and under-load measure different regimes.** At ~4 req/min the fast class sits at 98.3%
+  against its 50 ms threshold, because DynamoDB connections go cold between heartbeats and
+  `GetItem` peaks at 105 ms. Sustained load keeps them warm. Do not read an idle dip as a
+  regression.
 
 ---
 
@@ -325,13 +361,22 @@ memory — they live in `pricing.json` with the query that produced them.
 
 ## Known gaps
 
-- **No Grafana dashboard.** `grafana/alerts.tf` was written to the `/slo` skill's spec but has
-  never been `terraform validate`d against the real provider, and no provider is wired. Its
-  queries also carry **no label selector**, so on a datasource shared with other k6 runs they
-  would silently aggregate unrelated tests. Scope them before applying.
-- **`/slo` has no generation script** — it is documentation only. The four generated outputs were
-  hand-written to its spec, so "one file, four outputs, cannot drift" is enforced by discipline,
-  not tooling.
+- ~~**No Grafana dashboard.**~~ Resolved 2026-08-31. `grafana/` is a Terraform module; the alert
+  rules are generated, applied, scoped by `job` and `class`, and all four evaluate (`health=ok`).
+  A burn alert was driven to `firing` and reverted, so the path is proven rather than assumed.
+- ~~**`/slo` has no generation script.**~~ Resolved 2026-08-31. `npm run slo:generate` /
+  `slo:check` render the k6 thresholds, the capacity tfvars, the collector class map, the alert
+  rules and the SLO's own objective from `slo.yaml`. Fidelity was proven by regenerating the
+  committed outputs and requiring them back byte for byte.
+- **Terraform does not rebuild the container image.** Any change under `src/` needs an explicit
+  build / push / `--force-new-deployment` cycle. This is easy to forget and fails silently: the
+  collector receives nothing from a service that looks healthy in every other respect.
+- **The SLO window is `7d` and cannot be anything else here.** Grafana's SLO API refuses windows
+  outside 7–32 days; Grafana Cloud Free retains metrics for 14. Those two limits leave one usable
+  value.
+- **`traffic_source` is bounded in the service, not the collector.** Recording a raw user-agent
+  would put unbounded cardinality on a public ALB. Adding a new source means editing
+  `trafficSource()` in `src/otel.js` and redeploying.
 - **Client-side latency measured from a laptop is ~80 ms and is almost all RTT to Frankfurt.**
   Server-side `db` is ~4 ms. Runs originating in-zone will not pay that cost.
 - **The `/healthz` no-header assertion** proves "no DB call" only because `health()` calls neither
