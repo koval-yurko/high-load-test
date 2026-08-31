@@ -3,6 +3,9 @@
 - **Date:** 2026-08-30
 - **Status:** **approved** (2026-08-30). Plan: `docs/superpowers/plans/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection.md`
 - **Project directory:** `ecs-dynamodb-rps-ceiling/`
+- **Amended by:** `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`
+  (2026-08-31), which extends this pipeline with two phase histograms and amends **§11**. S1–S12 all stand;
+  it reverses nothing here.
 - **Amends:** `docs/superpowers/specs/2026-08-29-ecs-dynamodb-rps-ceiling-design.md` — see §15 for the
   decision-by-decision map. It is not superseded: §4, §6, §9 and §10 of that document remain in force
   and Tasks 1–17 of its plan stand.
@@ -124,7 +127,7 @@ egress must work without a NAT gateway.
 | `@opentelemetry/api`, `sdk-node`, `sdk-metrics` | meter provider, `PeriodicExportingMetricReader` at 15 s |
 | `@opentelemetry/exporter-metrics-otlp-http` | OTLP to the collector; temporality pinned cumulative (S6) |
 | `@opentelemetry/instrumentation-http` | `http.server.request.duration` with `http.route` — the SLI population |
-| `@opentelemetry/instrumentation-aws-sdk` | DynamoDB call counts, errors and **SDK retries**. *Not* a fix for the `db_ms` inflation — see §11 |
+| `@opentelemetry/instrumentation-aws-sdk` | ~~DynamoDB call counts, errors and **SDK retries**~~ **— emits NOTHING; verified 2026-08-31.** No `aws_*` or `db_*` series exist under `job="ecs-dynamodb-rps-ceiling"`. Its removal (or repair) is decided in `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md` A2/risk 3. Still *not* a fix for the `db_ms` inflation — see §11 |
 | `@opentelemetry/instrumentation-runtime-node` | `nodejs.eventloop.delay` — supersedes the `/stats` poll |
 | `@opentelemetry/resource-detector-aws` | ECS task identity → `service.instance.id` (S7) |
 | `@opentelemetry/resources`, `semantic-conventions` | resource and attribute naming |

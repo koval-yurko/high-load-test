@@ -14,6 +14,17 @@
 
 ## Status — **in progress**, updated 2026-08-31 (third revision)
 
+> ### ⚠️ 2026-08-31 (later the same day) — Tasks 18–23 are gated again, on one more document.
+>
+> `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md` reverses **D10**:
+> the `Server-Timing` header and `GET /stats` are deleted and attribution moves into the OTel
+> pipeline. It must land **before Task 18**, because it changes the k6 scripts, and those freeze
+> the moment baselines B and C are recorded. It also **supersedes Task 22 Step 1**. Nothing
+> already executed is invalidated.
+>
+> This is a smaller gate than the last one: no AWS resource changes, one container rebuild,
+> and the environment keeps running throughout.
+
 **Tasks 1–17 complete. Tasks 18–23 are UNBLOCKED and ready to resume** — the design change they
 waited on has shipped. See the note directly below for what changed underneath them; two of those
 changes alter what Task 18 does and how Task 22 records results.
@@ -2856,6 +2867,13 @@ If the run completes without aborting, the ceiling is above `MAX_RATE` — raise
 
 - [ ] **Step 7: Attribute the ceiling — this is the actual deliverable**
 
+> **⚠ BLOCKED 2026-08-31. Use the four-row table in §5 of
+> `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`, not the one below.**
+> That document also deletes the `Server-Timing` header and `/stats`, so `db_ms`, `cpu_ms` and
+> `el_delay` no longer exist in the k6 summary at all — the numbers this step reads come from
+> Grafana. It must land **before Task 18 runs**: once baselines B and C exist the k6 scripts are
+> frozen, and changing them afterwards invalidates every recorded row.
+
 > **Corrected 2026-08-29. The original table here could not work, and read literally it would
 > have attributed a service ceiling to the database — the exact inversion this project exists to
 > avoid.** It relied on `db_ms` staying flat while the service saturated. It cannot:
@@ -3114,6 +3132,12 @@ git commit -m "perf(ecs-dynamodb-rps-ceiling): raise provisioned capacity to rel
 **Every number in these files must come from a run in this session**, quoted with the k6 output or CloudWatch query that produced it. No remembered figures, no extrapolation — this is `CLAUDE.md`'s verification rule applied literally.
 
 - [ ] **Step 1: Write `ecs-dynamodb-rps-ceiling/README.md`**
+
+> **⚠ SUPERSEDED 2026-08-31 by §8 of
+> `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`.**
+> A rewrite, not an amendment: the README is reorganised around the question a reader arrives
+> with, answered by generated Grafana deep-links, with the CLI runbook demoted to an appendix.
+> Do not execute the paragraph below — build §8's structure instead.
 
 Sections, in this order: what it provisions and the hourly cost; how to run it (`/env up`, push, seed, `/loadtest`); the endpoint catalogue and the frozen 55/15/25/5 mix; the SLO and why it is a ratio rather than a percentile; **the measured results** — the knee, the bound resource and its evidence, and the two before/after pairs; the mandatory 6-minute drain and why; and the capacity/cost model with a link to `capacity-model.html`.
 

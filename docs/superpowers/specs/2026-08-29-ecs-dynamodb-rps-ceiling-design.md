@@ -8,6 +8,9 @@
 - **Amended by:** `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`
   (2026-08-30), which reverses **D7** and amends §4, §5, §7, §8, §11 and §12. Each of those
   carries a pointer at the decision itself — do not rely on this line alone.
+- **Amended by:** `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`
+  (2026-08-31), which reverses **D10** and amends §5, §8 and §9. Each carries a pointer at the
+  decision itself — do not rely on this line alone.
 
 > ### ⚠️ D7 is no longer in force — read this before acting on §7
 >
@@ -75,7 +78,7 @@ and should be revisited for project #2, not treated as a general preference.
 | ~~D7~~ | ~~SLI source is k6 metrics, not CloudWatch~~ **REVERSED 2026-08-30 — do not act on this row.** The SLI is emitted by the service itself; k6 thresholds are a run gate, not the SLO. Replaced by `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md` — see the banner at the top of this document. | ~~Making ALB `TargetResponseTime` authoritative needs a CloudWatch datasource plus an IAM role for Grafana.~~ **This justification was false by the time it was tested — both already exist on the stack.** The `Server-Timing` instrumentation in §5 is still valuable for *attribution*, but attribution is not the same thing as an SLI, and conflating them is the error this row made. CloudWatch metrics still appear on dashboards. |
 | D8 | Seed via `npm run seed`, not Terraform resources | Thousands of `aws_dynamodb_table_item` resources would bloat state and slow every plan. This is seed *data*, not infrastructure, and it dies with the table on destroy. A deliberate, recorded deviation from the repo's "Terraform is the only way" rule — scoped to data only. |
 | D9 | CPU work is `pbkdf2Sync`, tunable by iteration count | Deterministic, allocation-free, no GC noise, therefore the most reproducible option. Blocks the event loop **by design**: that produces a sharp knee (throughput ≈ 1/cpu_time on one thread) and catastrophic queueing past it, which is exactly what a latency SLO should catch. It is also honest work an API really performs. A spin loop would measure an invented benchmark. |
-| D10 | `Server-Timing` + event-loop lag instrumentation | Splitting load across service and database is easy; **attributing the ceiling is the hard part**. Without it, run A reports "it stopped at N" with no cause. |
+| ~~D10~~ | ~~`Server-Timing` + event-loop lag instrumentation~~ **REVERSED 2026-08-31 — do not act on this row.** The signals stay; the *transport* changes. `Server-Timing` and `GET /stats` are deleted and attribution moves to OTel instruments (`http.server.db.duration`, `http.server.cpu.duration`) plus CloudWatch. Replaced by **A1–A6** of `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`. | The premise — attributing the ceiling is the hard part — **stands and is why this was reversed.** Two things were wrong: measurement was published on the service's HTTP surface for a test harness's benefit, and event-loop lag was already flowing as `nodejs_eventloop_delay_*` from `RuntimeNodeInstrumentation`, making `/stats` pure duplication (verified live 2026-08-31). |
 
 ---
 
@@ -170,6 +173,11 @@ Items are kept **under 1 KB**. Item size is a direct multiplier on required capa
 
 ### Attribution instrumentation (D10)
 
+> **⚠ SUPERSEDED IN FULL 2026-08-31 by `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md` §3–§5.**
+> `Server-Timing` and `/stats` are **deleted**, not merely demoted — the sentence below saying they "remain in
+> place" was true only while the k6 scripts were frozen, and nothing has been measured, so they are not.
+> Read that document instead of this section. The rest of this banner is retained for history.
+>
 > **⚠ Amended by `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`.** This section is no longer the
 > only source, and one sentence in it is now false. `Server-Timing` and `/stats` **remain in place** —
 > the k6 scripts are frozen and parse both — but OpenTelemetry instrumentation is primary, exporting
@@ -350,7 +358,10 @@ All runs: `k6 cloud run`, load zone `amazon:de:frankfurt`.
 | **B — constant** | `constant-arrival-rate` at the discovered RPS | the repeatable baseline every later run is compared against |
 | **C — stress** | `ramping-arrival-rate` to ~3× the knee | deliberately burn the SLO and spend error budget |
 
-Plus a **`stats` scenario** at 1 RPS in every run, polling `/stats` for event-loop lag (§5).
+~~Plus a **`stats` scenario** at 1 RPS in every run, polling `/stats` for event-loop lag (§5).~~
+> **⚠ DELETED 2026-08-31** by `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md` §4. `/stats` no longer exists; event-loop lag comes from
+> `nodejs_eventloop_delay_*`, which the service has been emitting all along. k6 records only what a client
+> can observe (**A7**).
 
 **Arrival-rate, never `ramping-vus`.** VUs measure concurrency, not throughput: under load a VU simply
 waits longer, so a VU ramp stops adding RPS exactly when the measurement needs it most.
@@ -397,10 +408,17 @@ provisioned (§13 sets capacity at step 5; shape A does not run until step 7).
 The CPU knob is calibrated so the **service ceiling sits at roughly 70% of the budgeted DB ceiling**.
 That makes the sequence deterministic rather than lucky:
 
-1. **Run A** → the service binds first: event-loop lag climbs, `db_ms` stays flat, `ThrottledRequests`
+1. **Run A** → the service binds first: event-loop lag climbs, ~~`db_ms` stays flat~~, `ThrottledRequests`
    is zero. **Change: autoscale 1→4 tasks.**
 2. **Re-run** → service ceiling is now ~2.8× the DB ceiling, so **DynamoDB throttles**: `db_ms` climbs,
-   `ThrottledRequests` rises, event-loop lag stays flat. **Change: raise capacity per §6.**
+   `ThrottledRequests` rises, ~~event-loop lag stays flat~~. **Change: raise capacity per §6.**
+
+> **⚠ The evidence clauses above are wrong; the sequence is right.** Amended 2026-08-31 by
+> `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md` §5. `db_ms` cannot "stay flat" while the
+> service binds — it wraps an `await` and absorbs the queueing (12.1× inflation measured, DB
+> unchanged). Use the four-row table in §5 of that document: `ThrottledRequests` separates DB-capacity
+> from everything else, `SuccessfulRequestLatency` is the clean DB clock, and the **gap** between it
+> and in-process `db` is the queueing signal. The service-binds-then-DB-binds *ordering* is unchanged.
 3. **Re-run** → both constraints released; record the new ceiling and the new $/hour.
 
 Two before/after pairs from one environment, each releasing a different constraint, **each with the
@@ -415,6 +433,11 @@ it, and swap the order of steps 1 and 2.
 (primary and per-class), error budget burned, burn-rate multiple, p95/p99 by class, `db_ms`/`cpu_ms`
 split, event-loop lag, `ThrottledRequests`, provisioned RCU/WCU, **$/hour**, and the one change
 distinguishing it from the previous run.
+
+> **⚠ Amended 2026-08-31** by `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md` §9.
+> The `db_ms`/`cpu_ms` split and event-loop lag come from **Grafana, not the k6 summary** — k6 no
+> longer records them. Two columns are added: `bound resource` and `queueing ms`. `SLO attainment`
+> remains two distinct columns (`k6 attainment`, `service attainment`) per the 2026-08-30 plan.
 
 ---
 
