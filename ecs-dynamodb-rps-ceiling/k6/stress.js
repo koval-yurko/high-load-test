@@ -1,5 +1,5 @@
 import { thresholds } from './lib/slo.js';
-import { doRequest, pollStats } from './lib/request.js';
+import { doRequest } from './lib/request.js';
 
 const BASE_URL = __ENV.BASE_URL;
 const RATE = Number(__ENV.RATE);          // the knee
@@ -32,13 +32,7 @@ export const options = {
       ],
       gracefulStop: '15s',
     },
-    stats: {
-      executor: 'constant-arrival-rate',
-      rate: 1, timeUnit: '1s', duration: '5m',
-      preAllocatedVUs: 2, exec: 'stats', gracefulStop: '5s',
-    },
   },
 };
 
 export default function () { doRequest(BASE_URL); }
-export function stats() { pollStats(BASE_URL); }

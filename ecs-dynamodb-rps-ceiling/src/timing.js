@@ -14,8 +14,14 @@ export function createTimer() {
       const t0 = performance.now();
       try { return fn(); } finally { add(name, performance.now() - t0); }
     },
-    header() {
-      return [...marks].map(([n, ms]) => `${n};dur=${ms.toFixed(3)}`).join(', ');
+    /**
+     * Marks in SECONDS, because that is the unit of the histograms in otel.js.
+     * The conversion lives here, once, rather than at every call site.
+     */
+    phases() {
+      const out = {};
+      for (const [name, ms] of marks) out[name] = ms / 1000;
+      return out;
     },
   };
 }

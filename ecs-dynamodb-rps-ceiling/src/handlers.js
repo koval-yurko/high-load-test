@@ -1,6 +1,5 @@
 // src/handlers.js
 import { burn } from './cpu.js';
-import { snapshot } from './stats.js';
 import { buildItem, randomId } from './item.js';
 
 // `template` is the route PATTERN, never the concrete path. It is the metric's
@@ -8,7 +7,6 @@ import { buildItem, randomId } from './item.js';
 // raw path here would mint one time series per item id.
 const ROUTES = [
   { name: 'health',  method: 'GET',  re: /^\/healthz$/,                 keys: [],           template: '/healthz' },
-  { name: 'stats',   method: 'GET',  re: /^\/stats$/,                   keys: [],           template: '/stats' },
   { name: 'feed',    method: 'GET',  re: /^\/feeds\/([^/]+)$/,          keys: ['pk'],       template: '/feeds/:pk' },
   { name: 'getItem', method: 'GET',  re: /^\/items\/([^/]+)\/([^/]+)$/, keys: ['pk', 'sk'], template: '/items/:pk/:sk' },
   { name: 'putItem', method: 'POST', re: /^\/items$/,                   keys: [],           template: '/items' },
@@ -42,8 +40,6 @@ export function createHandlers({ repo, config }) {
 
   return {
     async health() { return { status: 200, body: { ok: true } }; },
-
-    async stats() { return { status: 200, body: snapshot({ reset: true }) }; },
 
     async getItem({ params, timer }) {
       const item = await timer.measure('db', () => repo.getItem(params.pk, params.sk));

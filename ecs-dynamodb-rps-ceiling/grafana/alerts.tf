@@ -45,14 +45,14 @@ resource "grafana_rule_group" "latency_classes_primary_fastburn" {
         expr    = <<-PROMQL
           1 - (
             (
-              sum(histogram_fraction(0, 0.05, rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="fast"}[14m])) * histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="fast"}[14m])))
+              (histogram_fraction(0, 0.05, sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="fast"}[14m]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="fast"}[14m]))) or vector(0))
             +
-              sum(histogram_fraction(0, 0.2, rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="standard"}[14m])) * histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="standard"}[14m])))
+              (histogram_fraction(0, 0.2, sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="standard"}[14m]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="standard"}[14m]))) or vector(0))
             +
-              sum(histogram_fraction(0, 0.8, rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="heavy"}[14m])) * histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="heavy"}[14m])))
+              (histogram_fraction(0, 0.8, sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="heavy"}[14m]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="heavy"}[14m]))) or vector(0))
             )
             /
-            sum(histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy"}[14m])))
+            histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy"}[14m])))
           )
         PROMQL
       })
@@ -143,14 +143,14 @@ resource "grafana_rule_group" "latency_classes_tail_fastburn" {
         expr    = <<-PROMQL
           1 - (
             (
-              sum(histogram_fraction(0, 0.15, rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="fast"}[14m])) * histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="fast"}[14m])))
+              (histogram_fraction(0, 0.15, sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="fast"}[14m]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="fast"}[14m]))) or vector(0))
             +
-              sum(histogram_fraction(0, 0.6, rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="standard"}[14m])) * histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="standard"}[14m])))
+              (histogram_fraction(0, 0.6, sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="standard"}[14m]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="standard"}[14m]))) or vector(0))
             +
-              sum(histogram_fraction(0, 2.4, rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="heavy"}[14m])) * histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="heavy"}[14m])))
+              (histogram_fraction(0, 2.4, sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="heavy"}[14m]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="heavy"}[14m]))) or vector(0))
             )
             /
-            sum(histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy"}[14m])))
+            histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy"}[14m])))
           )
         PROMQL
       })
@@ -241,14 +241,14 @@ resource "grafana_rule_group" "latency_classes_primary_slowburn" {
         expr    = <<-PROMQL
           1 - (
             (
-              sum(histogram_fraction(0, 0.05, rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="fast"}[84m])) * histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="fast"}[84m])))
+              (histogram_fraction(0, 0.05, sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="fast"}[84m]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="fast"}[84m]))) or vector(0))
             +
-              sum(histogram_fraction(0, 0.2, rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="standard"}[84m])) * histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="standard"}[84m])))
+              (histogram_fraction(0, 0.2, sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="standard"}[84m]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="standard"}[84m]))) or vector(0))
             +
-              sum(histogram_fraction(0, 0.8, rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="heavy"}[84m])) * histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="heavy"}[84m])))
+              (histogram_fraction(0, 0.8, sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="heavy"}[84m]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="heavy"}[84m]))) or vector(0))
             )
             /
-            sum(histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy"}[84m])))
+            histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy"}[84m])))
           )
         PROMQL
       })
@@ -339,14 +339,14 @@ resource "grafana_rule_group" "latency_classes_tail_slowburn" {
         expr    = <<-PROMQL
           1 - (
             (
-              sum(histogram_fraction(0, 0.15, rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="fast"}[84m])) * histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="fast"}[84m])))
+              (histogram_fraction(0, 0.15, sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="fast"}[84m]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="fast"}[84m]))) or vector(0))
             +
-              sum(histogram_fraction(0, 0.6, rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="standard"}[84m])) * histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="standard"}[84m])))
+              (histogram_fraction(0, 0.6, sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="standard"}[84m]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="standard"}[84m]))) or vector(0))
             +
-              sum(histogram_fraction(0, 2.4, rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="heavy"}[84m])) * histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy", class="heavy"}[84m])))
+              (histogram_fraction(0, 2.4, sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="heavy"}[84m]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy", class="heavy"}[84m]))) or vector(0))
             )
             /
-            sum(histogram_count(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz|/stats", class=~"fast|standard|heavy"}[84m])))
+            histogram_count(sum(rate(http_server_request_duration_seconds{job="ecs-dynamodb-rps-ceiling", http_route!~"/healthz", class=~"fast|standard|heavy"}[84m])))
           )
         PROMQL
       })

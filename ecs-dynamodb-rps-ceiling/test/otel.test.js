@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { DiagLogLevel, diag } from '@opentelemetry/api';
 import { AggregationTemporality, DataPointType, MetricReader } from '@opentelemetry/sdk-metrics';
 import { resourceFromAttributes } from '@opentelemetry/resources';
-import { REQUEST_DURATION, bindHistogram, buildMeterProvider, buildViews, installDiagLogger, recordRequest, startOtel, trafficSource } from '../src/otel.js';
+import { CPU_DURATION, DB_DURATION, REQUEST_DURATION, bindHistogram, buildMeterProvider, buildViews, installDiagLogger, recordRequest, startOtel, trafficSource } from '../src/otel.js';
 
 /** Minimal reader: collect on demand, no timer, no exporter, no network. */
 class TestReader extends MetricReader {
@@ -178,5 +178,74 @@ test('the recorded traffic_source follows the user agent', async () => {
     .find((m) => m.descriptor.name === REQUEST_DURATION).dataPoints[0];
 
   assert.equal(point.attributes['traffic_source'], 'heartbeat');
+  await provider.shutdown();
+});
+
+test('phase histograms record db and cpu with the request attributes', async () => {
+  const { reader, provider } = await collectOne();
+  recordRequest({
+    route: '/reports', method: 'POST', status: 200, durationSeconds: 0.012,
+    userAgent: 'k6/1.4.0', phases: { db: 0.0099, cpu: 0.0016 },
+  });
+  const { resourceMetrics } = await reader.collect();
+  const metrics = resourceMetrics.scopeMetrics[0].metrics;
+  const byName = (n) => metrics.find((m) => m.descriptor.name === n);
+
+  for (const name of [DB_DURATION, CPU_DURATION]) {
+    const m = byName(name);
+    assert.ok(m, `${name} was not recorded`);
+    // The view must apply to these exactly as it does to request duration,
+    // or they land as explicit buckets and histogram_fraction stops working.
+    assert.equal(m.dataPointType, DataPointType.EXPONENTIAL_HISTOGRAM);
+    assert.equal(m.descriptor.unit, 's');
+    assert.equal(m.dataPoints[0].attributes['http.route'], '/reports');
+    assert.equal(m.dataPoints[0].attributes['traffic_source'], 'k6');
+  }
+  assert.equal(byName(DB_DURATION).dataPoints[0].value.sum, 0.0099);
+  assert.equal(byName(CPU_DURATION).dataPoints[0].value.sum, 0.0016);
+  await provider.shutdown();
+});
+
+test('all three histograms carry an IDENTICAL attribute set, which every subtraction query assumes', async () => {
+  // Spec section 3: "Attributes on all three, identical." This is not tidiness --
+  // queueing = db - SuccessfulRequestLatency and other = request - db - cpu both
+  // subtract one metric from another BY LABEL. One extra or missing label on any
+  // of the three and the vector match finds nothing, so the panel goes blank
+  // rather than wrong: the silent-empty failure again. Checking each metric's
+  // route and traffic_source separately (which is all the test above did) cannot
+  // see a label present on one instrument and absent from another.
+  const { reader, provider } = await collectOne();
+  recordRequest({
+    route: '/reports', method: 'POST', status: 200, durationSeconds: 0.012,
+    userAgent: 'k6/1.4.0', phases: { db: 0.0099, cpu: 0.0016 },
+  });
+  const { resourceMetrics } = await reader.collect();
+  const metrics = resourceMetrics.scopeMetrics[0].metrics;
+  const attrsOf = (n) => metrics.find((m) => m.descriptor.name === n).dataPoints[0].attributes;
+
+  const request = attrsOf(REQUEST_DURATION);
+  assert.deepEqual(attrsOf(DB_DURATION), request, `${DB_DURATION} attributes differ from ${REQUEST_DURATION}`);
+  assert.deepEqual(attrsOf(CPU_DURATION), request, `${CPU_DURATION} attributes differ from ${REQUEST_DURATION}`);
+  // Pinned, so a silently-dropped attribute cannot make all three agree on less.
+  assert.deepEqual(request, {
+    'http.route': '/reports',
+    'http.request.method': 'POST',
+    'http.response.status_code': 200,
+    'traffic_source': 'k6',
+  });
+  await provider.shutdown();
+});
+
+test('a request with no phases records duration only, and does not throw', async () => {
+  const { reader, provider } = await collectOne();
+  recordRequest({ route: '/healthz', method: 'GET', status: 200, durationSeconds: 0.0004 });
+  const { resourceMetrics } = await reader.collect();
+  const names = resourceMetrics.scopeMetrics[0].metrics.map((m) => m.descriptor.name);
+  assert.ok(names.includes(REQUEST_DURATION));
+  assert.ok(!names.includes(DB_DURATION), 'healthz must not mint a db series');
+  // CPU was omitted here, so a regression that recorded a zero cpu phase for
+  // every request -- putting /healthz into cpu_saturation_ratio's population --
+  // would have gone unnoticed.
+  assert.ok(!names.includes(CPU_DURATION), 'healthz must not mint a cpu series');
   await provider.shutdown();
 });

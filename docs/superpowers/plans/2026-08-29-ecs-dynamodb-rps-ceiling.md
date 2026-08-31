@@ -14,16 +14,36 @@
 
 ## Status — **in progress**, updated 2026-08-31 (third revision)
 
-> ### ⚠️ 2026-08-31 (later the same day) — Tasks 18–23 are gated again, on one more document.
+> ### ✅ 2026-08-31 — that gate is CLEARED. Tasks 18–23 may proceed.
 >
-> `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md` reverses **D10**:
-> the `Server-Timing` header and `GET /stats` are deleted and attribution moves into the OTel
-> pipeline. It must land **before Task 18**, because it changes the k6 scripts, and those freeze
-> the moment baselines B and C are recorded. It also **supersedes Task 22 Step 1**. Nothing
-> already executed is invalidated.
+> `docs/superpowers/plans/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics.md` is
+> **complete**, deployed and verified. `Server-Timing` and `GET /stats` are gone; attribution comes
+> from OTel histograms plus CloudWatch. Five things changed underneath these tasks:
 >
-> This is a smaller gate than the last one: no AWS resource changes, one container rebuild,
-> and the environment keeps running throughout.
+> 1. **`db_ms`, `cpu_ms`, `app_ms` and `el_delay` no longer exist in the k6 summary.** k6 records
+>    only what a client can observe. Every server-side number for `results.md` now comes from
+>    Grafana, and `/loadtest` fetches it — see `.claude/skills/loadtest/SKILL.md`.
+> 2. **Task 18 Step 7's attribution table is replaced** by the four-row table in §5 of
+>    `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`.
+>    Discriminators: `ThrottledRequests`, DynamoDB `SuccessfulRequestLatency`, the **gap** between
+>    that and in-process `db` (which *is* the queueing measurement), and `rate(cpu_sum)` against the
+>    0.25 vCPU allocation. Every row is falsifiable and none needs `db` to be a clean clock.
+> 3. **`pbkdf2_iterations` stays 2662.** Re-derivation was considered and rejected on evidence:
+>    the measured `cpu` span wraps `burn()` only, so instrumentation cannot have moved it. **But
+>    note the `cpu` phase is load-dependent** — burst figures run ~40% above idle because a 0.25 vCPU
+>    container hits its CPU quota. Expect that during the discovery run; it is the binding mechanism,
+>    not drift.
+> 4. **Task 22 Step 1 is superseded.** `ecs-dynamodb-rps-ceiling/README.md` has been rewritten around
+>    the reader's question with generated Grafana deep-links. Task 22's remaining steps stand.
+> 5. **A latent SLO defect was found and fixed** (that plan's Task 10b). `ratioExpr` applied
+>    `histogram_fraction` per series and summed, so one empty series yielded `NaN`. **This would have
+>    broken permanently at Task 20 here**, which scales 1 → 4 tasks: any window where one task serves
+>    no `fast` request would have taken the SLO and every burn alert to `NaN`. Fixed and applied;
+>    `grafana_slo` kept its id, so the accrued error budget survives.
+>
+> Two operational notes that cost time: a git worktree has no `.terraform/` (git-ignored, so `init`
+> is per-worktree), and HCP credentials come from the root `.env`, which direnv does not load in a
+> non-interactive shell — `terraform plan` fails with `"organization" must be set` until sourced.
 
 **Tasks 1–17 complete. Tasks 18–23 are UNBLOCKED and ready to resume** — the design change they
 waited on has shipped. See the note directly below for what changed underneath them; two of those
@@ -160,9 +180,13 @@ Each was verified before acting, not assumed. Full reasoning in the SDD ledger a
   ms) with the database unchanged. The row "`db_ms` flat + `el_delay` climbing ⇒ service-bound"
   can never occur. Use `ThrottledRequests == 0` as the DB-bound discriminator, plus DynamoDB's
   `SuccessfulRequestLatency`; the gap between it and `db_ms` *is* the queueing signal.
-  **Rewrite that table before relying on it.** Note `@opentelemetry/instrumentation-aws-sdk`, added by
-  the new spec, measures wall-clock around the same `await` and therefore **inherits this flaw rather
-  than curing it** — it is kept for call counts, errors and SDK retries, not attribution.
+  **Rewrite that table before relying on it.** ~~Note `@opentelemetry/instrumentation-aws-sdk`, added by
+  the new spec, measures wall-clock around the same `await` and therefore inherits this flaw rather
+  than curing it — it is kept for call counts, errors and SDK retries, not attribution.~~
+  **AMENDED 2026-08-31: `instrumentation-aws-sdk` was REMOVED.** It never emitted anything and
+  structurally could not — only `BedrockRuntimeServiceExtension` implements `updateMetricInstruments`;
+  `DynamodbServiceExtension` defines no metric instruments at all. The replacement table is §5 of
+  `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`.
 - **`/slo` has no generation script** — it is documentation only. Task 14's four outputs were
   hand-written to its spec, so "one file, four outputs, cannot drift" is currently enforced by
   discipline, not tooling. **Addressed by the new plan**, which adds the generator; its first step

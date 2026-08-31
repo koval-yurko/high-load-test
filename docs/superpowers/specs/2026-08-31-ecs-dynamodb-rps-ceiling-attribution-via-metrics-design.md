@@ -1,7 +1,10 @@
 # ecs-dynamodb-rps-ceiling — attribution via metrics
 
 - **Date:** 2026-08-31
-- **Status:** **approved** (2026-08-31). Plan: `docs/superpowers/plans/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics.md`
+- **Status:** **complete** (2026-08-31). Plan: `docs/superpowers/plans/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics.md`,
+  executed and deployed. Every decision A1–A10 shipped as written, with one addition made during
+  execution: **Task 10b**, fixing a pre-existing `NaN` in the SLO query that only appears with more
+  than one instance — see that plan's status header.
 - **Project directory:** `ecs-dynamodb-rps-ceiling/`
 - **Amends:** `docs/superpowers/specs/2026-08-29-ecs-dynamodb-rps-ceiling-design.md` (reverses **D10**)
   and `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md` (§11).
@@ -61,9 +64,9 @@ while the DB/CPU split is genuinely new work.
 | A1 | **Delete `Server-Timing` and `GET /stats`.** No measurement leaves the service over HTTP. | A response header is a transport for the client's benefit; k6 was the only client and k6 is a test harness, not a consumer. The pipeline that replaced the SLI (S1–S12) is the right transport for everything else too. |
 | A2 | **Event-loop lag and memory are reused, not rebuilt.** `RuntimeNodeInstrumentation` already emits them. | Verified flowing (§1). Building a custom histogram would duplicate a live metric to gain a fleet-wide query-time percentile — and for knee detection `max by (instance)` over four tasks is *more* informative, because it shows the imbalance a blended percentile hides. `src/otel.js` already said this: *"superseding the /stats poll — which stays anyway, because the k6 scripts are frozen."* They are no longer frozen; nothing has been measured. |
 | A3 | **Two new exponential histograms — `http.server.db.duration` and `http.server.cpu.duration`.** Not one metric with a `phase` label. | A single name holding two distributions with different shapes means any query that omits the `phase` selector silently averages unlike things. Two names cost nothing and cannot be misread. |
-| A4 | **`app` is dropped.** | It existed only as the base for `other = app − db − cpu`. That remainder is `rate(request_sum) − rate(db_sum) − rate(cpu_sum)` at query time. One fewer hot-path timer for a value one subtraction away. |
+| A4 | **`app` is dropped.** | It existed only as the base for `other = app − db − cpu`. That remainder is one subtraction at query time — `histogram_sum(rate(http_server_request_duration_seconds{…}[60s])) − histogram_sum(rate(http_server_db_duration_seconds{…}[60s])) − histogram_sum(rate(http_server_cpu_duration_seconds{…}[60s]))`. One fewer hot-path timer for a value one subtraction away. **Corrected 2026-09-01:** this row originally wrote that as `rate(request_sum) − rate(db_sum) − rate(cpu_sum)`, which is wrong for the native histograms the service actually emits — there is no `_sum` series, and that form returns "success" while matching nothing, forever. |
 | A5 | **In-process `db` is kept AND CloudWatch `SuccessfulRequestLatency` stays the clean clock.** | In-process `db` wraps an `await` and absorbs event-loop queueing (measured 12.1× inflation, DB unchanged). That is not a defect to hide — **the gap between the two clocks is the queueing measurement**, and queueing is precisely the service-bound-vs-DB-bound discriminator. Neither number alone is attribution; the pair is. |
-| A6 | **`rate(http_server_cpu_duration_seconds_sum)` against the vCPU allocation is the saturation measure.** | CPU-seconds consumed per wall-second per task. Against 0.25 vCPU, approaching 0.25 *is* saturation — absolute, not relative. Underivable before: k6's `cpu_ms` gave per-request cost, never utilization. |
+| A6 | **`histogram_sum(rate(http_server_cpu_duration_seconds{…}[60s]))` against the vCPU allocation is the saturation measure.** | CPU-seconds consumed per wall-second per task. Against 0.25 vCPU, approaching 0.25 *is* saturation — absolute, not relative. Underivable before: k6's `cpu_ms` gave per-request cost, never utilization. **Corrected 2026-09-01:** originally written `rate(http_server_cpu_duration_seconds_sum)`. The instrument is a NATIVE histogram, so no `_sum` series exists and that query would have matched nothing while reporting success; the sum comes out of the single native series via `histogram_sum`. **Sufficient, not necessary** — see the caveat under §5's table. |
 | A7 | **k6 becomes a pure gate.** It records only what a client can observe. | Removes the last piece of service surface that exists for the load generator's benefit. Consistent with S-series moving the SLI off k6. |
 | A8 | **Attribution queries are generated from `slo.yaml`, like everything else.** One definition, three consumers: dashboard panels, `/loadtest`, README deep-links. | The drift this project keeps rediscovering. `generate-slo.js` already renders **five** outputs — `k6/lib/slo.js`, `terraform/capacity.auto.tfvars`, `grafana/classmap.json`, `grafana/alerts.tf`, `grafana/locals.tf` — and `npm run slo:check` byte-checks every one. `queries.json` is the sixth, not a new mechanism. |
 | A9 | **The README is organised by question, not by phase.** CLI is demoted to an appendix. | The current README is a nine-phase operator runbook. Someone asking "is it healthy?" should not read a Terraform command to find out. |
@@ -120,10 +123,25 @@ it.
 ### The derived signal
 
 ```
-queueing ≈ rate(http_server_db_duration_seconds_sum[60s])
-           / rate(http_server_db_duration_seconds_count[60s])
-         − SuccessfulRequestLatency
+queueing(route) ≈ 1000 * histogram_sum(rate(http_server_db_duration_seconds{http_route=R}[60s]))
+                       / histogram_count(rate(http_server_db_duration_seconds{http_route=R}[60s]))
+                − Σ SuccessfulRequestLatency{dimension_Operation=op}  for op in operations(R)
 ```
+
+**Corrected 2026-09-01.** This block originally read
+`rate(http_server_db_duration_seconds_sum[60s]) / rate(..._count[60s]) − SuccessfulRequestLatency`.
+Both halves were wrong and both fail silently:
+
+- **`_sum` / `_count` do not exist.** The instrument is a NATIVE histogram — one series carrying the
+  whole distribution. `rate(X_sum[60s])` parses, the API answers `"success"`, and it matches nothing
+  forever. `histogram_sum(rate(X{…}[60s]))` and `histogram_count(...)` are the real accessors.
+- **The subtrahend is per route, and it is a SUM over that route's operations.** Written without a
+  route, it invites the implementation this spec actually shipped: one
+  `avg(SuccessfulRequestLatency{dimension_TableName=…})` over every operation on the table,
+  subtracted identically from all four routes. Measured live 2026-09-01: GetItem 0.912 ms, PutItem
+  2.018 ms, Query 1.1625 ms, and BatchWriteItem 0 (`scripts/seed.js`, not request traffic — its zero
+  drags the mean down). That average was **1.01 ms** where `/reports` needs Query + PutItem =
+  **2.79 ms**: a ~1.8 ms error on a signal whose entire job is detecting a few ms of queueing.
 
 Three properties the implementation must encode, each of which silently produces a wrong number if
 missed:
@@ -138,7 +156,11 @@ missed:
 
 Route → operation mapping: `/items/:pk/:sk` → `GetItem`; `POST /items` → `PutItem`; `/feeds/:pk` →
 `Query`. `/reports` issues `Query` **and** `PutItem`, so its `db` sum compares against the sum of both
-operations (§3).
+operations (§3). That mapping lives in `slo.yaml` under `attribution.operations` and is the *input to
+the generated query*, not documentation of it: `queueingExpr` in `scripts/generate-slo.js` renders one
+term per classified route, each subtracting `sum()` of exactly that route's operations, `or`-joined so
+a route with no traffic drops out instead of emptying the result. `loadSlo` refuses a classified
+endpoint with no `operations` entry, so the mapping cannot be quietly incomplete.
 
 ### The table
 
@@ -149,10 +171,21 @@ This **replaces** the table at Task 18 Step 7 of the 2026-08-29 plan, whose serv
 |---|---|---|
 | `ThrottledRequests > 0` | DynamoDB capacity | raise RCU/WCU (Task 21) |
 | Throttled = 0, **`SuccessfulRequestLatency` climbing** | DynamoDB server-side | item size / hot partition — not a capacity knob |
-| Throttled = 0, SRL flat, **gap climbing**, `nodejs_eventloop_utilization_ratio` → 1, `rate(cpu_sum)` → 0.25/task | service CPU / event loop | scale out 1→4 tasks (Task 20) |
+| Throttled = 0, SRL flat, **gap climbing**, `nodejs_eventloop_utilization_ratio` → 1, `histogram_sum(rate(http_server_cpu_duration_seconds{…}[60s]))` → 0.25/task | service CPU / event loop | scale out 1→4 tasks (Task 20) |
 | all of the above flat, ALB `TargetResponseTime` rising, `HealthyHostCount` < desired | edge / deployment | not a capacity story |
 
 Every row is falsifiable, and no row requires `db` to be a clean clock.
+
+**The CPU term is SUFFICIENT, not NECESSARY** (added 2026-09-01, and the same caveat is on dashboard
+panel 23). `http.server.cpu.duration` sums only the two explicitly bracketed synchronous blocks in
+`src/handlers.js:57,64`. JSON serialisation, AWS SDK marshalling, the OTel export itself, and every
+other bit of compute on the request path are **not** counted, and `getItem`/`putItem` bracket nothing
+at all, so they mint no `cpu` series. `cpu_saturation_ratio` reaching 1.0 therefore proves the task is
+CPU-bound; it reading 0.2 proves nothing — a task can be genuinely pinned while this panel sits low.
+When the row's other three signals point at the service, treat a low CPU ratio as *unaccounted* CPU,
+not as *absent* CPU, and fall back to `nodejs_eventloop_utilization_ratio` and ECS
+`CPUUtilization`, which measure the whole process. Widening the brackets would be a service change
+with its own measurement; it is deliberately not made here.
 
 ---
 

@@ -127,8 +127,8 @@ egress must work without a NAT gateway.
 | `@opentelemetry/api`, `sdk-node`, `sdk-metrics` | meter provider, `PeriodicExportingMetricReader` at 15 s |
 | `@opentelemetry/exporter-metrics-otlp-http` | OTLP to the collector; temporality pinned cumulative (S6) |
 | `@opentelemetry/instrumentation-http` | `http.server.request.duration` with `http.route` — the SLI population |
-| `@opentelemetry/instrumentation-aws-sdk` | ~~DynamoDB call counts, errors and **SDK retries**~~ **— emits NOTHING; verified 2026-08-31.** No `aws_*` or `db_*` series exist under `job="ecs-dynamodb-rps-ceiling"`. Its removal (or repair) is decided in `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md` A2/risk 3. Still *not* a fix for the `db_ms` inflation — see §11 |
-| `@opentelemetry/instrumentation-runtime-node` | `nodejs.eventloop.delay` — supersedes the `/stats` poll |
+| `@opentelemetry/instrumentation-aws-sdk` | ~~DynamoDB call counts, errors and **SDK retries**~~ **— emits NOTHING, and structurally cannot; REMOVED 2026-08-31.** Not merely unobserved: in the installed package only `BedrockRuntimeServiceExtension` implements `updateMetricInstruments`, while `DynamodbServiceExtension` — the only extension this service exercises — defines no metric instruments at all. It was not misconfigured; no configuration could have made it emit. Removed in `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md` A2/risk 3. Still *not* a fix for the `db_ms` inflation — see §11 |
+| `@opentelemetry/instrumentation-runtime-node` | `nodejs.eventloop.delay` — supersedes the `/stats` poll, **which was deleted 2026-08-31; this is now the only source** |
 | `@opentelemetry/resource-detector-aws` | ECS task identity → `service.instance.id` (S7) |
 | `@opentelemetry/resources`, `semantic-conventions` | resource and attribute naming |
 
@@ -153,10 +153,15 @@ template (`/items/:pk/:sk`, not the concrete path) onto the request's active spa
 does not, the fallback is one explicit histogram recorded by the server with `http.route` as an
 attribute. Still OpenTelemetry, still no thresholds in the service.
 
-**`Server-Timing` and `/stats` stay.** The three k6 scripts are frozen (`CLAUDE.md`: a profile is only
+~~**`Server-Timing` and `/stats` stay.**~~ **REVERSED 2026-08-31 — both are deleted.** The reasoning
+below was sound and its premise simply expired: the k6 scripts were frozen only because a measured
+run would have been invalidated by changing them, and **no run had happened yet**. Nothing was ever
+frozen in the sense that mattered. See `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md` A1 and A7.
+
+~~The three k6 scripts are frozen (`CLAUDE.md`: a profile is only
 comparable to itself) and `k6/lib/request.js` parses both. They stop being the *only* source; they do
 not go away. The 1 RPS `stats` scenario in each profile becomes redundant but is not removed, for the
-same freezing reason.
+same freezing reason.~~
 
 ---
 
@@ -455,7 +460,9 @@ propagation the metrics path does not need. Anyone "fixing" the package list by 
 
 - Traces. Metrics only. Tracing would answer different questions and cost per-request CPU this budget
   cannot spare.
-- Replacing `Server-Timing`, `/stats`, or any k6 script. All frozen.
+- ~~Replacing `Server-Timing`, `/stats`, or any k6 script. All frozen.~~ **No longer out of scope: all
+  three were replaced on 2026-08-31 (`docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`),
+  because nothing had yet been measured against them.**
 - Moving CloudWatch off the existing dashboard. `grafana/dashboard.json` stays as written and applied
   against the CloudWatch datasource; S10 adds a second path, it does not migrate the first.
 - Renumbering Tasks 18–23 of the 2026-08-29 plan.

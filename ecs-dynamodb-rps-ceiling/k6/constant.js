@@ -1,5 +1,5 @@
 import { thresholds } from './lib/slo.js';
-import { doRequest, pollStats } from './lib/request.js';
+import { doRequest } from './lib/request.js';
 
 const BASE_URL = __ENV.BASE_URL;
 const RATE = Number(__ENV.RATE);        // the knee from discovery. No default: guessing it is the bug.
@@ -22,13 +22,7 @@ export const options = {
       preAllocatedVUs: Number(__ENV.PRE_VUS || 400),
       gracefulStop: '10s',
     },
-    stats: {
-      executor: 'constant-arrival-rate',
-      rate: 1, timeUnit: '1s', duration: DURATION,
-      preAllocatedVUs: 2, exec: 'stats', gracefulStop: '5s',
-    },
   },
 };
 
 export default function () { doRequest(BASE_URL); }
-export function stats() { pollStats(BASE_URL); }

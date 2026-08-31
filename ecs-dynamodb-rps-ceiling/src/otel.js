@@ -15,11 +15,12 @@ import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http';
 import { detectResources, resourceFromAttributes } from '@opentelemetry/resources';
 import { awsEcsDetector } from '@opentelemetry/resource-detector-aws';
 import { registerInstrumentations } from '@opentelemetry/instrumentation';
-import { AwsInstrumentation } from '@opentelemetry/instrumentation-aws-sdk';
 import { RuntimeNodeInstrumentation } from '@opentelemetry/instrumentation-runtime-node';
 
 /** OpenTelemetry semantic convention name and unit. Do not localise either. */
 export const REQUEST_DURATION = 'http.server.request.duration';
+export const DB_DURATION = 'http.server.db.duration';
+export const CPU_DURATION = 'http.server.cpu.duration';
 const METER_NAME = 'ecs-dynamodb-rps-ceiling';
 
 /**
@@ -47,11 +48,29 @@ export function buildMeterProvider({ resource, readers }) {
 }
 
 let histogram = null;
+let dbHistogram = null;
+let cpuHistogram = null;
 
 export function bindHistogram(meterProvider) {
-  histogram = meterProvider.getMeter(METER_NAME).createHistogram(REQUEST_DURATION, {
+  const meter = meterProvider.getMeter(METER_NAME);
+  histogram = meter.createHistogram(REQUEST_DURATION, {
     unit: 's',
     description: 'Duration of inbound HTTP requests, callback start to response finish.',
+  });
+  dbHistogram = meter.createHistogram(DB_DURATION, {
+    unit: 's',
+    description:
+      'Wall-clock inside AWS SDK calls, summed per request. INCLUDES event-loop queueing '
+      + 'by construction -- it brackets an await, so its clock runs while the resolved promise '
+      + 'waits behind other work. Not a DynamoDB latency. Compare against CloudWatch '
+      + 'SuccessfulRequestLatency: the GAP between them is the queueing measurement.',
+  });
+  cpuHistogram = meter.createHistogram(CPU_DURATION, {
+    unit: 's',
+    description:
+      'Wall-clock in synchronous CPU work, summed per request. Uncontaminated -- it brackets '
+      + 'no await. rate(_sum) is CPU-seconds per wall-second; against the task vCPU allocation '
+      + 'that ratio is saturation.',
   });
 }
 
@@ -84,14 +103,22 @@ export function trafficSource(userAgent) {
  * ratio -- the objective is applied in Grafana (spec S3). A no-op until
  * bindHistogram runs, so unit tests need no OpenTelemetry setup at all.
  */
-export function recordRequest({ route, method, status, durationSeconds, userAgent }) {
+export function recordRequest({ route, method, status, durationSeconds, userAgent, phases }) {
   if (!histogram) return;
-  histogram.record(durationSeconds, {
+  // One attribute object, shared by all three instruments. Identical labels are
+  // what let a query subtract one from another without a join that silently
+  // drops series.
+  const attrs = {
     'http.route': route,
     'http.request.method': method,
     'http.response.status_code': status,
     'traffic_source': trafficSource(userAgent),
-  });
+  };
+  histogram.record(durationSeconds, attrs);
+  // Absent, not zero. /healthz does no measured work and must not mint a series
+  // that a later query would read as "the database answered instantly".
+  if (phases?.db !== undefined) dbHistogram.record(phases.db, attrs);
+  if (phases?.cpu !== undefined) cpuHistogram.record(phases.cpu, attrs);
 }
 
 /**
@@ -179,24 +206,27 @@ export async function startOtel(config) {
   const meterProvider = buildMeterProvider({ resource, readers: [reader] });
   bindHistogram(meterProvider);
 
-  // Two instrumentations, both metrics-only -- no tracer provider is registered,
-  // so span creation is a no-op tracer.
+  // ONE instrumentation, metrics-only -- no tracer provider is registered, so
+  // span creation would be a no-op regardless.
   //
-  // AwsInstrumentation gives DynamoDB call counts, errors and SDK RETRIES, which
-  // is how throttling presents before it becomes errors. It does NOT fix
-  // attribution: like the Server-Timing `db` phase it wraps an await, so it
-  // absorbs event-loop queueing the same way and inflates under load. CloudWatch
-  // SuccessfulRequestLatency stays the DB-bound discriminator (spec section 11).
+  // RuntimeNodeInstrumentation emits nodejs.eventloop.delay and the v8js.* family.
+  // That is where event-loop lag now comes from; this service exposes no /stats
+  // endpoint and no Server-Timing header.
   //
-  // RuntimeNodeInstrumentation emits nodejs.eventloop.delay, superseding the
-  // /stats poll -- which stays anyway, because the k6 scripts are frozen.
+  // NOT registered: @opentelemetry/instrumentation-aws-sdk. Removed 2026-08-31
+  // after its own source proved it cannot emit DynamoDB metrics at all -- only
+  // BedrockRuntimeServiceExtension implements updateMetricInstruments, while
+  // DynamodbServiceExtension, the only extension this service exercises, defines
+  // no metric instruments whatsoever. It was not misconfigured: no configuration
+  // could have made it emit. CloudWatch SuccessfulRequestLatency remains the
+  // DB-bound discriminator.
   //
   // NOT registered: @opentelemetry/auto-instrumentations-node. It pulls in
   // instrumentation for libraries this service does not use and adds context
   // propagation the metrics path does not need, against a 250us/request budget.
   registerInstrumentations({
     meterProvider,
-    instrumentations: [new AwsInstrumentation(), new RuntimeNodeInstrumentation()],
+    instrumentations: [new RuntimeNodeInstrumentation()],
   });
 
   return { meterProvider, shutdown: () => meterProvider.shutdown() };

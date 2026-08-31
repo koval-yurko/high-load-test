@@ -19,7 +19,6 @@ beforeEach(() => { calls = []; });
 
 test('matchRoute resolves every documented route', () => {
   assert.equal(matchRoute('GET', '/healthz').name, 'health');
-  assert.equal(matchRoute('GET', '/stats').name, 'stats');
   assert.deepEqual(matchRoute('GET', '/items/feed-00/item-01').params, { pk: 'feed-00', sk: 'item-01' });
   assert.deepEqual(matchRoute('GET', '/feeds/feed-00').params, { pk: 'feed-00' });
   assert.equal(matchRoute('POST', '/items').name, 'putItem');
@@ -48,8 +47,8 @@ test('getItem returns the item and records db time only', async () => {
   const r = await createHandlers({ repo, config }).getItem({ params: { pk: 'feed-00', sk: 'item-00' }, timer });
   assert.equal(r.status, 200);
   assert.equal(r.body.pk, 'feed-00');
-  assert.ok(timer.header().includes('db;dur='));
-  assert.ok(!timer.header().includes('cpu;dur='));
+  assert.ok(timer.phases().db !== undefined);
+  assert.ok(timer.phases().cpu === undefined);
 });
 
 test('getItem 404s on a missing item', async () => {
@@ -77,8 +76,8 @@ test('feed queries the configured page size and does cpu work', async () => {
   assert.equal(r.status, 200);
   assert.equal(r.body.count, 20);
   assert.deepEqual(calls[0], ['query', 'feed-00', 20]);
-  assert.ok(timer.header().includes('db;dur='));
-  assert.ok(timer.header().includes('cpu;dur='));
+  assert.ok(timer.phases().db !== undefined);
+  assert.ok(timer.phases().cpu !== undefined);
 });
 
 test('report queries, burns cpu, then writes', async () => {
@@ -88,7 +87,7 @@ test('report queries, burns cpu, then writes', async () => {
   assert.equal(calls[0][0], 'query');
   assert.equal(calls[1][0], 'put');
   assert.match(r.body.digest, /^[0-9a-f]{16}$/);
-  assert.ok(timer.header().includes('cpu;dur='));
+  assert.ok(timer.phases().cpu !== undefined);
 });
 
 test('matchRoute returns the route template, not the concrete path', () => {
@@ -97,12 +96,15 @@ test('matchRoute returns the route template, not the concrete path', () => {
   assert.equal(matchRoute('POST', '/items').template, '/items');
   assert.equal(matchRoute('POST', '/reports').template, '/reports');
   assert.equal(matchRoute('GET', '/healthz').template, '/healthz');
-  assert.equal(matchRoute('GET', '/stats').template, '/stats');
 });
 
 test('every route has a template and no two share one', () => {
-  const templates = ['/healthz', '/stats', '/feeds/:pk', '/items/:pk/:sk', '/items', '/reports'];
+  const templates = ['/healthz', '/feeds/:pk', '/items/:pk/:sk', '/items', '/reports'];
   // An endpoint whose template collides with another is silently merged into
   // the wrong latency class. Cheap to assert, invisible if it happens.
   assert.equal(new Set(templates).size, templates.length);
+});
+
+test('/stats is gone -- event-loop lag comes from nodejs_eventloop_delay_*', () => {
+  assert.equal(matchRoute('GET', '/stats'), null);
 });

@@ -1,5 +1,5 @@
 import { thresholds } from './lib/slo.js';
-import { doRequest, pollStats } from './lib/request.js';
+import { doRequest } from './lib/request.js';
 
 const BASE_URL = __ENV.BASE_URL;
 export const START_RATE = Number(__ENV.START_RATE || 50);
@@ -28,17 +28,7 @@ export const options = {
       stages: [{ target: MAX_RATE, duration: `${RAMP_SECONDS}s` }],
       gracefulStop: '10s',
     },
-    stats: {
-      executor: 'constant-arrival-rate',
-      rate: 1,
-      timeUnit: '1s',
-      duration: `${RAMP_SECONDS}s`,
-      preAllocatedVUs: 2,
-      exec: 'stats',
-      gracefulStop: '5s',
-    },
   },
 };
 
 export default function () { doRequest(BASE_URL); }
-export function stats() { pollStats(BASE_URL); }

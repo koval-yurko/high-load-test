@@ -43,11 +43,12 @@ export function createServer({ handlers }) {
       // Mapped to a closed set inside recordRequest; the raw value never reaches
       // the histogram, so an internet scanner cannot mint a time series.
       userAgent: req.headers['user-agent'],
+      // Read on finish, when every mark is complete. /healthz touches no timer,
+      // so this is {} there and no phase series is minted for it.
+      phases: timer.phases(),
     }));
 
     const send = (status, body) => {
-      const header = timer.header();
-      if (header) res.setHeader('Server-Timing', header);
       res.setHeader('Content-Type', 'application/json');
       res.writeHead(status);
       res.end(JSON.stringify(body));
@@ -57,13 +58,7 @@ export function createServer({ handlers }) {
 
     try {
       const body = req.method === 'POST' ? await readJson(req) : undefined;
-      const dispatch = () => handlers[route.name]({ params: route.params, body, timer });
-      // Wrap dispatch in an `app` phase so the header carries total in-handler wall time
-      // alongside `db` and `cpu` — the gap is unattributed CPU (SDK marshalling, SigV4 signing,
-      // JSON.stringify) that would otherwise be charged to `db` or invisible entirely. Excluded
-      // for /healthz: that route touches no timer at all, and an integration test asserts it
-      // emits no Server-Timing header, which proves it does no measured work.
-      const result = route.name === 'health' ? await dispatch() : await timer.measure('app', dispatch);
+      const result = await handlers[route.name]({ params: route.params, body, timer });
       send(result.status, result.body);
     } catch (err) {
       send(500, { error: err.message });

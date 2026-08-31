@@ -6,6 +6,8 @@ resource "grafana_folder" "project" {
 }
 
 resource "grafana_dashboard" "attribution" {
-  folder      = grafana_folder.project.uid
-  config_json = file("${path.module}/dashboard.json")
+  folder = grafana_folder.project.uid
+  config_json = templatefile("${path.module}/dashboard.json.tftpl",
+    jsondecode(file("${path.module}/queries.json"))
+  )
 }

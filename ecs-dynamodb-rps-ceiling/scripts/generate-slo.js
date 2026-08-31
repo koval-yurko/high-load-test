@@ -82,6 +82,25 @@ export function loadSlo(path, preParsed) {
     }
   }
 
+  // A classified endpoint with no attribution.operations entry cannot have a
+  // queueing query built for it, and the previous shape of that query -- one
+  // avg() over the whole table -- hid exactly that: it rendered fine for a route
+  // whose operations nobody had declared. Refuse here so the omission is a build
+  // failure rather than a subtraction of the wrong number.
+  if (doc.attribution) {
+    for (const slo of doc.slos ?? []) {
+      if (slo.sli !== 'class_threshold_ratio') continue;
+      for (const cls of Object.values(slo.classes)) {
+        for (const endpoint of cls.endpoints) {
+          const ops = doc.attribution.operations?.[endpoint];
+          if (!Array.isArray(ops) || ops.length === 0) {
+            throw new Error(`endpoint "${endpoint}" is classified but has no attribution.operations entry`);
+          }
+        }
+      }
+    }
+  }
+
   return { ...doc, windowSeconds: durationSeconds(doc.window), burn: burnWindows(durationSeconds(doc.window)) };
 }
 
@@ -135,8 +154,9 @@ write_capacity = ${Math.round(wcu * rps)}
  * { "<route template>": "<class>" } -- what the collector's OTTL keys on.
  * Keyed by TEMPLATE, not endpoint name: slo.yaml is the human vocabulary,
  * http.route is the collector's, and this file is the join between them.
- * Unclassified routes (/healthz, /stats) are absent on purpose -- the SLO
- * query excludes them by selector.
+ * Unclassified routes (/healthz, and anything unmatched) are absent on purpose
+ * -- the SLO query excludes them by selector. /stats used to be named here too;
+ * that route no longer exists.
  */
 export function renderClassMap(doc) {
   const slo = classRatio(doc);
@@ -163,10 +183,10 @@ const METRIC = 'http_server_request_duration_seconds';
  * slo.yaml gives it a class, so anything new -- a scanner path, an unclassified
  * route added later -- is silently EXCLUDED rather than silently counted as
  * failing. The http_route exclusion stays because it documents intent for the
- * two health endpoints, though the class selector already subsumes it.
+ * one health endpoint, though the class selector already subsumes it.
  */
 const CLASSES = (doc) => Object.keys(classRatio(doc).classes).join('|');
-const SCOPE = (doc) => `job="${doc.service}", http_route!~"/healthz|/stats", class=~"${CLASSES(doc)}"`;
+const SCOPE = (doc) => `job="${doc.service}", http_route!~"/healthz", class=~"${CLASSES(doc)}"`;
 
 /** Proportion of requests meeting their own class threshold, over `range`. */
 export function ratioExpr(doc, { multiplier = 1, range, job }) {
@@ -175,9 +195,28 @@ export function ratioExpr(doc, { multiplier = 1, range, job }) {
   const good = Object.entries(slo.classes).map(([name, c]) => {
     const bound = ((c.threshold_ms * multiplier) / 1000);
     const sel = `${METRIC}{${base}, class="${name}"}`;
-    return `    sum(histogram_fraction(0, ${bound}, rate(${sel}[${range}])) * histogram_count(rate(${sel}[${range}])))`;
+    // Aggregate BEFORE taking the fraction. Applying histogram_fraction per
+    // series and summing afterwards yields NaN whenever any one series has zero
+    // observations in the window -- which happens on every deploy (the retired
+    // task lingers in range) and continuously once the service runs more than
+    // one task. Native histograms sum exactly, so one fraction over the summed
+    // histogram is both correct and NaN-safe.
+    //
+    // `or vector(0)` is the second half of the same defect. A class with NO
+    // series at all in the window -- no traffic to any of its endpoints --
+    // makes its term an EMPTY vector, and in PromQL `empty + anything` is
+    // empty, so one silent class empties the entire numerator while the
+    // denominator stays populated. The ratio then returns nothing, and every
+    // rule group here carries no_data_state = "OK": the alerts silently do not
+    // fire. That is currently masked only because the heartbeat touches all
+    // four routes every minute. `vector(0)` carries no labels, exactly like
+    // histogram_count(sum(...)), so the `+` still matches on the empty label
+    // set and an absent class contributes 0 good requests instead of erasing
+    // the measurement.
+    const term = `histogram_fraction(0, ${bound}, sum(rate(${sel}[${range}]))) * histogram_count(sum(rate(${sel}[${range}])))`;
+    return `    (${term} or vector(0))`;
   }).join('\n  +\n');
-  return `(\n${good}\n  )\n  /\n  sum(histogram_count(rate(${METRIC}{${base}}[${range}])))`;
+  return `(\n${good}\n  )\n  /\n  histogram_count(sum(rate(${METRIC}{${base}}[${range}])))`;
 }
 
 /**
@@ -343,12 +382,135 @@ ${blocks.join('\n\n')}
 `;
 }
 
+const DB = 'http_server_db_duration_seconds';
+const CPU = 'http_server_cpu_duration_seconds';
+
+/**
+ * grafana/queries.json: every query the dashboard panels, /loadtest and the
+ * README deep-links read, defined once.
+ *
+ * Four properties are load-bearing and each produces a silently wrong number
+ * if dropped:
+ *  - The service's own histograms are NATIVE histograms, not classic ones --
+ *    there is no `_sum{...}` / `_count{...}` / `_bucket{...}` series to query.
+ *    `rate(X_sum{...}[60s])` parses, returns "success", and matches nothing,
+ *    forever -- the exact silent-empty failure this project exists to catch.
+ *    The sum and count live inside the single native series and come out
+ *    through `histogram_sum(rate(X{...}[60s]))` / `histogram_count(...)`, the
+ *    same functions ratioExpr already uses via histogram_fraction/
+ *    histogram_count. `sum by (...)` wraps the histogram_* call, not the
+ *    other way around, or the label being grouped on is gone before the
+ *    aggregation ever sees it.
+ *  - CloudWatch SuccessfulRequestLatency is MILLISECONDS; the histograms are
+ *    SECONDS. queueing_ms_by_route converts explicitly.
+ *  - CloudWatch's throttled-requests series is a per-60s-period SUM exposed as
+ *    a gauge, not a monotonic counter -- it goes 0 -> 500 -> 300 -> 0 as
+ *    throttling starts and stops. `rate()` on it treats every decrease as a
+ *    counter reset and produces nonsense. throttled_requests reads the gauge
+ *    directly; the attribution rule is "> 0", not a rate.
+ *  - SuccessfulRequestLatency counts only SUCCESSFUL calls, so the gap stops
+ *    being interpretable once throttling starts -- by which point
+ *    throttled_requests has already answered the question.
+ *  - The subtrahend is PER ROUTE, from attribution.operations. A single
+ *    avg() over the whole table averages unlike operations together and
+ *    subtracts the same wrong number from every route -- see queueingExpr.
+ */
+
+const SRL = 'aws_dynamodb_successful_request_latency_average';
+
+/**
+ * queueing_ms_by_route: in-process db wall-clock minus DynamoDB's own clock,
+ * per route, in milliseconds.
+ *
+ * The subtrahend must be built from `attribution.operations`, which is why that
+ * block exists in slo.yaml. A single
+ * `avg(SRL{dimension_TableName=...})` -- the form this file used to emit --
+ * averages every operation on the table into one number and subtracts it
+ * identically from all four routes. Measured 2026-09-01 on the live stack:
+ * GetItem 0.912, PutItem 2.018, Query 1.1625, BatchWriteItem 0 (seeding, not
+ * request traffic, and its zero drags the mean down) -> 1.023 subtracted
+ * everywhere, where /reports needs Query + PutItem = 3.18. A 2 ms error on a
+ * signal whose whole job is detecting a few ms of event-loop queueing is larger
+ * than the signal.
+ *
+ * A request makes one call per listed operation and `marks` sums them (spec
+ * section 3), so the comparison value is the SUM over the route's operations --
+ * `/reports` issues Query then PutItem, so Query + PutItem. Each operation is
+ * summed SEPARATELY and the sums added, rather than matched by one
+ * `dimension_Operation=~"a|b"` regex: a route that issued the same operation
+ * twice would need it counted twice, and a missing operation series must empty
+ * the term rather than silently under-subtract.
+ *
+ * One expression covers all four routes, `or`-joined, each term carrying its own
+ * `http_route` label -- `or` unions disjoint per-route vectors, so a route with
+ * no traffic drops out of the result instead of emptying the whole query.
+ *
+ * `group_left ()` needs its empty parentheses. `on()` alone matches one-to-one
+ * and drops every label not named in it, which would throw away the `http_route`
+ * the panel legend is keyed on; but `group_left (` immediately followed by the
+ * right-hand expression is a parse error -- the parser reads that `(` as the
+ * group's label list ("unexpected \"(\" in grouping opts"). The empty list
+ * closes it explicitly, verified live against Grafana Cloud.
+ */
+export function queueingExpr(doc) {
+  const scope = SCOPE(doc);
+  const routes = Object.values(classRatio(doc).classes).flatMap((c) => c.endpoints);
+  return routes.map((endpoint) => {
+    const route = doc.endpoints[endpoint];
+    const ops = doc.attribution.operations[endpoint];
+    const sel = `${DB}{${scope}, http_route="${route}"}`;
+    const srl = ops
+      .map((op) => `sum(${SRL}{dimension_TableName="${doc.service}", dimension_Operation="${op}"})`)
+      .join('\n      + ');
+    return `  (\n`
+      + `    1000 * sum by (http_route) (histogram_sum(rate(${sel}[60s])))\n`
+      + `    / sum by (http_route) (histogram_count(rate(${sel}[60s])))\n`
+      + `    - on() group_left () (\n      ${srl}\n    )\n`
+      + `  )`;
+  }).join('\n  or\n');
+}
+
+export function renderQueries(doc) {
+  const scope = SCOPE(doc);
+  const vcpu = doc.attribution.vcpu_per_task;
+  const q = {
+    sli_ratio: ratioExpr(doc, { range: '$__rate_interval' }),
+
+    db_wall_avg_by_route:
+      `1000 * sum by (http_route) (histogram_sum(rate(${DB}{${scope}}[60s])))`
+      + ` / sum by (http_route) (histogram_count(rate(${DB}{${scope}}[60s])))`,
+
+    cloudwatch_srl_by_operation: `${SRL}{dimension_TableName="${doc.service}"}`,
+
+    // The queueing signal, in milliseconds. Positive and growing means requests
+    // are waiting on the event loop, not on DynamoDB. Subtrahend is per route,
+    // from attribution.operations -- see queueingExpr.
+    queueing_ms_by_route: queueingExpr(doc),
+
+    // CPU-seconds burned per wall-second, per task.
+    cpu_seconds_per_second: `sum by (instance) (histogram_sum(rate(${CPU}{${scope}}[60s])))`,
+
+    // The same number as a fraction of the allocation. 1.0 is saturation.
+    cpu_saturation_ratio: `sum by (instance) (histogram_sum(rate(${CPU}{${scope}}[60s]))) / ${vcpu}`,
+
+    eventloop_delay_p99: `nodejs_eventloop_delay_p99_seconds{job="${doc.service}"}`,
+    eventloop_delay_max: `nodejs_eventloop_delay_max_seconds{job="${doc.service}"}`,
+    eventloop_utilization: `nodejs_eventloop_utilization_ratio{job="${doc.service}"}`,
+
+    // A per-60s-period gauge, not a counter -- never rate() this one.
+    throttled_requests:
+      `sum(aws_dynamodb_throttled_requests_sum{dimension_TableName="${doc.service}"})`,
+  };
+  return `${JSON.stringify(q, null, 2)}\n`;
+}
+
 const OUTPUTS = [
   ['k6/lib/slo.js', renderK6],
   ['terraform/capacity.auto.tfvars', renderCapacityTfvars],
   ['grafana/classmap.json', renderClassMap],
   ['grafana/alerts.tf', renderAlerts],
   ['grafana/locals.tf', renderLocals],
+  ['grafana/queries.json', renderQueries],
 ];
 
 if (import.meta.url === `file://${process.argv[1]}`) {

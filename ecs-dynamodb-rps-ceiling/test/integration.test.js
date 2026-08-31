@@ -42,30 +42,21 @@ describe('integration', { skip: !process.env.DYNAMO_ENDPOINT && 'set DYNAMO_ENDP
 
   after(async () => { server.close(); repo.destroy(); base.destroy(); });
 
-  test('healthz responds without a Server-Timing header', async () => {
-    const res = await fetch(url('/healthz'));
-    assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { ok: true });
-    assert.equal(res.headers.get('server-timing'), null);
-  });
-
-  test('getItem returns a seeded item with db timing', async () => {
-    const res = await fetch(url('/items/feed-07/item-03'));
-    assert.equal(res.status, 200);
-    assert.equal((await res.json()).sk, 'item-03');
-    assert.match(res.headers.get('server-timing'), /db;dur=[\d.]+/);
+  test('no response carries a Server-Timing header', async () => {
+    for (const [path, init] of [
+      ['/healthz', undefined],
+      ['/feeds/feed-00', undefined],
+      ['/items/feed-00/item-00', undefined],
+      ['/items', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }],
+      ['/reports', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"pk":"feed-00"}' }],
+    ]) {
+      const res = await fetch(url(path), init);
+      assert.equal(res.headers.get('server-timing'), null, `${path} still emits Server-Timing`);
+    }
   });
 
   test('missing item 404s', async () => {
     assert.equal((await fetch(url('/items/feed-07/item-99'))).status, 404);
-  });
-
-  test('feed returns the full page with db and cpu timing', async () => {
-    const res = await fetch(url('/feeds/feed-07'));
-    assert.equal(res.status, 200);
-    assert.equal((await res.json()).count, 20);
-    const t = res.headers.get('server-timing');
-    assert.match(t, /db;dur=/); assert.match(t, /cpu;dur=/);
   });
 
   test('putItem creates a record under the w# prefix', async () => {
@@ -91,10 +82,12 @@ describe('integration', { skip: !process.env.DYNAMO_ENDPOINT && 'set DYNAMO_ENDP
     assert.equal((await (await fetch(url('/feeds/feed-12'))).json()).count, 20, 'feed page size must be unchanged by writes');
   });
 
-  test('stats reports event-loop lag in milliseconds', async () => {
-    const s = await (await fetch(url('/stats'))).json();
-    assert.ok(Number.isFinite(s.eventLoopDelayMs.p99));
-    assert.ok(s.eventLoopDelayMs.max < 5000);
+  test('stats is not a route', async () => {
+    assert.equal((await fetch(url('/stats'))).status, 404);
+  });
+
+  test('healthz still answers -- the ALB target group health-checks it', async () => {
+    assert.equal((await fetch(url('/healthz'))).status, 200);
   });
 
   test('unknown route 404s', async () => {

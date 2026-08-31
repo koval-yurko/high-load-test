@@ -33,3 +33,14 @@ capacity:
     write:  { rcu: 0,   wcu: 1 }
     feed:   { rcu: 2.5, wcu: 0 }
     report: { rcu: 2.5, wcu: 1 }
+
+# Attribution inputs. The route -> DynamoDB operation map is what lets in-process
+# db time be compared against DynamoDB's own clock; /reports issues TWO calls, so
+# its comparison is against the sum of both operations.
+attribution:
+  vcpu_per_task: 0.25
+  operations:
+    getItem: [GetItem]
+    putItem: [PutItem]
+    feed:    [Query]
+    report:  [Query, PutItem]
