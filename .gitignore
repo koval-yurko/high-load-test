@@ -27,3 +27,6 @@ summary.json
 
 # direnv
 .direnv/
+
+# Local, per-machine Claude Code overrides
+.claude/settings.local.json
