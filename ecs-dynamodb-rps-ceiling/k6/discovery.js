@@ -1,12 +1,13 @@
 import { thresholds } from './lib/slo.js';
 import { doRequest } from './lib/request.js';
+import { BASE_URL, USER_AGENT } from './lib/env.js';
 
-const BASE_URL = __ENV.BASE_URL;
 export const START_RATE = Number(__ENV.START_RATE || 50);
 export const MAX_RATE = Number(__ENV.MAX_RATE || 2000);
 export const RAMP_SECONDS = Number(__ENV.RAMP_SECONDS || 900);
 
 export const options = {
+  userAgent: USER_AGENT,
   cloud: {
     name: 'ecs-dynamodb-rps-ceiling discovery',
     distribution: { frankfurt: { loadZone: 'amazon:de:frankfurt', percent: 100 } },

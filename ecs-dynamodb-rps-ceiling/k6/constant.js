@@ -1,13 +1,14 @@
 import { thresholds } from './lib/slo.js';
 import { doRequest } from './lib/request.js';
+import { BASE_URL, RATE, RATE_SOURCE, USER_AGENT } from './lib/env.js';
 
-const BASE_URL = __ENV.BASE_URL;
-const RATE = Number(__ENV.RATE);        // the knee from discovery. No default: guessing it is the bug.
 const DURATION = __ENV.DURATION || '5m';
 
-if (!RATE) throw new Error('RATE is required — it is the discovered knee, not a guess');
-
 export const options = {
+  userAgent: USER_AGENT,
+  // rate_source=default means RATE fell back to the placeholder in lib/env.js
+  // instead of being given a measured knee. Such a run is not a baseline.
+  tags: { rate_source: RATE_SOURCE },
   cloud: {
     name: 'ecs-dynamodb-rps-ceiling constant',
     distribution: { frankfurt: { loadZone: 'amazon:de:frankfurt', percent: 100 } },

@@ -10,6 +10,7 @@ module "grafana" {
   project                   = var.project
   prometheus_datasource_uid = var.prometheus_datasource_uid
   cloudwatch_datasource_uid = var.cloudwatch_datasource_uid
+  k6_project_id             = var.k6_project_id
 }
 
 # The folder and dashboard were declared here before grafana/ became a module.

@@ -1,15 +1,15 @@
 import { thresholds } from './lib/slo.js';
 import { doRequest } from './lib/request.js';
+import { BASE_URL, RATE, RATE_SOURCE, USER_AGENT } from './lib/env.js';
 
-const BASE_URL = __ENV.BASE_URL;
-const RATE = Number(__ENV.RATE);          // the knee
 const MULTIPLIER = Number(__ENV.MULTIPLIER || 3);
-
-if (!RATE) throw new Error('RATE is required — it is the discovered knee, not a guess');
 
 const PEAK = Math.round(RATE * MULTIPLIER);
 
 export const options = {
+  userAgent: USER_AGENT,
+  // See constant.js -- default means no measured knee was supplied.
+  tags: { rate_source: RATE_SOURCE },
   cloud: {
     name: 'ecs-dynamodb-rps-ceiling stress',
     distribution: { frankfurt: { loadZone: 'amazon:de:frankfurt', percent: 100 } },

@@ -85,7 +85,17 @@ creatable and destroyable in isolation.
 ## Spec-driven development (superpowers)
 
 This repo uses the **superpowers** plugin (enabled project-scoped in `.claude/settings.json`).
-Its skills are the process for all non-trivial work here. The pipeline:
+Its skills are the process for all non-trivial work here.
+
+**`SP` is reserved shorthand for "superpowers."** Anywhere in a prompt — any casing, `SP` or
+`sp` — it expands to the plugin name and nothing else. "SP research something" means "superpowers
+research something"; "SP this spec" means run it through the superpowers pipeline. Expand it
+silently and act; never ask what it stands for, and never read it as a variable, a project prefix,
+or an AWS abbreviation. There is no `/sp` command — this is a naming convention for prose, not a
+skill invocation, so `SP brainstorm` still means invoking `superpowers:brainstorming` by its real
+name.
+
+The pipeline:
 
 `brainstorming` → `writing-plans` → `subagent-driven-development` (or `executing-plans`)
 → `verification-before-completion` → `finishing-a-development-branch`

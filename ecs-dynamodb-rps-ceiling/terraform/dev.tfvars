@@ -36,3 +36,6 @@ pbkdf2_iterations = 2662
 feed_page_size    = 20
 
 autoscaling_enabled = false
+
+# Grafana Cloud k6 project "high-load-test". Non-secret (the token is not here).
+k6_project_id = "8474786"

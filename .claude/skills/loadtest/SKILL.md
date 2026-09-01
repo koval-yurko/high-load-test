@@ -23,11 +23,22 @@ it happens.
 2. **Record the infrastructure delta** *before* running: what changed since the last recorded run
    (task count, instance class, reserved concurrency, pool size)? If nothing changed, this is a repeat
    run — say so; two identical rows are how you measure variance, but label them.
-3. **Run it with `k6 cloud run`** — see "Cloud runs" below for the exact command and the
-   `--summary-export` flag. There is no local-run variant: load must originate from Grafana Cloud's
-   Frankfurt zone, not a laptop, so `k6 run` never belongs in this step.
+3. **Get the run's numbers.** Two paths, and which one you are on depends on how the run started:
+   - **Started from a terminal** — `k6 cloud run --summary-export=…`, then read that JSON. See
+     "Cloud runs" below. This is the path to prefer, because the exit code is a free verdict.
+   - **Started from the Grafana Cloud k6 UI** — there is no local file. Read the run from the k6
+     Cloud API instead; see "Reading a UI-started run from the API" below. A UI run is still
+     recordable, but you must fetch the test run id from the user or the project listing.
+
+   Either way, load must originate from Grafana Cloud's Frankfurt zone, not a laptop, so plain
+   `k6 run` never belongs in this step.
 4. **Capture the exit code immediately** — `echo $?` on the k6 line itself, not after a pipe (a pipe
-   reports the last command's status, not k6's).
+   reports the last command's status, not k6's). A UI run has no exit code; use `result_status`
+   from the API instead.
+5. **Check `rate_source` before recording.** The B and C profiles no longer throw when `RATE` is
+   unset — they fall back to the default in `k6/lib/env.js` and tag every sample
+   `rate_source=default`. **A run tagged `default` is not a capacity measurement.** Record it only as
+   a smoke test, never as a knee or a baseline.
 
 ## Reading the results — verified against k6 v1.4.0
 
@@ -182,11 +193,79 @@ Verified against the installed k6 v1.4.0:
 Capture the exit code on the k6 line itself — behind a pipe you get the pipe's status. `99` means a
 threshold was breached; `0` means all passed.
 
+- **The project caps virtual users, and the cap bites at upload time.** Verified 2026-09-01: project
+  `high-load-test` (8474786) rejects any test asking for more than **100 VUs** with
+  `(400/E2004) The Virtual User (VU) count for this test (400 VUs) exceeds the maximum allowed for
+  your project (100 VUs)`. `preAllocatedVUs` is what the check reads. This is a **generator** limit,
+  not a service limit: at 100 VUs the achievable rate is roughly `100 / mean_iteration_seconds`, so
+  it collapses exactly where the service slows down — near the knee. If k6 reports dropped
+  iterations, the generator ran out of VUs and **the run measured the generator, not the service**.
+  Check `dropped_iterations` before recording anything.
+
+- **`BASE_URL` never appears in a command line in git.** It comes from the root `.env` (this repo is
+  public and the ALB has no auth). Source it, pass it through.
+
 ```bash
+source .env
 k6 cloud run --summary-export=/tmp/k6-<project>-<profile>.json \
-  -e BASE_URL=<url> <project>/k6/<profile>.js
+  -e BASE_URL="$BASE_URL" -e RATE=<measured knee> <project>/k6/<profile>.js
 echo "exit: $?"
 ```
+
+## Reading a UI-started run from the API
+
+A run started from the Grafana Cloud k6 UI writes no local file. Everything the results row needs is
+in the k6 Cloud API instead. Auth is `Authorization: Token $K6_CLOUD_TOKEN` from the root `.env`.
+
+**Endpoints, verified 2026-09-01 against the live API** (shapes taken from the service's own OData
+schema at `https://api.k6.io/cloud/v5/$metadata`, not guessed):
+
+```bash
+source .env
+
+# 1. Find the run. Tests in the project:
+curl -sS -H "Authorization: Token $K6_CLOUD_TOKEN" \
+  "https://api.k6.io/cloud/v5/projects/$K6_CLOUD_PROJECT_ID/load_tests"
+
+# 2. That test's runs, newest last:
+curl -sS -H "Authorization: Token $K6_CLOUD_TOKEN" \
+  "https://api.k6.io/cloud/v5/load_tests/<test_id>/test_runs"
+
+# 3. The numbers:
+curl -sS -H "Authorization: Token $K6_CLOUD_TOKEN" \
+  "https://api.k6.io/cloud/v5/test_runs/<run_id>/result_summary"
+```
+
+`result_summary` returns `{result_status, metrics_summary, baseline_test_run_details}`, where
+`metrics_summary.http_metric_summary` carries the fields the results row is built from:
+
+| API field | results column |
+|---|---|
+| `rps_mean`, `rps_max` | RPS achieved |
+| `duration.p95`, `duration.p99` | p95 / p99 (a `TrendSummary`: `count, min, mean, max, p95, p99, stdev`) |
+| `duration_median` | median |
+| `failures_count` / `requests_count` | error rate — **divide them yourself**; there is no rate field |
+| `thresholds_summary.successes` / `.total` | how many thresholds held |
+| `result_status` (top level) | the run's verdict, as a **string** |
+
+**Three traps, and they are not the same traps as the local file's.**
+
+- **`result_status` is a string here, not the inverted boolean of the summary JSON.** In
+  `--summary-export` a threshold's boolean means *was it breached* (`true` = failed). In the API it
+  is a word — an unexecuted run reads `"Error"`. Do not carry the inversion habit across; do not
+  carry a raw integer either, since `test_runs/<id>` also exposes a numeric `result_status` that is
+  a different encoding of the same thing.
+- **There is no error-rate field.** `http_req_failed.value` has no API equivalent — compute
+  `failures_count / requests_count` and say so in the row.
+- **An archived-but-never-run test returns `metrics_summary: null`.** That is not an API failure and
+  not a zero-result run; it means the test was uploaded and never executed. Report it as "no run",
+  never as a measurement.
+
+**`slo_met` is not in `http_metric_summary`.** It is a custom `Rate` metric, so the client-side SLO
+attainment — the gate — comes from `test_runs/<run_id>/metrics`, not from `result_summary`. Fetch
+that list and find the `slo_met` and `slo_met_tail` entries. If the shape there is not yet documented
+in this skill, print it once and write down what you found rather than assuming it matches
+`TrendSummary`.
 
 ## `--compare`
 

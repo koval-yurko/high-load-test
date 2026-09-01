@@ -175,7 +175,7 @@ Copied from the spec and `CLAUDE.md`. Every task's requirements implicitly inclu
 The environment is up and the heartbeat keeps it warm. Ten samples is enough — this is a CPU phase driven by a fixed iteration count, not a latency distribution.
 
 ```bash
-B=http://ecs-dynamodb-rps-ceiling-1443343290.eu-central-1.elb.amazonaws.com
+B="$BASE_URL"   # from the root .env; never hard-code the ALB hostname in git
 for i in $(seq 1 10); do
   curl -s -D- -o /dev/null -m 15 -H 'content-type: application/json' \
     -d '{"pk":"feed-07"}' "$B/reports" | grep -i '^server-timing:'
@@ -1045,7 +1045,7 @@ Expected: `running == desired == 1`.
 - [x] **Step 4: Confirm the HTTP surface actually changed**
 
 ```bash
-B=http://ecs-dynamodb-rps-ceiling-1443343290.eu-central-1.elb.amazonaws.com
+B="$BASE_URL"   # from the root .env; never hard-code the ALB hostname in git
 curl -s -o /dev/null -w '%{http_code}\n' "$B/stats"      # expect 404
 curl -s -o /dev/null -w '%{http_code}\n' "$B/healthz"    # expect 200
 curl -s -D- -o /dev/null "$B/feeds/feed-00" | grep -ci '^server-timing:'  # expect 0
