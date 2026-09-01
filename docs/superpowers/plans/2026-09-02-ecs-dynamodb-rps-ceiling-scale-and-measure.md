@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Discover the request rate at which the service stops meeting its class-based SLO, name
-which resource caused it, then release one constraint at a time and re-measure identically — and
-tear the environment down when the numbers are recorded.
+**Goal:** Discover the request rate at which the service stops meeting its class-based SLO, record
+how long the endpoints took and whether DynamoDB was rejecting requests, then release one constraint
+at a time and re-measure identically — and tear the environment down when the numbers are recorded.
 
 **Architecture:** Nothing new is built. Capacity is raised from the 25/25 free tier to the 1025/200
 the capacity model asks for, load is driven by Grafana Cloud k6 from Frankfurt at the frozen
-55/15/25/5 mix, and the ceiling is attributed from OTel histograms plus CloudWatch — never from the
+55/15/25/5 mix, and the ceiling is measured from OTel histograms plus CloudWatch — never from the
 HTTP surface, which no longer carries measurements. Then one thing changes at a time: ECS
 autoscaling 1→4, and DynamoDB capacity if the database turns out to bind.
 
@@ -18,8 +18,10 @@ dashboards and burn-rate rules.
 
 **Specs:** `docs/superpowers/specs/2026-08-29-ecs-dynamodb-rps-ceiling-design.md` (§4, §6, §9, §10
 still in force), amended by `…/2026-08-30-…-sli-collection-design.md` (reverses **D7**) and
-`…/2026-08-31-…-attribution-via-metrics-design.md` (reverses **D10**, and supplies the attribution
-table this plan uses).
+`…/2026-08-31-…-attribution-via-metrics-design.md` (reverses **D10**; the three OpenTelemetry
+histograms, the removal of the `Server-Timing` header and `GET /stats`, and the generated shared
+query set still stand, but its attribution table was deleted by
+`docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`).
 
 **Re-homes:** Tasks 18–23 of `docs/superpowers/plans/2026-08-29-ecs-dynamodb-rps-ceiling.md`, which
 is now `complete`. **Task numbers are not carried over** — the SDD ledger and commit history
@@ -29,11 +31,11 @@ reference the old numbers, so this plan numbers from 1 and keeps its own ledger 
 | here | was | notes |
 |---|---|---|
 | Task 1 | 18, steps 1–3 | the capacity raise, split out so the gate is its own task |
-| Task 2 | 18, steps 4–8 | the discovery run, knee, attribution, script freeze |
+| Task 2 | 18, steps 4–8 | the discovery run, knee, the two-metric read, script freeze |
 | Task 3 | 19 | baselines B and C |
 | Task 4 | 20, steps 1–3 | the autoscaling gate |
-| Task 5 | 20, steps 4–6 | re-run B and C, re-attribute, commit |
-| Task 6 | 21 | raise capacity if the database now binds |
+| Task 5 | 20, steps 4–6 | re-run B and C, record what happened, commit |
+| Task 6 | 21 | raise capacity if the re-run left throttle events non-zero |
 | Task 7 | 22 | write up the results |
 | Task 8 | 23 | tear down and sweep |
 
@@ -43,25 +45,18 @@ Phases 5–7 there are now marked history.
 
 ---
 
-## Status — **draft**, 2026-09-02. **BLOCKED — do not start.**
+## Status — **draft**, 2026-09-02. Ready to start.
 
-The shakedown that gated this plan is complete, and it **falsified the attribution model Task 2
-Step 5 depends on**. Evaluated against a case whose answer was known — DynamoDB rejecting 5,588
-reads per minute — the four-row table in §5 of the 2026-08-31 spec named the **service**. Three
-independent causes: `throttled_requests` reads `0` at instants during sustained throttling;
-`SuccessfulRequestLatency` *falls* rather than climbs when DynamoDB throttles, so the "database" row
-cannot match a capacity event at all; and SDK retry backoff inflates both the queueing gap and
-event-loop delay, which are the "service" row's evidence.
+The attribution model that blocked this plan is gone. Nothing computes a bound resource: a run
+records how long the endpoints took and whether DynamoDB was rejecting requests, and a person reads
+the two together. See
+`docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`.
 
-Running Task 2 now would write a confidently-worded, wrong bound-resource into `results.md` — the
-platform-vs-service inversion this project exists to avoid, in the one place nothing checks it.
-
-**Unblocks when** a new spec amends §5 of
-`docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md` at
-the decision itself, and this plan's Task 2 Step 5 is updated to match.
-`ReadThrottleEvents` / `WriteThrottleEvents` were clean, continuous and correct throughout the
-shakedown and are in neither `queries.json` nor the table — that is the obvious starting point, but
-it is a design decision, not a find-and-replace.
+**Task 1 Step 0 is still the first thing to do, and it is easy to skip.** k6 traffic cannot be
+isolated by `traffic_source` — k6 v1.4.0 sends no `k6/`-prefixed User-Agent, so both 2026-09-01
+shakedown runs landed under `other`, and selecting `traffic_source="k6"` returns an empty population
+that reads exactly like a healthy silence. Run-scoped attainment is the authoritative number, so
+this must land **before** the script freeze in Task 2.
 
 **One of the two open questions is now settled.** The SLO-at-idle question is resolved by
 `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-slo-scope-design.md`: the SLO is defined
@@ -69,7 +64,7 @@ over load-bearing traffic, the continuous 7-day window is informational, and aut
 is run-scoped. Tasks 3 and 7 are updated accordingly, and **Task 1 gains a Step 0** — k6 traffic
 cannot currently be isolated by `traffic_source`, and that must be fixed before the freeze.
 
-**The remaining blocker is the attribution model.** Also from the shakedown:
+**Also worth carrying forward from the shakedown:**
 
 - **DynamoDB served 2.46× provisioned RCU for six minutes with zero throttling** (61.6 RCU/s against
   25). Task 1's capacity raise still makes sense, but do not assume the database binds where the
@@ -170,7 +165,7 @@ sourced.
 
 ---
 
-### Task 2: The discovery run, and what bound it
+### Task 2: The discovery run, and what the two metrics showed
 
 **Files:** none changed (results are recorded in Task 7).
 
@@ -210,33 +205,26 @@ knee_rps = START_RATE + (MAX_RATE - START_RATE) × (elapsed_seconds / RAMP_SECON
 If the run completes without aborting, the ceiling is **above** `MAX_RATE` — raise `MAX_RATE` and
 re-run rather than reporting 2000 as the answer.
 
-- [ ] **Step 5: Attribute the ceiling — this is the deliverable**
+- [ ] **Step 5: Record what happened — two metrics, no verdict**
 
-Use the four-row table in **§5 of
-`docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`.**
-The old plan's table is superseded twice over and must not be used.
+Read these two over the run window and write them into the row. Nothing computes a bound resource;
+the four-row table that used to is deleted (see
+`docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`).
 
-All four discriminators come from one Grafana datasource, as the named queries in
-`ecs-dynamodb-rps-ceiling/grafana/queries.json` — generated from `slo.yaml`, so they cannot drift
-from the dashboard or from `/loadtest`:
-
-| query | what it settles |
+| query in `grafana/queries.json` | what it answers |
 |---|---|
-| `throttled_requests` | the primary discriminator — measured **inside** DynamoDB, so the Node event loop cannot contaminate it |
-| `cloudwatch_srl_by_operation` | DynamoDB's own latency clock, per operation |
-| `queueing_ms_by_route` | the **gap** between the service's `db` phase and DynamoDB's clock — this *is* the queueing measurement |
-| `cpu_saturation_ratio` | `rate(cpu_sum)` against the 0.25 vCPU allocation |
+| `sli_ratio`, plus the per-class latency panels | how long the endpoints took |
+| `read_throttle_events`, `write_throttle_events` | whether DynamoDB was rejecting requests |
 
-Read it top-down, `throttled_requests` first. **Throttling presents as latency before it presents as
-errors** (spec §10): the SDK retries `ProvisionedThroughputExceededException` with backoff, and those
-retries sit *inside* the measured `db` phase — so they inflate `queueing_ms_by_route`, the signal
-that otherwise indicates a service-bound ceiling. A latency breach must always be checked against
-`throttled_requests` before it is attributed to the service.
+Latency up with throttle events non-zero: the database was the constraint, and the knob is capacity.
+Latency up with them at zero: it was not.
 
-Expect the `cpu` phase to run roughly **40% above its idle figure** under load. A 0.25 vCPU container
-hits its CPU quota; that is the binding mechanism, not instrumentation drift. `pbkdf2_iterations`
-does not move — `scripts/calibrate.js` measures `burn()` in isolation and the real instrumentation
-cost is 0.51 µs/request, about one iteration.
+**Two traps, both measured on 2026-09-01.** DynamoDB's `SuccessfulRequestLatency` *falls* when the
+table throttles (0.887 ms mid-throttle against 1.473 ms idle), because rejected requests are never
+served — a flat DynamoDB clock is not evidence of a healthy database. And the service's own database
+timing, its event-loop delay and its event-loop utilization all climb hard under throttling from SDK
+retry backoff alone: 642–938 ms, 610 ms and 1.000 respectively, with CPU at 3–16%. None of those is
+evidence about the service while throttle events are non-zero.
 
 - [ ] **Step 6: FREEZE the scripts**
 
@@ -323,9 +311,9 @@ you get the pipe's status.
 **Files:**
 - Modify: `ecs-dynamodb-rps-ceiling/terraform/dev.tfvars`
 
-**One change only.** **If Task 2 attributed the ceiling to the *database* rather than the service,
-autoscaling tasks will change nothing — skip to Task 6**, raise capacity instead, and record why the
-order was swapped. That is a result, not a deviation.
+**One change only.** **If Task 2's run already showed non-zero throttle events, scaling tasks will
+change nothing — skip to Task 6**, raise capacity instead, and record why the order was swapped.
+That is a result, not a deviation.
 
 This is the first time more than one task serves the SLI. The `instance` label that makes the
 comparison meaningful was fixed on 2026-08-31: the AWS resource detector supplies no
@@ -357,7 +345,7 @@ one thing is changing and the comparison would be worthless.
 
 ---
 
-### Task 5: Re-run B and C identically, and re-attribute
+### Task 5: Re-run B and C identically, and record what happened, again
 
 **Files:** none changed.
 
@@ -371,11 +359,11 @@ one thing is changing and the comparison would be worthless.
 Same `RATE`, same scripts, same load zone. `--compare` refuses if the profile or the script changed —
 **that refusal is the guard working, not an error to route around.**
 
-- [ ] **Step 2: Attribute again**
+- [ ] **Step 2: Record what happened, again**
 
-Re-run the Task 2 Step 5 table. Autoscaling should move the service ceiling to roughly 4× its
-baseline, and the expected outcome is that the bound resource has moved to the **database** — which
-is what Task 6 exists for.
+Re-run the Task 2 Step 5 read. Autoscaling should move the service ceiling to roughly 4× its
+baseline, and the expected observation is that throttle events become non-zero — the database is the
+next constraint to release, which is what Task 6 exists for.
 
 - [ ] **Step 3: Commit, with the numbers in the body**
 
@@ -390,14 +378,16 @@ numbers defeats its own purpose.
 
 ---
 
-### Task 6: APPROVAL GATE — raise capacity if the database now binds
+### Task 6: APPROVAL GATE — raise capacity if throttle events were non-zero
 
 **Files:**
 - Modify: `ecs-dynamodb-rps-ceiling/slo.yaml`
 - Regenerate: `ecs-dynamodb-rps-ceiling/terraform/capacity.auto.tfvars`
 
-**Skip this task entirely if Task 5 left the service still bound.** Raising capacity that is not the
-constraint spends money and proves nothing.
+**Skip this task entirely if Task 5's re-run left throttle events at zero.** Raising capacity that is
+not the constraint spends money and proves nothing — and with `ReadThrottleEvents` and
+`WriteThrottleEvents` both at zero over the run window, DynamoDB was not refusing requests, so there
+is nothing here to release. This is the same observable form as the Task 4 gate.
 
 - [ ] **Step 1: Raise `target_rps` in `slo.yaml`** to the service ceiling measured in Task 5, then
   regenerate:
@@ -449,26 +439,25 @@ question, with generated Grafana deep-links (the old plan's Task 22 Step 1 is su
 needs is **§7 filled in** — it currently says no load test has been run — and any detection/recovery
 latency the shakedown measured left in place in §6.
 
-- [ ] **Step 1: Fill in README §7** — the knee, the bound resource and its evidence, and the two
+- [ ] **Step 1: Fill in README §7** — the knee, the latency and throttle-event readings, and the two
   before/after pairs, pointing at `results.md` for the rows.
 
 - [ ] **Step 2: Check every results row is complete**
 
 ```bash
 grep -c '^|' ecs-dynamodb-rps-ceiling/results.md
-awk -F'|' 'NR>2 && NF>3 && ($4 ~ /^ *$/ || $6 ~ /^ *$/ || $8 ~ /^ *$/ || $9 ~ /^ *$/) \
+awk -F'|' 'NR>2 && NF>3 && ($4 ~ /^ *$/ || $6 ~ /^ *$/ || $7 ~ /^ *$/ || $13 ~ /^ *$/) \
   { print "INCOMPLETE ROW:", $0 }' ecs-dynamodb-rps-ceiling/results.md
 ```
 
-A row with a blank `infra change` or a blank `bound resource` is not a result — fill it or delete it.
-The indices were verified against the current header, not counted by eye: `$4` = infra change,
-`$6` = bound resource, `$8` = k6 attainment, `$9` = service attainment. The last two are the entire
-reason the schema gained a second attainment column, and a row carrying only one of them is exactly
-the ambiguity the split exists to remove. Schema lives in `.claude/skills/loadtest/SKILL.md`.
+A row with a blank `infra change` or a blank `service attainment` is not a result — fill it or delete
+it. The indices were verified against the current header, not counted by eye: `$4` = infra change,
+`$6` = k6 attainment, `$7` = service attainment, `$13` = throttles. Schema lives in
+`.claude/skills/loadtest/SKILL.md`.
 
 - [ ] **Step 3: Update the repo README project table** — replace the `ecs-dynamodb-rps-ceiling` row's
-  status with the headline figure (the knee, at the mix, with the bound resource) and confirm the
-  planned projects still read "not built yet".
+  status with the headline figure (the knee, at the mix) and confirm the planned projects still read
+  "not built yet".
 
 - [ ] **Step 4: Commit**
 

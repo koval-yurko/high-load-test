@@ -403,14 +403,15 @@ const CPU = 'http_server_cpu_duration_seconds';
  *    aggregation ever sees it.
  *  - CloudWatch SuccessfulRequestLatency is MILLISECONDS; the histograms are
  *    SECONDS. queueing_ms_by_route converts explicitly.
- *  - CloudWatch's throttled-requests series is a per-60s-period SUM exposed as
- *    a gauge, not a monotonic counter -- it goes 0 -> 500 -> 300 -> 0 as
- *    throttling starts and stops. `rate()` on it treats every decrease as a
- *    counter reset and produces nonsense. throttled_requests reads the gauge
- *    directly; the attribution rule is "> 0", not a rate.
+ *  - CloudWatch's read/write throttle-event series are per-60s-period SUMs
+ *    exposed as gauges, not monotonic counters -- they go 0 -> 500 -> 300 -> 0
+ *    as throttling starts and stops. `rate()` on one of them treats every
+ *    decrease as a counter reset and produces nonsense. read_throttle_events
+ *    and write_throttle_events read the gauges directly.
  *  - SuccessfulRequestLatency counts only SUCCESSFUL calls, so the gap stops
  *    being interpretable once throttling starts -- by which point
- *    throttled_requests has already answered the question.
+ *    read_throttle_events / write_throttle_events have already answered the
+ *    question.
  *  - The subtrahend is PER ROUTE, from attribution.operations. A single
  *    avg() over the whole table averages unlike operations together and
  *    subtracts the same wrong number from every route -- see queueingExpr.
@@ -482,9 +483,11 @@ export function renderQueries(doc) {
 
     cloudwatch_srl_by_operation: `${SRL}{dimension_TableName="${doc.service}"}`,
 
-    // The queueing signal, in milliseconds. Positive and growing means requests
-    // are waiting on the event loop, not on DynamoDB. Subtrahend is per route,
-    // from attribution.operations -- see queueingExpr.
+    // The queueing signal, in milliseconds. It is time spent inside the process
+    // around the await, and it includes AWS SDK retry backoff on throttled
+    // DynamoDB calls -- so while throttle events are non-zero it is not evidence
+    // about the event loop. Subtrahend is per route, from attribution.operations
+    // -- see queueingExpr.
     queueing_ms_by_route: queueingExpr(doc),
 
     // CPU-seconds burned per wall-second, per task.
@@ -497,9 +500,20 @@ export function renderQueries(doc) {
     eventloop_delay_max: `nodejs_eventloop_delay_max_seconds{job="${doc.service}"}`,
     eventloop_utilization: `nodejs_eventloop_utilization_ratio{job="${doc.service}"}`,
 
-    // A per-60s-period gauge, not a counter -- never rate() this one.
-    throttled_requests:
-      `sum(aws_dynamodb_throttled_requests_sum{dimension_TableName="${doc.service}"})`,
+    // Per-60s-period gauges, not counters -- never rate() these. They go
+    // 0 -> 5265 -> 3964 -> 0 as throttling starts and stops, and rate() reads
+    // every decrease as a counter reset.
+    //
+    // These replace ThrottledRequests, which is unusable as a discriminator on
+    // two counts: it is published ONLY with a TableName+Operation dimension pair
+    // (so a table-level CloudWatch CLI query matches nothing, forever), and its
+    // Prometheus copy reads 0 at instants during sustained throttling. Read and
+    // write events are published at table level and separate the two sides.
+    read_throttle_events:
+      `sum(aws_dynamodb_read_throttle_events_sum{dimension_TableName="${doc.service}"})`,
+
+    write_throttle_events:
+      `sum(aws_dynamodb_write_throttle_events_sum{dimension_TableName="${doc.service}"})`,
   };
   return `${JSON.stringify(q, null, 2)}\n`;
 }

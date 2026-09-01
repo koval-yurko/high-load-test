@@ -120,9 +120,35 @@ test('queries.json carries one query per attribution key, all non-empty', () => 
   for (const key of [
     'sli_ratio', 'db_wall_avg_by_route', 'cloudwatch_srl_by_operation',
     'queueing_ms_by_route', 'cpu_seconds_per_second', 'cpu_saturation_ratio',
-    'eventloop_delay_p99', 'eventloop_utilization', 'throttled_requests',
+    'eventloop_delay_p99', 'eventloop_utilization',
+    'read_throttle_events', 'write_throttle_events',
   ]) {
     assert.ok(q[key] && q[key].trim().length > 0, `${key} missing from queries.json`);
+  }
+});
+
+// ThrottledRequests is published ONLY with a TableName+Operation dimension pair, and its
+// per-60s gauge reads 0 at instants during sustained throttling -- measured 2026-09-01 as
+// "... 4156, 0, 4153, 4360 ..." while DynamoDB was rejecting 5588 reads/minute. Read and
+// write throttle events are published at table level, continuously, and separate the two
+// sides. See docs/superpowers/specs/2026-09-01-...-attribution-simplified-design.md.
+test('queries.json does not offer ThrottledRequests as a signal', () => {
+  const q = JSON.parse(renderQueries(loadSlo(`${HERE}slo.yaml`)));
+  assert.equal(q.throttled_requests, undefined,
+    'throttled_requests must not be reintroduced');
+  for (const [key, expr] of Object.entries(q)) {
+    assert.ok(!expr.includes('throttled_requests_sum'),
+      `${key} still reads aws_dynamodb_throttled_requests_sum`);
+  }
+});
+
+test('throttle-event queries read the gauge directly and are never rated', () => {
+  const q = JSON.parse(renderQueries(loadSlo(`${HERE}slo.yaml`)));
+  for (const key of ['read_throttle_events', 'write_throttle_events']) {
+    assert.ok(!q[key].includes('rate('),
+      `${key} wraps a per-60s CloudWatch gauge in rate(); every decrease reads as a counter reset`);
+    assert.ok(q[key].includes('dimension_TableName="ecs-dynamodb-rps-ceiling"'),
+      `${key} is not scoped to this project's table`);
   }
 });
 

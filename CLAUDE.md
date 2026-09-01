@@ -143,11 +143,13 @@ project with four specs and five plans that is a real cost paid every time.
 
 State the substance, then give the address so it can be checked:
 
-> ~~"Use the four-row table in §5 of the 2026-08-31 spec."~~
+> ~~"Run the completeness check from the `loadtest` skill before writing up results."~~
 >
-> "Attribute the ceiling with the four-row table — throttle events, DynamoDB's own latency, the gap
-> between that and in-process `db` time, and CPU against the 0.25 vCPU allocation. It is in §5 of
-> `docs/superpowers/specs/2026-08-31-…-attribution-via-metrics-design.md` if you need the reasoning."
+> "Before writing up results, flag any row with a blank `infra change` (`$4`), `k6 attainment`
+> (`$6`), `service attainment` (`$7`) or `throttles` (`$13`) — and re-derive those field indices by
+> piping the header through `awk -F'|'`, never by counting pipes, because a leading-pipe Markdown
+> row makes `$1` the empty string before the first column. The snippet is in
+> `.claude/skills/loadtest/SKILL.md` if you need it."
 
 This applies hardest to **questions**. A question a reader cannot answer without opening another file
 is not a question, it is a research assignment. Inline every number, metric name and trade-off the

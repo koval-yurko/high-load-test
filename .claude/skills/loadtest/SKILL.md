@@ -64,8 +64,8 @@ one you are quoting.
 
 ## Read the server-side numbers from Grafana
 
-k6 records only what a client can observe. `bound resource`, `queueing ms` and `service attainment`
-do not come from the k6 summary at all — they come from the SLO query and the attribution queries in
+k6 records only what a client can observe. `service attainment` and the throttle-event readings do
+not come from the k6 summary at all — they come from the SLO query and the queries in
 `<project>/grafana/queries.json`, evaluated over the run's own window, **after** the run finishes.
 
 `queries.json` is generated from `slo.yaml`; do not hand-write PromQL against it. `GRAFANA_AUTH` is
@@ -81,7 +81,7 @@ but a raw Prometheus query does not understand. Substitute the run's own window 
 set -a && . .env && set +a
 P="$GRAFANA_URL/api/datasources/proxy/uid/grafanacloud-prom/api/v1"
 Q=<project>/grafana/queries.json
-for k in sli_ratio queueing_ms_by_route cpu_saturation_ratio throttled_requests; do
+for k in sli_ratio read_throttle_events write_throttle_events cpu_saturation_ratio; do
   EXPR=$(jq -r --arg k "$k" '.[$k]' "$Q" | sed "s/\$__rate_interval/${RUN_WINDOW:-5m}/g")
   printf '%-24s ' "$k"
   curl -s -H "Authorization: Bearer $GRAFANA_AUTH" --get \
@@ -89,24 +89,27 @@ for k in sli_ratio queueing_ms_by_route cpu_saturation_ratio throttled_requests;
 done
 ```
 
-Verified live against this repo's stack (2026-08-31, idle service — expect `0`/`1`, not a live-run
-number): `sli_ratio` → `"1"`, `cpu_saturation_ratio` → `"0"`, `throttled_requests` → `"0"`.
-`queueing_ms_by_route` returned `"NaN"` per route — expected with no in-flight traffic, since the
-subtraction has no CloudWatch series to pair against; re-check it against a real run before trusting
-a `NaN` as "no queueing" rather than "no traffic yet".
+Verified live against this repo's stack (2026-09-01, idle service — expect `0`/`1`, not a live-run
+number): `sli_ratio` → `"1"`, `cpu_saturation_ratio` → `"0"`, `read_throttle_events` → `"0"`,
+`write_throttle_events` → `"0"`. Each returns a **value**, not an empty result — the collector
+emits the zero rather than omitting the series, which is what makes a `> 0` test sound.
 
-Read `bound resource` off the four-row attribution table (spec §5 — `ThrottledRequests`,
-`SuccessfulRequestLatency`, the CPU/event-loop queries, and ALB `TargetResponseTime`, in that
-priority order). Read `queueing ms` as the worst (highest) `http_route` value from
-`queueing_ms_by_route` over the run window.
+**Nothing derives a bound resource.** The four-row attribution table this skill used to reference
+was deleted on 2026-09-01 — it named the service while DynamoDB was rejecting 5,588 reads per
+minute, because SDK retry backoff inflates every service-side signal. Record `throttles` as **`read/write`** — the peak
+per-minute value of `read_throttle_events`, a slash, then the peak per-minute value of
+`write_throttle_events`, both over the run window: e.g. `5588/0`. Two numbers, not the larger of the
+two, mirroring the `RCU/WCU` column's convention — separating reads from writes is the entire reason
+these two metrics were chosen over `ThrottledRequests`. Then let whoever reads the row draw the
+conclusion from that plus the latency columns.
 
 ## Recording
 
 Append to `<project>/results.md` — create it with a header row if absent:
 
 ```markdown
-| date | profile | infra change | RPS | bound resource | evidence | queueing ms | k6 attainment | service attainment | budget burn x | p95 fast/std/heavy | db ms | cpu ms | EL lag p99 | throttles | RCU/WCU | $/hr |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| date | profile | infra change | RPS | k6 attainment | service attainment | budget burn x | p95 fast/std/heavy | db ms | cpu ms | EL lag p99 | throttles | RCU/WCU | $/hr |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 ```
 
 **Two attainment columns, because two different numbers both legitimately answer "did it meet the
@@ -126,22 +129,8 @@ Read `service attainment` from the same PromQL the alert rules use, over the run
 the SLO population is restricted to classified traffic (`class=~"fast|standard|heavy"`); an
 internet-facing ALB collects scanner 404s that would otherwise count as violations.
 
-**`bound resource` and `queueing ms`, documented beside the attainment pair for the same reason —
-each has exactly one legitimate source, not an eyeballed guess:**
-
-| column | source |
-|---|---|
-| `bound resource` | the four-row attribution table, spec §5 — one of `db-capacity` \| `db-latency` \| `service-cpu` \| `edge` |
-| `queueing ms` | `queueing_ms_by_route`, the worst (highest) route over the run window |
-
 `infra change` is the most important column — it is what makes the row mean something. A row whose
 infra change is blank is not a result, it is a number.
-
-`bound resource` and `evidence` are not optional. A ceiling with no attributed cause is a number, not
-a result. Use the four-row table from "Read the server-side numbers from Grafana" above, in priority
-order: `ThrottledRequests > 0` → `db-capacity`; throttled = 0 but `SuccessfulRequestLatency` climbing
-→ `db-latency`; throttled = 0, SRL flat, the gap (`queueing ms`) climbing with event-loop utilization
-→ 1 → `service-cpu`; all of the above flat with ALB `TargetResponseTime` rising → `edge`.
 
 ### Completeness check
 
@@ -149,15 +138,18 @@ Before writing up results, confirm every row carries the columns that make it a 
 number:
 
 ```bash
-awk -F'|' 'NR>2 && NF>3 && ($4 ~ /^ *$/ || $6 ~ /^ *$/ || $8 ~ /^ *$/ || $9 ~ /^ *$/ || $10 ~ /^ *$/) \
+awk -F'|' 'NR>2 && NF>3 && ($4 ~ /^ *$/ || $6 ~ /^ *$/ || $7 ~ /^ *$/ || $13 ~ /^ *$/) \
   { print "INCOMPLETE ROW:", $0 }' <project>/results.md
 ```
 
-Field indices, `awk -F'|'` counting the leading empty field as `$1`: `$4` = `infra change`, `$6` =
-`bound resource`, `$8` = `queueing ms`, `$9` = `k6 attainment`, `$10` = `service attainment`. Verified
-against the header above — inserting `queueing ms` after `evidence` (not before `bound resource`)
-is what keeps `$4`/`$6` unchanged from the schema's previous revision; do not assume that after
-touching this table again, re-run the header through `awk` to confirm.
+`$4` = infra change, `$6` = k6 attainment, `$7` = service attainment, `$13` = throttles.
+
+**Do not assume those indices survive a schema change.** `awk -F'|'` on a leading-pipe Markdown row
+makes `$1` the empty string before the first column, so the field number is never the column number.
+After touching this table again, re-derive every index by piping the header row through
+`awk -F'|'` and printing the fields — never by counting pipes by eye. Counting is how the previous
+version of this check ended up validating the wrong columns while documenting itself as validating
+the right ones.
 
 `budget burn x` is the burn-rate multiple: observed miss rate / sustainable miss rate. A k6 run is
 minutes and the SLO window is days, so a raw "0.03% of budget" figure does not travel between runs.

@@ -435,8 +435,15 @@ wall-clock around an `await` absorbs event-loop queueing. OTel's AWS SDK instrum
 wall-clock around the SDK call too — the identical failure in a new package. It is kept for what it
 genuinely adds (call counts, errors, and **SDK retry behaviour**, which is how throttling presents
 before it becomes errors), not for attribution. DynamoDB's `SuccessfulRequestLatency` from CloudWatch
-remains the DB-bound discriminator, and the gap between it and the client-side figure *is* the
-queueing signal.
+was designated the DB-bound discriminator here, with the gap between it and the client-side figure as
+the queueing signal.
+
+> **Withdrawn 2026-09-01.** Neither survives. `SuccessfulRequestLatency` *falls* when the table
+> throttles — 0.887 ms mid-throttle against 1.473 ms idle — because rejected requests are never served
+> and never enter the statistic; and the gap absorbs SDK retry backoff, so it read 642–938 ms while
+> the database itself reported 0.9–2.2 ms. `ReadThrottleEvents` / `WriteThrottleEvents` are read
+> instead, beside request latency, with nothing computing a verdict. See
+> `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`.
 
 **`histogram_fraction` interpolates.** It estimates linearly within the bucket straddling the
 threshold. Over this latency range at 160 buckets the straddling bucket is a few percent wide, so the

@@ -1,8 +1,10 @@
 # ecs-dynamodb-rps-ceiling — two metrics instead of an attribution model
 
 - **Date:** 2026-09-01
-- **Status:** **approved** (2026-09-01). Design agreed in conversation after the observability
-  shakedown; the implementation plan is not yet written.
+- **Status:** **complete** (2026-09-01). Executed by
+  `docs/superpowers/plans/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified.md`; see that
+  plan's ledger and `.superpowers/sdd/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified/report.md`
+  for the close-out evidence.
 - **Project directory:** `ecs-dynamodb-rps-ceiling/`
 - **Amends:** `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`.
   It **deletes that document's four-row attribution table** — the one keyed on DynamoDB's

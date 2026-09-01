@@ -10,10 +10,11 @@ back.
 ## 1. What is this?
 
 A Node.js service running on AWS ECS Fargate, backed by a provisioned-capacity DynamoDB table, in
-`eu-central-1`. It exists to answer one question with evidence rather than a guess: **at what
-request rate does a class-based latency SLO start breaking, and which resource breaks it — the
-service or the database?** Four endpoints are graded against three latency classes (fast/standard/
-heavy), traffic is driven at a fixed 55/15/25/5 read/write/feed/report mix, and the project's
+`eu-central-1`. It exists to answer two questions with evidence rather than a guess: **at what
+request rate does a class-based latency SLO start breaking, and was DynamoDB refusing requests
+when it did?** Nothing computes a verdict from those two — a person reads them side by side.
+Four endpoints are graded against three latency classes (fast/standard/heavy), traffic is
+driven at a fixed 55/15/25/5 read/write/feed/report mix, and the project's
 method is to find that breaking point, release one constraint at a time (more service capacity,
 then more database capacity), and re-measure — never both at once, or the comparison is worthless.
 
@@ -39,9 +40,12 @@ Lambda heartbeat keeps traffic flowing once a minute even when nobody is testing
 has scaled out), and the status-code panel is almost entirely 2XX — the only traffic besides the
 heartbeat is internet scanners hitting unmatched paths, which the ALB returns as 4XX, not 5XX.
 
-**Bad reading:** `HealthyHostCount` at 0, or `LiveTaskCount` below desired, or a run of 5XX. That
-points at the ECS task, not the database — check the ECS service events and CloudWatch logs
-described in the [Appendix](#8-appendix--running-it-yourself).
+**Bad reading:** `HealthyHostCount` at 0, or `LiveTaskCount` below desired, or a run of 5XX. The
+task is failing its health check — check the ECS service events and CloudWatch logs described in the
+[Appendix](#8-appendix--running-it-yourself). Check the throttle-events panel alongside them rather
+than reading this as the task's own fault: on 2026-09-01, SDK retry backoff on a throttled DynamoDB
+call pinned event-loop utilisation at 1.000 with CPU at 3–16%, and a saturated event loop fails
+health checks too.
 
 ---
 
@@ -117,22 +121,38 @@ alert outside a deliberate test is a real incident.
 
 ## 5. What is the bottleneck right now?
 
-This is the project's core idea: don't just measure a ceiling, name which resource caused it. Four
-panels together answer that, read in this order.
+Two questions, two metrics, read side by side. Nothing here computes a verdict.
 
-| what you see | what is binding | what to change | panel |
-|---|---|---|---|
-| `ThrottledRequests` > 0 | DynamoDB is out of provisioned capacity | raise RCU/WCU | [ThrottledRequests (headline)](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=2&from=now-6h&to=now), [read vs write](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=3&from=now-6h&to=now) |
-| Throttled = 0, but DynamoDB's own request latency is climbing | DynamoDB itself is slow, independent of capacity headroom | look at item size or a hot partition — this is not something more capacity fixes | [SuccessfulRequestLatency by operation](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=5&from=now-6h&to=now) |
-| Throttled = 0, DynamoDB's clock is flat, but the gap between it and the service's own wall-clock is widening, and CPU saturation is heading to 1.0 | the service's CPU or event loop, not the database | scale the service out (1 → 4 tasks) | [DB wall-clock vs DynamoDB's own clock](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=21&from=now-6h&to=now), [Queueing delay by route](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=22&from=now-6h&to=now), [CPU saturation](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=23&from=now-6h&to=now) |
-| everything above is flat, but ALB response time is up and `HealthyHostCount` is low | the edge (ALB) or an in-progress deployment | not a capacity story at all — check the deployment, not the database or the service code | [ALB TargetResponseTime](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=15&from=now-6h&to=now), [ALB HealthyHostCount](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=17&from=now-6h&to=now) |
+| question | where to look | what it means |
+|---|---|---|
+| **How long is the endpoint taking?** | [SLI ratio](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=19&from=now-6h&to=now) and the latency panels | the service-side request duration the SLO is computed from |
+| **Was DynamoDB rejecting us?** | [Throttle events, read and write](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=2&from=now-6h&to=now) — one line for `ReadThrottleEvents`, one for `WriteThrottleEvents`, plotted separately rather than summed | non-zero means DynamoDB refused requests; the SDK retried them with backoff, inside the service |
 
-Two more panels feed row three specifically: [Event-loop delay p99 by task](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=24&from=now-6h&to=now)
+Latency up **and** throttle events non-zero → the database was the constraint; the knob is capacity.
+Latency up **and** throttle events at zero → it was not; look at the service.
+
+**Why there is no table here any more.** There used to be a four-row one that named the bound
+resource for you. It was deleted on 2026-09-01, after being evaluated for the first time against a
+case whose answer was known — 250 rps against a table provisioned at 25 read capacity units, with
+DynamoDB rejecting 5,588 reads per minute. **It named the service.** When DynamoDB throttles, the
+AWS SDK retries with backoff *inside the Node process*, so the service's own database timing climbed
+to 642–938 ms while DynamoDB's own clock read 0.9–2.2 ms, and event-loop utilization pinned at 1.000
+while CPU sat at 3–16%. Every signal that was supposed to indicate a service-bound ceiling is also a
+symptom of the database failing. The reasoning is in
+`docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`.
+
+**A trap the deleted table fell into, worth not repeating by hand:** DynamoDB's
+`SuccessfulRequestLatency` *falls* when the table throttles — 0.887 ms mid-throttle against 1.473 ms
+at idle — because rejected requests are never served and so never enter the statistic. A flat or
+falling DynamoDB latency is not evidence that DynamoDB is healthy.
+
+Three more panels are worth reading when throttle events are at zero and the service still looks
+slow: [Event-loop delay p99 by task](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=24&from=now-6h&to=now)
 breaks the CPU story down per task, which is what makes a 1→4 scale-out decision visible — a
 single flat aggregate line would hide whether the load is spread evenly. [Read capacity: consumed
 vs provisioned](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=7&from=now-6h&to=now)
 and its write counterpart ([panel 8](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=8&from=now-6h&to=now))
-show how much headroom is left on row one, before throttling starts.
+show how much headroom is left on provisioned capacity, before throttling starts.
 
 **A caveat that looks like a bug and isn't:** the Queueing delay panel (22) shows `NaN` for any
 route that had zero traffic in the last 60 seconds. That's a 0/0 average, not a broken panel. At
@@ -193,10 +213,10 @@ reports must come from a k6 run (or a Grafana query) executed in the same workin
 reports it — remembered or extrapolated numbers are not allowed by this repo's rules. Until a run
 happens, there is nothing here to read except "not yet measured."
 
-When a run has happened, `results.md` will record, per run: RPS achieved, the bound resource and
-the panel evidence for it (using the table in [§5](#5-what-is-the-bottleneck-right-now)), SLO
-attainment, error budget burned, p95/p99 latency by class, and the infrastructure change (if any)
-that distinguishes that run from the previous one.
+When a run has happened, `results.md` will record, per run: RPS achieved, the latency and
+throttle-event readings from [§5](#5-what-is-the-bottleneck-right-now), SLO attainment, error budget
+burned, p95/p99 latency by class, and the infrastructure change (if any) that distinguishes that run
+from the previous one.
 
 **Read the attainment as two separate columns, not one:** `k6 attainment` is measured client-side
 by the load-test tool and includes network round-trip time to the ALB; `service attainment` is the
@@ -291,7 +311,8 @@ aws dynamodb describe-table --table-name ecs-dynamodb-rps-ceiling \
 **What good looks like:** `/healthz` answers `{"ok":true}`; `/feeds/…` returns a 20-item summary;
 `/stats` returns **404**, because measurement no longer leaves the service over HTTP; the service is
 `running=1 pending=0`; the ALB target is `healthy`. To see where a request spent its time, open the
-attribution row in Grafana rather than reading a response header — that is the whole point of the
+latency panels in Grafana — row 1, *Latency and DynamoDB throttling* — rather than reading a response
+header; measurement no longer leaves the service over HTTP, which is the whole point of the
 2026-08-31 change.
 
 **Confirm the seed is intact** — every partition must hold exactly 20 items, or the feed `Query`
@@ -349,16 +370,19 @@ knee_rps = START_RATE + (MAX_RATE − START_RATE) × (elapsed_seconds / RAMP_SEC
 If it finishes without aborting, the ceiling is above `MAX_RATE` — raise it and re-run rather
 than reporting 2000 as the answer.
 
-### Phase 3 — Check state, and attribute the ceiling
+### Phase 3 — Check state: how long did it take, and was DynamoDB rejecting us?
 
-**This is the deliverable.** `ThrottledRequests` is the discriminator: it is measured inside
-DynamoDB, so the Node event loop cannot contaminate it. See [§5](#5-what-is-the-bottleneck-right-now)
-for the reader-facing version of this table; the CloudWatch queries behind it:
+See [§5](#5-what-is-the-bottleneck-right-now) for the reader-facing version of these two questions.
+The CloudWatch queries behind them:
 
 ```bash
 W="$(date -u -v-30M +%Y-%m-%dT%H:%M:%SZ)"; N="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-aws cloudwatch get-metric-statistics --namespace AWS/DynamoDB --metric-name ThrottledRequests \
+aws cloudwatch get-metric-statistics --namespace AWS/DynamoDB --metric-name ReadThrottleEvents \
+  --dimensions Name=TableName,Value=ecs-dynamodb-rps-ceiling \
+  --start-time "$W" --end-time "$N" --period 60 --statistics Sum --output table
+
+aws cloudwatch get-metric-statistics --namespace AWS/DynamoDB --metric-name WriteThrottleEvents \
   --dimensions Name=TableName,Value=ecs-dynamodb-rps-ceiling \
   --start-time "$W" --end-time "$N" --period 60 --statistics Sum --output table
 
@@ -383,16 +407,22 @@ The subtrahend is **per route**, not one average over the table: `/items/:pk/:sk
 `attribution.operations` in `slo.yaml`, and `queueing_ms_by_route` in `grafana/queries.json` is
 generated from it — do not hand-write this subtraction.
 
-A widening gap with `ThrottledRequests` at zero is the strongest evidence of a **service** ceiling
-— it compares two independent clocks instead of trusting one absolute number.
+**Two traps in the queries above, both measured 2026-09-01, worth not repeating by hand.**
+DynamoDB's `SuccessfulRequestLatency` *falls* when the table throttles — 0.887 ms mid-throttle
+against 1.473 ms at idle — because rejected requests are never served and so never enter the
+statistic. A flat or falling DynamoDB latency is not evidence that DynamoDB is healthy. And the
+service's own database timing, its event-loop delay and its event-loop utilization all climb hard
+under throttling from SDK retry backoff alone — 642–938 ms, 610 ms and 1.000 respectively, all
+measured with CPU at only 3–16%. None of those three is evidence about the service while throttle
+events are non-zero.
 
 **Throttling shows up as latency before it shows up as errors.** The SDK retries with backoff and
-those retries sit *inside* the wall-clock db time. Always check `ThrottledRequests` before blaming
-the service.
+those retries sit *inside* the wall-clock db time. Always check `ReadThrottleEvents` and
+`WriteThrottleEvents` before blaming the service.
 
 ### Phase 4 — Improve: scale the service out (1 → 4 tasks)
 
-**One change only.** If Phase 3 attributed the ceiling to the *database*, skip this and go to
+**One change only.** If Phase 3 already showed non-zero throttle events, skip this and go to
 Phase 6 instead — scaling tasks would change nothing, and recording why the order was swapped is
 itself a result.
 
@@ -424,13 +454,14 @@ k6 cloud run -e BASE_URL="$BASE" -e RATE=<knee> --summary-export=summary.json k6
 k6 cloud run -e BASE_URL="$BASE" -e RATE=<knee> --summary-export=summary.json k6/stress.js
 ```
 
-Re-run the Phase 3 attribution. The expected outcome is that the bound resource has **moved to
-the database** — which is what Phase 6 exists for.
+Re-run the Phase 3 checks. The expected outcome is that throttle events are now non-zero — the
+database becomes the next constraint to release, which is what Phase 6 exists for.
 
 ### Phase 6 — Improve: raise database capacity
 
-Only if the database now binds. Raising capacity that is not the constraint spends money and
-proves nothing.
+Only if the Phase 5 re-run left `ReadThrottleEvents` or `WriteThrottleEvents` non-zero. Raising
+capacity that is not the constraint spends money and proves nothing — with both at zero over the run
+window, DynamoDB was not refusing requests and there is nothing here to release.
 
 Capacity comes from the model, never a hand-typed number. Raise `target_rps` in `slo.yaml`, then
 regenerate `terraform/capacity.auto.tfvars`:
@@ -445,21 +476,20 @@ the seeded data would be lost. Then apply — **approval gate.**
 
 ### Phase 7 — Check state and re-measure again
 
-Drain 6 minutes, re-run B and C, attribute again. Both constraints should now be released; record
-the new ceiling and the new $/hour.
+Drain 6 minutes, re-run B and C, and check the two metrics again. Both constraints should now be
+released; record the new ceiling and the new $/hour.
 
 ### Phase 8 — Record the results
 
 Every number must come from a run in this session, quoted with the k6 output or CloudWatch query
 that produced it. No remembered figures, no extrapolation.
 
-Per run: RPS achieved, **bound resource and its evidence**, SLO attainment, error budget burned,
-burn-rate multiple, p95/p99 by class, `db_wall_avg_by_route`/`cpu_seconds_per_second`, event-loop lag,
-`ThrottledRequests`, provisioned RCU/WCU, $/hour, and the one change distinguishing it from the
-previous run.
+Per run: RPS achieved, SLO attainment, error budget burned, burn-rate multiple, p95/p99 by class,
+`db_wall_avg_by_route`/`cpu_seconds_per_second`, event-loop lag, the peak per-minute
+`ReadThrottleEvents` and `WriteThrottleEvents`, provisioned RCU/WCU, $/hour, and the one change
+distinguishing it from the previous run.
 
-A result is never written as "N RPS". It is **"N RPS at the 55/15/25/5 mix"**, with the bound
-resource named.
+A result is never written as "N RPS". It is **"N RPS at the 55/15/25/5 mix"**.
 
 ### Phase 9 — Scale down and tear out
 

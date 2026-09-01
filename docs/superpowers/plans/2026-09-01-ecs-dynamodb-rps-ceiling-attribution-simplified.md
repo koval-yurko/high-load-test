@@ -14,9 +14,63 @@
 
 ---
 
-## Status — **draft**, 2026-09-01
+## Status — **complete**, 2026-09-01
 
-Not started.
+All seven tasks executed. Commits: Task 1 `dc9a4cb`, Task 2 `9c8a115`, Task 3 `8619039`, Task 4
+`2e4fa08`, Task 5 `1594c26`/`90af238`/`fa07dbb`, Task 6 (approval gate, no commits — one Grafana
+dashboard resource applied and verified by reading the live dashboard back), Task 7 (this
+close-out, commit `873bed2`). See
+`.superpowers/sdd/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified/report.md` for the
+close-out evidence.
+
+**Reopened after `873bed2`: a final whole-branch review found the deleted model still live in
+places the plan's per-task greps never searched, because every one of those greps matched a metric
+name or label (`ThrottledRequests`, `bound resource`, `four-row`) rather than the inference itself.
+Two survivors were Critical and live on the applied dashboard — panel 22 restated the deleted
+table's row three verbatim ("service-bound … not DB-bound", the exact rule the incident disproved),
+and panel 23 restated its CPU fallback while citing a spec section that now carries a `⛔ DELETED`
+banner. The fix wave and its residual rounds produced seven further commits:**
+
+```
+3198768 fix(ecs-dynamodb-rps-ceiling): stop the dashboard inferring a verdict
+0dc2e2e docs(repo): retire the last bound-resource instructions
+b16239f fix(ecs-dynamodb-rps-ceiling): readme no longer promises attribution
+726403d docs(ecs-dynamodb-rps-ceiling): correct the otel.js discriminator claim
+53b3c7b fix(ecs-dynamodb-rps-ceiling): clear the last live inference rules
+63ff1f7 docs(ecs-dynamodb-rps-ceiling): correct the queueing-signal comment
+c5d57dd docs(ecs-dynamodb-rps-ceiling): amend the db_ms banner at the decision
+```
+
+Between them: deleted the redundant dashboard panel 3 and widened panel 2 to full width (two
+CloudWatch targets on one panel render two lines rather than summing, so panel 2 alone was never a
+headline and panel 3 duplicated it — a defect in this plan's own Task 2 text); rewrote the
+dashboard description and three row titles; corrected `capacity-model.html`, `CLAUDE.md`'s
+citation-style example, and the scale-and-measure plan's Task 6 gate; and added dated `Withdrawn` /
+`Amended 2026-09-01` notes at the decision itself in the 2026-08-29 and 2026-08-30 specs, per this
+repo's superseding rule.
+
+Two edits touched files this plan's own constraints named as off-limits, each under a controller
+ruling recorded because otherwise they read as violations: `src/otel.js` (constraint: "no change to
+`src/`") had one comment corrected — "CloudWatch SuccessfulRequestLatency remains the DB-bound
+discriminator" is false, since that metric *falls* when the table throttles — and a comment-only
+edit serves the constraint's own stated purpose (no image rebuild, no ECS redeployment), so it was
+ruled in scope. `scripts/generate-slo.js` (the fix wave's own prohibition) had a comment corrected
+under the same reasoning, precedented by Task 1's Ruling C4; `npm test` stayed 92/92, `npm run
+slo:check` still agreed, and `queries.json` did not move.
+
+A **second Grafana-only `terraform apply`** was approved by the human and verified: preflight
+re-asserted account `042945885621`, org `failwin`, region `eu-central-1`; a stale plan captured
+before `53b3c7b` was discarded and re-run rather than trusted; the fresh plan showed
+`0 to add, 1 to change, 0 to destroy` on `module.grafana.grafana_dashboard.attribution`; HCP run
+`run-reUZznWKVyZd7cnZ` reported `Apply complete! Resources: 0 added, 1 changed, 0 destroyed.`
+(unlike the first apply, the log stream held); and the live dashboard was read back anyway —
+version 5, 23 panels, panel 3 absent, panel 2 now full-width with both throttle targets. No target
+on the live dashboard reads `ThrottledRequests`.
+
+Controller verification at `c5d57dd`: `npm test` 92/92, `npm run slo:check` agrees, `terraform fmt
+-check` clean, the dashboard template parses after substituting its `${...}` interpolations. Full
+detail, including the repo-wide behavioural sweep that replaced the old per-file greps, is in
+`.superpowers/sdd/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified/report.md`.
 
 ---
 

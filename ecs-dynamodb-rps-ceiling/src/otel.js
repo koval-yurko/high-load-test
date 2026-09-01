@@ -218,8 +218,15 @@ export async function startOtel(config) {
   // BedrockRuntimeServiceExtension implements updateMetricInstruments, while
   // DynamodbServiceExtension, the only extension this service exercises, defines
   // no metric instruments whatsoever. It was not misconfigured: no configuration
-  // could have made it emit. CloudWatch SuccessfulRequestLatency remains the
-  // DB-bound discriminator.
+  // could have made it emit. CloudWatch stays the only source of DynamoDB-side
+  // metrics for this service -- but SuccessfulRequestLatency is not a
+  // discriminator. It FALLS when the table throttles (0.887 ms mid-throttle
+  // against 1.473 ms idle, 2026-09-01) because rejected requests are never
+  // served and so never enter the statistic; flat or falling DynamoDB latency
+  // is not evidence that DynamoDB is healthy. ReadThrottleEvents and
+  // WriteThrottleEvents are what answer "was DynamoDB rejecting us", table-level
+  // and continuous. Nothing computes a bound resource: a person reads request
+  // latency and throttle events side by side.
   //
   // NOT registered: @opentelemetry/auto-instrumentations-node. It pulls in
   // instrumentation for libraries this service does not use and adds context

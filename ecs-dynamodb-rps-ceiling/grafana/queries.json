@@ -8,5 +8,6 @@
   "eventloop_delay_p99": "nodejs_eventloop_delay_p99_seconds{job=\"ecs-dynamodb-rps-ceiling\"}",
   "eventloop_delay_max": "nodejs_eventloop_delay_max_seconds{job=\"ecs-dynamodb-rps-ceiling\"}",
   "eventloop_utilization": "nodejs_eventloop_utilization_ratio{job=\"ecs-dynamodb-rps-ceiling\"}",
-  "throttled_requests": "sum(aws_dynamodb_throttled_requests_sum{dimension_TableName=\"ecs-dynamodb-rps-ceiling\"})"
+  "read_throttle_events": "sum(aws_dynamodb_read_throttle_events_sum{dimension_TableName=\"ecs-dynamodb-rps-ceiling\"})",
+  "write_throttle_events": "sum(aws_dynamodb_write_throttle_events_sum{dimension_TableName=\"ecs-dynamodb-rps-ceiling\"})"
 }

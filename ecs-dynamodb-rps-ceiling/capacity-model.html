@@ -202,7 +202,7 @@ R_max = budget ÷ 0.000321165</pre>
       <p><strong>The real cost risk is a forgotten environment, not a load test.</strong> A 3-hour session at 1000 RPS of capacity costs about 96 cents. The same capacity left running for a month costs $234. The budget guard protects against the teardown you skipped, not the test you ran.</p>
     </div>
     <div class="note warn">
-      <p><strong>Throttling shows up as latency before it shows up as errors.</strong> The SDK retries <code>ProvisionedThroughputExceededException</code> with backoff, so an under-provisioned table inflates p95 first and only raises the error rate once retries are exhausted. Any p95 breach has to be checked against the <code>ThrottledRequests</code> panel before it gets blamed on the service.</p>
+      <p><strong>Throttling shows up as latency before it shows up as errors.</strong> The SDK retries <code>ProvisionedThroughputExceededException</code> with backoff, so an under-provisioned table inflates p95 first and only raises the error rate once retries are exhausted. Any p95 breach has to be checked against the dashboard's throttle-events panel — <code>ReadThrottleEvents</code> and <code>WriteThrottleEvents</code>, plotted as two lines — before it gets blamed on the service.</p>
     </div>
     <div class="note">
       <p><strong>The first 25 RCU and 25 WCU are free each month.</strong> Reads bind first at this mix, so anything up to about <strong>24 RPS</strong> of sustained capacity costs nothing at all — useful for smoke tests, useless as a ceiling worth measuring.</p>

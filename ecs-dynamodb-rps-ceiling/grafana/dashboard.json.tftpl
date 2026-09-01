@@ -1,6 +1,6 @@
 {
   "title": "ecs-dynamodb-rps-ceiling \u2014 attribution",
-  "description": "Live attribution dashboard: which resource is the RPS ceiling during a k6 run \u2014 DynamoDB, the ECS task, or the edge. Read top-to-bottom while a run is in flight.",
+  "description": "Two metrics, read side by side during a k6 run: request latency, and DynamoDB throttle events (ReadThrottleEvents / WriteThrottleEvents). Nothing on this dashboard computes a verdict about which resource was the ceiling \u2014 the four-row attribution table that used to do that was deleted on 2026-09-01. Every other panel is context for those two.",
   "tags": [
     "ecs-dynamodb-rps-ceiling"
   ],
@@ -30,7 +30,7 @@
     {
       "id": 1,
       "type": "row",
-      "title": "1. Attribution \u2014 which resource is the ceiling?",
+      "title": "1. Latency and DynamoDB throttling",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -43,77 +43,16 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "DynamoDB ThrottledRequests (headline)",
-      "description": "The whole decision in one line: zero = DynamoDB is not the ceiling, non-zero = it is. This is the total across read+write throttling; if it climbs while the service is still hitting its SLI, the ceiling is the database, not the app or the ALB.",
+      "title": "DynamoDB throttle events (read and write)",
+      "description": "Was DynamoDB rejecting us? Non-zero means yes — DynamoDB refused requests, and the SDK retried them with backoff inside the service. Both series are plotted: ReadThrottleEvents and WriteThrottleEvents are two separate lines, not a total. Read this beside the latency panels; nothing here decides for you — the four-row attribution table that used to do that was deleted on 2026-09-01 after it named the service while DynamoDB was rejecting 5588 reads/minute. Reads throttle first on this table: at the 55/15/25/5 mix the capacity model costs 1.025 RCU per request against 0.2 WCU, so reads bind near 24 rps and writes not until ~125 rps. Measured 2026-09-01 at 250 rps: ReadThrottleEvents peaked at 5588/min while WriteThrottleEvents stayed at zero. WriteThrottleEvents rising while the read line stays flat is about write capacity specifically, not the table as a whole. Both are per-minute counts at table level. ThrottledRequests is deliberately not shown: it reads zero at instants during sustained throttling.",
       "datasource": {
         "type": "cloudwatch",
         "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 24,
         "x": 0,
-        "y": 1
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
-          },
-          "namespace": "AWS/DynamoDB",
-          "metricName": "ThrottledRequests",
-          "statistic": "Sum",
-          "dimensions": {
-            "TableName": "$table_name"
-          },
-          "region": "eu-central-1",
-          "period": "60",
-          "metricQueryType": 0,
-          "metricEditorMode": 0,
-          "matchExact": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "pointSize": 5,
-            "spanNulls": true
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi"
-        }
-      }
-    },
-    {
-      "id": 3,
-      "type": "timeseries",
-      "title": "Read vs write throttling",
-      "description": "Splits the headline ThrottledRequests by side. ReadThrottleEvents currently reads zero because reads have not throttled yet in any run so far \u2014 keep the panel, it will populate once reads saturate. WriteThrottleEvents rising alone points at write capacity/WCU specifically, not the table as a whole.",
-      "datasource": {
-        "type": "cloudwatch",
-        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
         "y": 1
       },
       "targets": [
@@ -457,7 +396,7 @@
     {
       "id": 9,
       "type": "row",
-      "title": "4. Service (ECS) \u2014 rule out the app/task before blaming the DB",
+      "title": "4. Service (ECS) \u2014 what the task itself was doing",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -471,7 +410,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "ECS CPUUtilization (Average & Maximum)",
-      "description": "If CPU is pinned near 100% while ThrottledRequests is flat at zero, the ceiling is the 0.25 vCPU task, not DynamoDB \u2014 the pbkdf2 CPU knob or event-loop queueing is the bottleneck, not capacity.",
+      "description": "CPU against the 0.25 vCPU task allocation. Read it beside the throttle-events panel, not in isolation: during the 2026-09-01 throttling incident CPU sat at 3\u201316% while event-loop utilization read 1.000, because SDK retry backoff on a throttled DynamoDB call saturates the event loop without burning CPU. Low CPU here is not evidence the service was idle.",
       "datasource": {
         "type": "cloudwatch",
         "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
@@ -553,7 +492,7 @@
       "id": 11,
       "type": "timeseries",
       "title": "ECS MemoryUtilization (Average & Maximum)",
-      "description": "Rules out memory pressure as a confound before trusting a CPU- or DB-bound verdict.",
+      "description": "Memory pressure is a confound worth ruling out: if memory is climbing toward the task limit, latency may be about the container rather than about anything else shown here.",
       "datasource": {
         "type": "cloudwatch",
         "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
@@ -710,7 +649,7 @@
       "id": 14,
       "type": "timeseries",
       "title": "ALB RequestCount",
-      "description": "Requests actually reaching the target group per period. Compare against k6's arrival rate to confirm the offered load and the delivered load match \u2014 a gap here means the ceiling is upstream of the app entirely (connection limits, DNS, the load generator).",
+      "description": "Requests actually reaching the target group per period. Compare against k6's arrival rate to confirm the offered load and the delivered load match \u2014 a gap means requests k6 intended to send never reached the ALB. Read it beside the latency panels before calling that an upstream limit: k6's arrival-rate executor also drops iterations when its pre-allocated VUs are exhausted, which happens when responses are slow, so a slow app produces this gap too.",
       "datasource": {
         "type": "cloudwatch",
         "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
@@ -984,7 +923,7 @@
       "id": 17,
       "type": "timeseries",
       "title": "ALB HealthyHostCount",
-      "description": "Healthy targets in the target group. A drop here during a run means tasks are failing health checks under load \u2014 a service-side ceiling that will masquerade as a DynamoDB problem if this panel isn't checked.",
+      "description": "Healthy targets in the target group. A drop here during a run means tasks are failing health checks under load. That is not by itself a service-side ceiling: on 2026-09-01, AWS SDK retry backoff on a throttled DynamoDB call pinned event-loop utilisation at 1.000 with CPU at 3\u201316%, and a task whose event loop is saturated fails its health check too. Read it beside the throttle-events panel.",
       "datasource": {
         "type": "cloudwatch",
         "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
@@ -1110,7 +1049,7 @@
     {
       "id": 20,
       "type": "row",
-      "title": "7. Attribution — the four discriminators",
+      "title": "7. Derived panels — read these with the two headline metrics",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -1184,7 +1123,7 @@
       "id": 22,
       "type": "timeseries",
       "title": "Queueing delay by route",
-      "description": "db_wall_avg_by_route minus DynamoDB's own reported clock for the operations THAT route issues (slo.yaml attribution.operations: /items/:pk/:sk → GetItem, /items → PutItem, /feeds/:pk → Query, /reports → Query + PutItem). Not a table-wide average — averaging unlike operations together, BatchWriteItem from seeding included, subtracted ~1.8 ms too little from /reports. Positive and growing ⇒ service-bound (event-loop queueing), not DB-bound. Shows NaN for any route with no traffic in the window — it is a 0/0 average, not a broken panel. At idle, most routes read NaN because the heartbeat touches each route only once a minute; the value resolves once real load is running.",
+      "description": "db_wall_avg_by_route minus DynamoDB's own reported clock for the operations THAT route issues (slo.yaml attribution.operations: /items/:pk/:sk → GetItem, /items → PutItem, /feeds/:pk → Query, /reports → Query + PutItem). Not a table-wide average — averaging unlike operations together, BatchWriteItem from seeding included, subtracted ~1.8 ms too little from /reports. A positive, growing gap is time spent inside the process around the await, and that includes AWS SDK retry backoff on throttled DynamoDB calls — so while throttle events are non-zero it is not evidence about the service. Shows NaN for any route with no traffic in the window — it is a 0/0 average, not a broken panel. At idle, most routes read NaN because the heartbeat touches each route only once a minute; the value resolves once real load is running.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1236,7 +1175,7 @@
       "id": 23,
       "type": "timeseries",
       "title": "CPU saturation",
-      "description": "CPU seconds burned per second (by task), over the 0.25 vCPU Fargate ceiling. 1.0 is the ceiling — a task pinned at or above it is CPU-bound regardless of what the DB clock says. READ IT ONE WAY ONLY: that is sufficient evidence of CPU-bound, never necessary. http.server.cpu.duration sums only the two bracketed synchronous blocks in src/handlers.js (feed's summarize, report's pbkdf2); JSON serialisation, AWS SDK work and the OTel export are uncounted, and getItem/putItem bracket nothing so they contribute no series at all. A task can be genuinely pinned while this panel reads 0.2 — when it is low but event-loop utilisation is near 1, the CPU is unaccounted, not absent (spec section 5).",
+      "description": "CPU seconds burned per second (by task), over the 0.25 vCPU Fargate ceiling. 1.0 is the ceiling — a task pinned at or above it is CPU-bound regardless of what the DB clock says. READ IT ONE WAY ONLY: that is sufficient evidence of CPU-bound, never necessary. http.server.cpu.duration sums only the two bracketed synchronous blocks in src/handlers.js (feed's summarize, report's pbkdf2); JSON serialisation, AWS SDK work and the OTel export are uncounted, and getItem/putItem bracket nothing so they contribute no series at all. A task can be genuinely pinned while this panel reads 0.2. The converse does not follow either: on 2026-09-01 event-loop utilisation read 1.000 while CPU sat at 3–16%, and that was AWS SDK retry backoff on throttled DynamoDB calls, not work — a high event-loop number with low CPU is not evidence the service was the constraint.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"
@@ -1288,7 +1227,7 @@
       "id": 24,
       "type": "timeseries",
       "title": "Event-loop delay p99 by task",
-      "description": "nodejs_eventloop_delay_p99_seconds, by (instance) — one line per task; four lines once Task 20 brings autoscaling to 4 tasks. A rising delay here, with CPU saturation flat, points at blocking work off the CPU-accounting path rather than raw compute.",
+      "description": "nodejs_eventloop_delay_p99_seconds, by (instance) — one line per task; four lines once Task 20 brings autoscaling to 4 tasks. A rising delay here with CPU saturation flat says only that the loop had pending work the CPU accounting does not see; it does not say what kind. On 2026-09-01 it reached 610 ms while CPU sat at 3–16%, and the cause was AWS SDK retry backoff on throttled DynamoDB calls — pending timers, which are neither blocking work nor raw compute. Read it beside the throttle-events panel.",
       "datasource": {
         "type": "prometheus",
         "uid": "grafanacloud-prom"

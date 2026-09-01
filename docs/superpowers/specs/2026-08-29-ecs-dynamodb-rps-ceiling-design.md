@@ -71,6 +71,12 @@ and should be revisited for project #2, not treated as a general preference.
 1. A capacity number — RPS at the frozen endpoint mix — produced by a k6 run, not an estimate.
 2. Evidence of **which resource bound first** at that number: the service or the database. A ceiling
    without an attributed cause is not a result.
+
+   > **Withdrawn 2026-09-01.** Nothing names a bound resource any more. What a run records instead is
+   > two raw metrics read side by side by a person — request latency, and DynamoDB
+   > `ReadThrottleEvents` / `WriteThrottleEvents` — with nothing computing a verdict from them. Full
+   > reasoning in
+   > `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`.
 3. That same load profile re-run after one infrastructure change, with both results in `results.md`.
 4. A cost figure attached to each SLO level: what the current ceiling costs per hour, and what the
    improved target would cost.
@@ -213,9 +219,29 @@ regardless of what total latency says.
 > `ThrottledRequests == 0` plus DynamoDB's `SuccessfulRequestLatency` as the DB-bound discriminator;
 > the gap between that and `db_ms` *is* the queueing signal. `@opentelemetry/instrumentation-aws-sdk`
 > inherits the same flaw and does not fix it — see §11 of `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`.
+>
+> **Amended 2026-09-01 — do not act on the replacement this banner prescribes.** All three parts
+> of it fail. `ThrottledRequests` cannot be the trigger: it reads zero at instants during
+> sustained throttling and is published only per operation, so a table-level query matches
+> nothing. `SuccessfulRequestLatency` cannot be the discriminator: it *falls* when the table
+> throttles — 0.887 ms mid-throttle against 1.473 ms idle — because rejected requests are never
+> served and never enter the statistic. And the gap against `db_ms` is not a clean queueing
+> signal: it absorbs AWS SDK retry backoff, reading 642–938 ms while DynamoDB's own clock read
+> 0.9–2.2 ms. See
+> `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`.
 
 Together these make success criterion #2 achievable — DynamoDB `ThrottledRequests` climbing means DB
 bound; event-loop lag climbing with flat `db_ms` means service bound.
+
+> **Withdrawn 2026-09-01.** Both halves fail. `ThrottledRequests` reads zero at instants during
+> sustained throttling and is published only per operation, so it cannot be the trigger; and every
+> service-side signal — `db_ms`, event-loop lag, event-loop utilisation — is inflated by AWS SDK
+> retry backoff held inside the Node process, so none of them separates "the queue is in Node because
+> Node is slow" from "the queue is in Node because DynamoDB is rejecting us". Measured 2026-09-01:
+> service-side DB timing 642–938 ms against DynamoDB's own 0.9–2.2 ms, event-loop delay 610 ms,
+> utilisation 1.000, CPU 3–16%, while the table rejected 5,588 reads/minute. `ReadThrottleEvents` /
+> `WriteThrottleEvents` are read beside request latency instead, with nothing computing a verdict.
+> See `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`.
 
 ### Seed data
 
@@ -410,6 +436,12 @@ comparable to itself: improvements change infrastructure, never the script.
 A capacity result is never written as "N RPS". It is always **"N RPS at the 55/15/25/5 mix"**, with the
 bound resource named. The mix travels with the number into `results.md`, the README, and any chart.
 
+> **Amended 2026-09-01.** The mix half of this rule stands; "with the bound resource named" does
+> not — nothing names a bound resource any more. A result carries the RPS at the mix plus the two
+> raw metrics, request latency and DynamoDB `ReadThrottleEvents` / `WriteThrottleEvents`, read side
+> by side by a person. See
+> `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`.
+
 ---
 
 ## 9. The improvement and the deliverable
@@ -559,6 +591,12 @@ freely; it may not apply it.
 11. Re-run B and C identically; second change (capacity) if the DB now binds.
 12. `results.md`, chart, project README.
 13. **[GATE] `terraform destroy`** + billable-resource sweep.
+
+> **Amended 2026-09-01.** Step 7 no longer yields a bound resource — it yields the capacity number
+> plus request latency and DynamoDB `ReadThrottleEvents` / `WriteThrottleEvents`, read side by
+> side. Step 11's condition is an observation rather than a judgment: raise capacity if the re-run
+> left throttle events non-zero. See
+> `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`.
 
 ---
 

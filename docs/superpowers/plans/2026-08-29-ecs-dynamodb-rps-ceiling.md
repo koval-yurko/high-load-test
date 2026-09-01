@@ -2828,6 +2828,10 @@ If the run completes without aborting, the ceiling is above `MAX_RATE` — raise
 > `el_delay` no longer exist in the k6 summary at all — the numbers this step reads come from
 > Grafana. It must land **before Task 18 runs**: once baselines B and C exist the k6 scripts are
 > frozen, and changing them afterwards invalidates every recorded row.
+>
+> **Addendum 2026-09-01.** The four-row table this banner points to was itself deleted; nothing
+> derives a bound resource any more. See
+> `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`.
 
 > **Corrected 2026-08-29. The original table here could not work, and read literally it would
 > have attributed a service ceiling to the database — the exact inversion this project exists to
