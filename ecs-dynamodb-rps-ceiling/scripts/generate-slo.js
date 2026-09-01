@@ -461,7 +461,18 @@ export function queueingExpr(doc) {
     const ops = doc.attribution.operations[endpoint];
     const sel = `${DB}{${scope}, http_route="${route}"}`;
     const srl = ops
-      .map((op) => `sum(${SRL}{dimension_TableName="${doc.service}", dimension_Operation="${op}"})`)
+      // `max by (dimension_TableName)`, not `sum` and not `max without
+      // (instance)`. `sum` double-counts across an overlapping pair of collector
+      // tasks during a redeploy. `without (instance)` fixes that but KEEPS
+      // dimension_Operation -- so the two-operation subtrahend for /reports adds
+      // series whose label sets differ, matches nothing, and renders EMPTY
+      // (verified against live Prometheus, 2026-09-01). Aggregating BY the one
+      // label both terms share leaves a single series that still adds, and that
+      // `- on() group_left ()` can still match against.
+      .map(
+        (op) =>
+          `max by (dimension_TableName) (${SRL}{dimension_TableName="${doc.service}", dimension_Operation="${op}"})`,
+      )
       .join('\n      + ');
     return `  (\n`
       + `    1000 * sum by (http_route) (histogram_sum(rate(${sel}[60s])))\n`
@@ -481,7 +492,13 @@ export function renderQueries(doc) {
       `1000 * sum by (http_route) (histogram_sum(rate(${DB}{${scope}}[60s])))`
       + ` / sum by (http_route) (histogram_count(rate(${DB}{${scope}}[60s])))`,
 
-    cloudwatch_srl_by_operation: `${SRL}{dimension_TableName="${doc.service}"}`,
+    // `max`, never `sum`: every aws_* series carries an `instance` label naming
+    // the Alloy task that scraped it. desired_count is 1, so sum() is right at
+    // steady state -- but a replaced collector's series overlap the new task's
+    // during a redeploy and every sum() reads double. Grouping BY the two
+    // dimensions keeps one series per operation, which is what this breakdown is.
+    cloudwatch_srl_by_operation:
+      `max by (dimension_TableName, dimension_Operation) (${SRL}{dimension_TableName="${doc.service}"})`,
 
     // The queueing signal, in milliseconds. It is time spent inside the process
     // around the await, and it includes AWS SDK retry backoff on throttled
@@ -509,11 +526,16 @@ export function renderQueries(doc) {
     // (so a table-level CloudWatch CLI query matches nothing, forever), and its
     // Prometheus copy reads 0 at instants during sustained throttling. Read and
     // write events are published at table level and separate the two sides.
+    //
+    // `max`, never `sum` -- see cloudwatch_srl_by_operation above. A collector
+    // redeploy overlaps two scrapers and sum() would report double the throttle
+    // events, silently, in the number that decides whether DynamoDB was the
+    // ceiling.
     read_throttle_events:
-      `sum(aws_dynamodb_read_throttle_events_sum{dimension_TableName="${doc.service}"})`,
+      `max by (dimension_TableName) (aws_dynamodb_read_throttle_events_sum{dimension_TableName="${doc.service}"})`,
 
     write_throttle_events:
-      `sum(aws_dynamodb_write_throttle_events_sum{dimension_TableName="${doc.service}"})`,
+      `max by (dimension_TableName) (aws_dynamodb_write_throttle_events_sum{dimension_TableName="${doc.service}"})`,
   };
   return `${JSON.stringify(q, null, 2)}\n`;
 }

@@ -434,27 +434,25 @@ than reporting 2000 as the answer.
 
 ### Phase 3 — Check state: how long did it take, and was DynamoDB rejecting us?
 
-See [§5](#5-what-is-the-bottleneck-right-now) for the reader-facing version of these two questions.
-The CloudWatch queries behind them:
+Both questions are panels on the attribution dashboard. **Do not shell out to
+`aws cloudwatch get-metric-statistics` for them** — Grafana is the one place to look, and the
+dashboard queries the same CloudWatch metrics through its own datasource, at full resolution:
 
-```bash
-W="$(date -u -v-30M +%Y-%m-%dT%H:%M:%SZ)"; N="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+| question | panel |
+|---|---|
+| Was DynamoDB rejecting us? | [DynamoDB throttle events (read and write)](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=2&from=now-6h&to=now) — non-zero means yes |
+| How long did DynamoDB itself take? | [SuccessfulRequestLatency by operation](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=5&from=now-6h&to=now) — `GetItem`, `PutItem`, `Query`, Average and Maximum |
 
-aws cloudwatch get-metric-statistics --namespace AWS/DynamoDB --metric-name ReadThrottleEvents \
-  --dimensions Name=TableName,Value=ecs-dynamodb-rps-ceiling \
-  --start-time "$W" --end-time "$N" --period 60 --statistics Sum --output table
+Widen the dashboard time range to cover the run; these links open the last 6 hours.
 
-aws cloudwatch get-metric-statistics --namespace AWS/DynamoDB --metric-name WriteThrottleEvents \
-  --dimensions Name=TableName,Value=ecs-dynamodb-rps-ceiling \
-  --start-time "$W" --end-time "$N" --period 60 --statistics Sum --output table
-
-for OP in GetItem PutItem Query; do
-  aws cloudwatch get-metric-statistics --namespace AWS/DynamoDB \
-    --metric-name SuccessfulRequestLatency \
-    --dimensions Name=TableName,Value=ecs-dynamodb-rps-ceiling Name=Operation,Value=$OP \
-    --start-time "$W" --end-time "$N" --period 60 --statistics Average Maximum --output table
-done
-```
+**These panels read CloudWatch directly, and that is deliberate.** The collector also forwards the
+same metrics to Prometheus, but that copy is not equivalent: Alloy requests a 300-second window and
+CloudWatch aligns its 60-second buckets to the request rather than the wall-clock minute, so a spiky
+`Sum` loses its peak. Measured 2026-09-01 over the 250 rps run, `ReadThrottleEvents` peaked at
+**5588** natively and only **4360** in the forwarded copy — a 21% understatement of the number this
+README reports. Smooth `Average` metrics survive intact, which is why the forwarded copy is still the
+right source for the queueing subtraction below. Full reasoning:
+`docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-datasource-fidelity-design.md`.
 
 **Do not read `db_wall_avg_by_route` on its own.** It is wall-clock around an `await`, so it absorbs
 event-loop queueing. Its value is the *gap*:
@@ -469,10 +467,18 @@ The subtrahend is **per route**, not one average over the table: `/items/:pk/:sk
 `attribution.operations` in `slo.yaml`, and `queueing_ms_by_route` in `grafana/queries.json` is
 generated from it — do not hand-write this subtraction.
 
-**Both traps in [§5](#5-what-is-the-bottleneck-right-now) apply to these queries directly** — a
+**The two sides of that subtraction are ~2 minutes out of step.** `db_wall_avg_by_route` is emitted
+by the service and reaches Grafana via OTLP within seconds; the `SuccessfulRequestLatency` being
+subtracted is scraped from CloudWatch by the collector and lands about two minutes later. Measured
+2026-09-01, the forwarded series is the native one shifted +2 min with values preserved exactly, so
+at steady state the error is hundredths of a millisecond — but at a transition it is as large as the
+excursion, worst observed 7.4 ms against a 642–938 ms signal (~1%). Fine for deciding *where* the
+queue is; do not read the gap as instantaneous while load is changing.
+
+**Both traps in [§5](#5-what-is-the-bottleneck-right-now) apply to these panels directly** — a
 falling `SuccessfulRequestLatency` is not a healthy database, and the service's db timing, event-loop
 delay and event-loop utilization are not evidence about the service while throttle events are
-non-zero. Read that section before drawing a conclusion from the output above.
+non-zero. Read that section before drawing a conclusion from the panels above.
 
 **Throttling shows up as latency before it shows up as errors.** The SDK retries with backoff and
 those retries sit *inside* the wall-clock db time. Always check `ReadThrottleEvents` and

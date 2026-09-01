@@ -485,6 +485,17 @@ propagation the metrics path does not need. Anyone "fixing" the package list by 
   because nothing had yet been measured against them.**
 - Moving CloudWatch off the existing dashboard. `grafana/dashboard.json` stays as written and applied
   against the CloudWatch datasource; S10 adds a second path, it does not migrate the first.
+  **Re-examined and UPHELD 2026-09-01 — now for a measured reason, not just scope control.** This
+  bullet stated the decision without a justification, which made it look like mere sequencing that a
+  later tidy-up could reverse. It is not. The forwarded copy is lossy in exactly the dimension this
+  project measures: over the 250 rps run, `ReadThrottleEvents` peaked at **5588** in CloudWatch and
+  at only **4360** in Prometheus — a 21% understatement of the figure the README cites as its
+  evidence that DynamoDB was the ceiling. Alloy requests a 300-second window and CloudWatch aligns
+  its 60-second buckets to the request rather than the wall-clock minute, so a spiky `Sum` has its
+  peak split across two offset buckets; a smooth `Average` barely notices, which is why
+  `SuccessfulRequestLatency` survives the same path intact and the queueing subtraction may keep
+  using it. Evidence and the full rejected-migration analysis:
+  `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-datasource-fidelity-design.md`.
 - Renumbering Tasks 18–23 of the 2026-08-29 plan.
 - Multi-collector or highly-available collection. One task, one point of failure, accepted (§11).
 

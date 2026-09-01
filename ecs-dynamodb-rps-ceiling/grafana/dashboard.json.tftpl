@@ -47,7 +47,7 @@
       "description": "Was DynamoDB rejecting us? Non-zero means yes — DynamoDB refused requests, and the SDK retried them with backoff inside the service. Both series are plotted: ReadThrottleEvents and WriteThrottleEvents are two separate lines, not a total. Read this beside the latency panels; nothing here decides for you — the four-row attribution table that used to do that was deleted on 2026-09-01 after it named the service while DynamoDB was rejecting 5588 reads/minute. Reads throttle first on this table: at the 55/15/25/5 mix the capacity model costs 1.025 RCU per request against 0.2 WCU, so reads bind near 24 rps and writes not until ~125 rps. Measured 2026-09-01 at 250 rps: ReadThrottleEvents peaked at 5588/min while WriteThrottleEvents stayed at zero. WriteThrottleEvents rising while the read line stays flat is about write capacity specifically, not the table as a whole. Both are per-minute counts at table level. ThrottledRequests is deliberately not shown: it reads zero at instants during sustained throttling.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+        "uid": "${cloudwatch_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -60,7 +60,7 @@
           "refId": "A",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/DynamoDB",
           "metricName": "ReadThrottleEvents",
@@ -78,7 +78,7 @@
           "refId": "B",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/DynamoDB",
           "metricName": "WriteThrottleEvents",
@@ -139,7 +139,7 @@
       "description": "The DynamoDB-reported clock, split by GetItem/PutItem/Query. This is what db_wall_avg_by_route is compared against \u2014 that metric is wall-clock around the SDK await and absorbs event-loop queueing (measured 12.1x inflation with the database unchanged), so a gap between this panel and it is the queueing signal, not extra DB time. Read that gap PER ROUTE: each route is compared against the sum of only the operations it issues (/reports issues Query then PutItem), which is what the \"Queueing delay by route\" panel computes. db_ms was the k6 Trend that carried this number before the SLI moved into the service; it no longer exists. Average and Maximum both shown: Maximum surfaces tail spikes Average hides.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+        "uid": "${cloudwatch_datasource_uid}"
       },
       "gridPos": {
         "h": 9,
@@ -152,7 +152,7 @@
           "refId": "A",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/DynamoDB",
           "metricName": "SuccessfulRequestLatency",
@@ -175,7 +175,7 @@
           "refId": "B",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/DynamoDB",
           "metricName": "SuccessfulRequestLatency",
@@ -242,7 +242,7 @@
       "description": "Consumed*CapacityUnits is a Sum-per-period metric (units used in the preceding 60s); Provisioned*CapacityUnits is already expressed as units/second. To compare them as rates, divide the consumed line by 60 (the period below) \u2014 this panel shows the raw values, not pre-divided. Consumed converging on or crossing provisioned is read capacity becoming the ceiling, and should line up with ReadThrottleEvents in row 1.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+        "uid": "${cloudwatch_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -255,7 +255,7 @@
           "refId": "A",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/DynamoDB",
           "metricName": "ConsumedReadCapacityUnits",
@@ -273,7 +273,7 @@
           "refId": "B",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/DynamoDB",
           "metricName": "ProvisionedReadCapacityUnits",
@@ -321,7 +321,7 @@
       "description": "Same units caveat as the read panel: ConsumedWriteCapacityUnits is Sum-per-60s, ProvisionedWriteCapacityUnits is already units/second \u2014 divide consumed by 60 to compare rates. Convergence here should line up with WriteThrottleEvents in row 1.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+        "uid": "${cloudwatch_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -334,7 +334,7 @@
           "refId": "A",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/DynamoDB",
           "metricName": "ConsumedWriteCapacityUnits",
@@ -352,7 +352,7 @@
           "refId": "B",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/DynamoDB",
           "metricName": "ProvisionedWriteCapacityUnits",
@@ -413,7 +413,7 @@
       "description": "CPU against the 0.25 vCPU task allocation. Read it beside the throttle-events panel, not in isolation: during the 2026-09-01 throttling incident CPU sat at 3\u201316% while event-loop utilization read 1.000, because SDK retry backoff on a throttled DynamoDB call saturates the event loop without burning CPU. Low CPU here is not evidence the service was idle.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+        "uid": "${cloudwatch_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -426,7 +426,7 @@
           "refId": "A",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ECS",
           "metricName": "CPUUtilization",
@@ -445,7 +445,7 @@
           "refId": "B",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ECS",
           "metricName": "CPUUtilization",
@@ -495,7 +495,7 @@
       "description": "Memory pressure is a confound worth ruling out: if memory is climbing toward the task limit, latency may be about the container rather than about anything else shown here.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+        "uid": "${cloudwatch_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -508,7 +508,7 @@
           "refId": "A",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ECS",
           "metricName": "MemoryUtilization",
@@ -527,7 +527,7 @@
           "refId": "B",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ECS",
           "metricName": "MemoryUtilization",
@@ -577,7 +577,7 @@
       "description": "Task count over time. Currently pinned at 1; once autoscaling is enabled this is the panel that shows 1->4 actually happening under load, not just being configured.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+        "uid": "${cloudwatch_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -590,7 +590,7 @@
           "refId": "A",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ECS",
           "metricName": "LiveTaskCount",
@@ -652,7 +652,7 @@
       "description": "Requests actually reaching the target group per period. Compare against k6's arrival rate to confirm the offered load and the delivered load match \u2014 a gap means requests k6 intended to send never reached the ALB. Read it beside the latency panels before calling that an upstream limit: k6's arrival-rate executor also drops iterations when its pre-allocated VUs are exhausted, which happens when responses are slow, so a slow app produces this gap too.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+        "uid": "${cloudwatch_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -665,7 +665,7 @@
           "refId": "A",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ApplicationELB",
           "metricName": "RequestCount",
@@ -713,7 +713,7 @@
       "description": "Edge-measured response time, independent of anything the service reports about itself. p95 via the CloudWatch extended statistic where supported; Average and Maximum are always included as a fallback and to show tail spread.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+        "uid": "${cloudwatch_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -726,7 +726,7 @@
           "refId": "A",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ApplicationELB",
           "metricName": "TargetResponseTime",
@@ -744,7 +744,7 @@
           "refId": "B",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ApplicationELB",
           "metricName": "TargetResponseTime",
@@ -762,7 +762,7 @@
           "refId": "C",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ApplicationELB",
           "metricName": "TargetResponseTime",
@@ -811,7 +811,7 @@
       "description": "5XX rising is the app or its dependencies failing outright, not just slowing down \u2014 a distinct failure mode from throttling or latency. 4XX at the target vs. at the ELB itself separates application-level rejections from load-balancer-level ones (e.g. malformed requests never reaching a task).",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+        "uid": "${cloudwatch_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -824,7 +824,7 @@
           "refId": "A",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ApplicationELB",
           "metricName": "HTTPCode_Target_2XX_Count",
@@ -842,7 +842,7 @@
           "refId": "B",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ApplicationELB",
           "metricName": "HTTPCode_Target_4XX_Count",
@@ -860,7 +860,7 @@
           "refId": "C",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ApplicationELB",
           "metricName": "HTTPCode_Target_5XX_Count",
@@ -878,7 +878,7 @@
           "refId": "D",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ApplicationELB",
           "metricName": "HTTPCode_ELB_4XX_Count",
@@ -926,7 +926,7 @@
       "description": "Healthy targets in the target group. A drop here during a run means tasks are failing health checks under load. That is not by itself a service-side ceiling: on 2026-09-01, AWS SDK retry backoff on a throttled DynamoDB call pinned event-loop utilisation at 1.000 with CPU at 3\u201316%, and a task whose event loop is saturated fails its health check too. Read it beside the throttle-events panel.",
       "datasource": {
         "type": "cloudwatch",
-        "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+        "uid": "${cloudwatch_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -939,7 +939,7 @@
           "refId": "A",
           "datasource": {
             "type": "cloudwatch",
-            "uid": "a4139e7c-dc84-47c8-b90b-d710ec0fe3fb"
+            "uid": "${cloudwatch_datasource_uid}"
           },
           "namespace": "AWS/ApplicationELB",
           "metricName": "HealthyHostCount",
@@ -1001,7 +1001,7 @@
       "description": "The same ratio grafana_slo.latency_classes and the burn-rate alert rules read (grafana/locals.tf class_ratio_query), differing only in $__rate_interval — this is what pages, not a proxy for it.",
       "datasource": {
         "type": "prometheus",
-        "uid": "grafanacloud-prom"
+        "uid": "${prometheus_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -1014,7 +1014,7 @@
           "refId": "A",
           "datasource": {
             "type": "prometheus",
-            "uid": "grafanacloud-prom"
+            "uid": "${prometheus_datasource_uid}"
           },
           "expr": ${jsonencode(sli_ratio)}
         }
@@ -1063,10 +1063,10 @@
       "id": 21,
       "type": "timeseries",
       "title": "DB wall-clock vs DynamoDB's own clock",
-      "description": "db_wall_avg_by_route is wall-clock time around the SDK await, which absorbs event-loop queueing (measured 12.1x inflation with the database unchanged). cloudwatch_srl_by_operation is DynamoDB's own reported clock, scraped by the collector. The gap between the two lines is the queueing signal, not extra DB time — compare against the \"Queueing delay by route\" panel.",
+      "description": "db_wall_avg_by_route is wall-clock time around the SDK await, which absorbs event-loop queueing (measured 12.1x inflation with the database unchanged). cloudwatch_srl_by_operation is DynamoDB's own reported clock, scraped by the collector. The gap between the two lines is the queueing signal, not extra DB time — compare against the \"Queueing delay by route\" panel. TIME SKEW: the two sides of this comparison do not describe the same instant. The service histogram arrives via OTLP within seconds; DynamoDB's clock is scraped by the collector from CloudWatch and lands about 2 minutes later (measured 2026-09-01 -- the forwarded series is the native one shifted +2 min, values preserved exactly). At steady state the subtrahend is flat and the error is hundredths of a millisecond; the largest excursion observed was 7.4 ms against a 642-938 ms signal, about 1%. Read a live run knowing the DynamoDB line lags.",
       "datasource": {
         "type": "prometheus",
-        "uid": "grafanacloud-prom"
+        "uid": "${prometheus_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -1079,7 +1079,7 @@
           "refId": "A",
           "datasource": {
             "type": "prometheus",
-            "uid": "grafanacloud-prom"
+            "uid": "${prometheus_datasource_uid}"
           },
           "expr": ${jsonencode(db_wall_avg_by_route)}
         },
@@ -1087,7 +1087,7 @@
           "refId": "B",
           "datasource": {
             "type": "prometheus",
-            "uid": "grafanacloud-prom"
+            "uid": "${prometheus_datasource_uid}"
           },
           "expr": ${jsonencode(cloudwatch_srl_by_operation)}
         }
@@ -1123,10 +1123,10 @@
       "id": 22,
       "type": "timeseries",
       "title": "Queueing delay by route",
-      "description": "db_wall_avg_by_route minus DynamoDB's own reported clock for the operations THAT route issues (slo.yaml attribution.operations: /items/:pk/:sk → GetItem, /items → PutItem, /feeds/:pk → Query, /reports → Query + PutItem). Not a table-wide average — averaging unlike operations together, BatchWriteItem from seeding included, subtracted ~1.8 ms too little from /reports. A positive, growing gap is time spent inside the process around the await, and that includes AWS SDK retry backoff on throttled DynamoDB calls — so while throttle events are non-zero it is not evidence about the service. Shows NaN for any route with no traffic in the window — it is a 0/0 average, not a broken panel. At idle, most routes read NaN because the heartbeat touches each route only once a minute; the value resolves once real load is running.",
+      "description": "db_wall_avg_by_route minus DynamoDB's own reported clock for the operations THAT route issues (slo.yaml attribution.operations: /items/:pk/:sk → GetItem, /items → PutItem, /feeds/:pk → Query, /reports → Query + PutItem). Not a table-wide average — averaging unlike operations together, BatchWriteItem from seeding included, subtracted ~1.8 ms too little from /reports. A positive, growing gap is time spent inside the process around the await, and that includes AWS SDK retry backoff on throttled DynamoDB calls — so while throttle events are non-zero it is not evidence about the service. Shows NaN for any route with no traffic in the window — it is a 0/0 average, not a broken panel. At idle, most routes read NaN because the heartbeat touches each route only once a minute; the value resolves once real load is running. TIME SKEW: the two sides of this comparison do not describe the same instant. The service histogram arrives via OTLP within seconds; DynamoDB's clock is scraped by the collector from CloudWatch and lands about 2 minutes later (measured 2026-09-01 -- the forwarded series is the native one shifted +2 min, values preserved exactly). At steady state the subtrahend is flat and the error is hundredths of a millisecond; the largest excursion observed was 7.4 ms against a 642-938 ms signal, about 1%. Read a live run knowing the DynamoDB line lags.",
       "datasource": {
         "type": "prometheus",
-        "uid": "grafanacloud-prom"
+        "uid": "${prometheus_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -1139,7 +1139,7 @@
           "refId": "A",
           "datasource": {
             "type": "prometheus",
-            "uid": "grafanacloud-prom"
+            "uid": "${prometheus_datasource_uid}"
           },
           "expr": ${jsonencode(queueing_ms_by_route)}
         }
@@ -1178,7 +1178,7 @@
       "description": "CPU seconds burned per second (by task), over the 0.25 vCPU Fargate ceiling. 1.0 is the ceiling — a task pinned at or above it is CPU-bound regardless of what the DB clock says. READ IT ONE WAY ONLY: that is sufficient evidence of CPU-bound, never necessary. http.server.cpu.duration sums only the two bracketed synchronous blocks in src/handlers.js (feed's summarize, report's pbkdf2); JSON serialisation, AWS SDK work and the OTel export are uncounted, and getItem/putItem bracket nothing so they contribute no series at all. A task can be genuinely pinned while this panel reads 0.2. The converse does not follow either: on 2026-09-01 event-loop utilisation read 1.000 while CPU sat at 3–16%, and that was AWS SDK retry backoff on throttled DynamoDB calls, not work — a high event-loop number with low CPU is not evidence the service was the constraint.",
       "datasource": {
         "type": "prometheus",
-        "uid": "grafanacloud-prom"
+        "uid": "${prometheus_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -1191,7 +1191,7 @@
           "refId": "A",
           "datasource": {
             "type": "prometheus",
-            "uid": "grafanacloud-prom"
+            "uid": "${prometheus_datasource_uid}"
           },
           "expr": ${jsonencode(cpu_saturation_ratio)}
         }
@@ -1230,7 +1230,7 @@
       "description": "nodejs_eventloop_delay_p99_seconds, by (instance) — one line per task; four lines once Task 20 brings autoscaling to 4 tasks. A rising delay here with CPU saturation flat says only that the loop had pending work the CPU accounting does not see; it does not say what kind. On 2026-09-01 it reached 610 ms while CPU sat at 3–16%, and the cause was AWS SDK retry backoff on throttled DynamoDB calls — pending timers, which are neither blocking work nor raw compute. Read it beside the throttle-events panel.",
       "datasource": {
         "type": "prometheus",
-        "uid": "grafanacloud-prom"
+        "uid": "${prometheus_datasource_uid}"
       },
       "gridPos": {
         "h": 8,
@@ -1243,7 +1243,7 @@
           "refId": "A",
           "datasource": {
             "type": "prometheus",
-            "uid": "grafanacloud-prom"
+            "uid": "${prometheus_datasource_uid}"
           },
           "expr": ${jsonencode(eventloop_delay_p99)}
         }
