@@ -1,11 +1,22 @@
 # ecs-dynamodb-rps-ceiling — attribution via metrics
 
 - **Date:** 2026-08-31
-- **Status:** **complete** (2026-08-31). Plan: `docs/superpowers/plans/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics.md`,
+- **Status:** **complete** (2026-08-31) — **except §5, whose attribution table was deleted on
+  2026-09-01.** Everything this document built is live and unaffected: the three OpenTelemetry
+  histograms, the removal of the `Server-Timing` header and the `GET /stats` endpoint, and the
+  generated shared query set. What is void is the *model* §5 wrapped around them — it misattributed a
+  DynamoDB throttling event to the service on its first real test. Read the banner at §5 before using
+  anything in that section.
+  Plan: `docs/superpowers/plans/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics.md`,
   executed and deployed. Every decision A1–A10 shipped as written, with one addition made during
   execution: **Task 10b**, fixing a pre-existing `NaN` in the SLO query that only appears with more
   than one instance — see that plan's status header.
 - **Project directory:** `ecs-dynamodb-rps-ceiling/`
+- **Amended by:** `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`
+  (2026-09-01), which **deletes the four-row attribution table in §5** after it misattributed a
+  DynamoDB throttling event to the service, and replaces it with two metrics read side by side:
+  request latency, and DynamoDB throttle events. A pointer sits at the table itself — do not rely on
+  this line alone. Everything else in this document stands.
 - **Amends:** `docs/superpowers/specs/2026-08-29-ecs-dynamodb-rps-ceiling-design.md` (reverses **D10**)
   and `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md` (§11).
   See §13 for the decision-by-decision map. Neither is superseded.
@@ -164,8 +175,38 @@ endpoint with no `operations` entry, so the mapping cannot be quietly incomplete
 
 ### The table
 
-This **replaces** the table at Task 18 Step 7 of the 2026-08-29 plan, whose service-bound row
-(`db_ms` flat while lag climbs) can never occur.
+> ### ⛔ DELETED 2026-09-01. Do not use this table.
+>
+> Replaced by two plainly-read metrics in
+> `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`:
+> **request latency** (`http_server_request_duration_seconds`, unchanged) and **DynamoDB throttle
+> events** (`ReadThrottleEvents` / `WriteThrottleEvents`, per-minute counts of rejected requests at
+> table level). Nothing computes a bound resource any more.
+>
+> **Why: evaluated once against a case whose answer was known, this table gave the opposite answer.**
+> Driven at 250 requests/second against a table provisioned at 25 read capacity units, with DynamoDB
+> rejecting **5,588 reads per minute**, it matched the *service* row on every signal — including the
+> event-loop fallback added below to make that row robust. Measured mid-throttle: `ThrottledRequests`
+> **0** (it is a per-60s gauge and reads zero between throttling minutes),
+> `SuccessfulRequestLatency` **0.887 ms — below its 1.473 ms idle value**, the queueing gap
+> **642–938 ms**, `nodejs_eventloop_utilization_ratio` **1.000**, CPU **3–16%**.
+>
+> The three failures are structural, not fixable by reordering the rows:
+>
+> 1. `ThrottledRequests` reads zero at instants during sustained throttling, and is published only
+>    with a `TableName`+`Operation` dimension pair — so the table-level CLI form used below matches
+>    nothing, forever.
+> 2. `SuccessfulRequestLatency` **falls** when DynamoDB throttles, because rejected requests are
+>    never served and so never enter the statistic. The database row requires it to climb, so that
+>    row cannot match a capacity event at all.
+> 3. Every service-row signal is downstream of throttling: SDK retries with backoff are held inside
+>    Node, inflating both the queueing gap and event-loop utilization while consuming almost no CPU.
+>
+> The rest of this document stands — the three histograms, the deletion of `Server-Timing` and
+> `GET /stats`, and the generated query set are all unaffected.
+
+~~This **replaces** the table at Task 18 Step 7 of the 2026-08-29 plan, whose service-bound row
+(`db_ms` flat while lag climbs) can never occur.~~
 
 | observation | bound resource | the knob |
 |---|---|---|

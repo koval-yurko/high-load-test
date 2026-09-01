@@ -1,11 +1,24 @@
 # ecs-dynamodb-rps-ceiling — service-emitted SLI collection
 
 - **Date:** 2026-08-30
-- **Status:** **approved** (2026-08-30). Plan: `docs/superpowers/plans/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection.md`
+- **Status:** **complete** (2026-08-31). All 18 tasks of
+  `docs/superpowers/plans/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection.md` executed and
+  verified; decisions S1–S18 all stand. The service emits its own latency distribution, Alloy
+  forwards it and the CloudWatch metrics found by the `Project` tag, and the SLO plus four burn-rate
+  rule groups are generated from `slo.yaml`. Two deviations: Task 14 was folded into Task 16, and
+  Grafana Synthetic Monitoring was abandoned for an EventBridge Scheduler heartbeat after the tenant
+  proved disabled at the account level.
+  **One claim in this document has since been narrowed** — the continuous error budget it builds is
+  informational, not authoritative; see the pointer at §17.1.
 - **Project directory:** `ecs-dynamodb-rps-ceiling/`
 - **Amended by:** `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`
   (2026-08-31), which extends this pipeline with two phase histograms and amends **§11**. S1–S12 all stand;
   it reverses nothing here.
+- **Amended by:** `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-slo-scope-design.md`
+  (2026-09-01), which settles **§17.1** and narrows this document's error-budget claim: the continuous
+  window *does* accrue a budget, but over ~4 req/min its noise floor exceeds the objective, so it is
+  **informational** and authoritative attainment is run-scoped. See the pointer at §17.1 itself — do
+  not rely on this line alone. S1–S18 all stand.
 - **Amends:** `docs/superpowers/specs/2026-08-29-ecs-dynamodb-rps-ceiling-design.md` — see §15 for the
   decision-by-decision map. It is not superseded: §4, §6, §9 and §10 of that document remain in force
   and Tasks 1–17 of its plan stand.
@@ -743,7 +756,21 @@ from scratch — and because §14's rule is that an open question is stated, not
 
 ### 17.1 Whether load-generator traffic belongs in the SLO population
 
-**Deferred pending run data.** The SLO is defined over all traffic for now.
+> **SETTLED 2026-09-01 by `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-slo-scope-design.md`
+> — in the direction this section predicted, with one correction.** The SLO is defined over
+> **load-bearing traffic**; the continuous 7-day window is **informational**, and authoritative
+> attainment is **run-scoped**. Nothing is filtered at source and no query changed — S15 already made
+> the population a selector.
+>
+> The correction: this section assumes `traffic_source="k6"` can isolate a run. **It cannot.**
+> Measured 2026-09-01 — `trafficSource()` is right (a forged `k6/` User-Agent produces the label) but
+> **k6 v1.4.0 sends no such User-Agent**, so both shakedown runs landed in `other`. The selector
+> returns an empty population, indistinguishable from silence. `k6/lib/request.js` or the k6 `options`
+> must set a User-Agent **before the scripts are frozen**.
+>
+> The arithmetic below still stands and is why the split was needed at all.
+
+**Deferred pending run data.** ~~The SLO is defined over all traffic for now.~~
 
 The arithmetic that will decide it: Synthetic Monitoring at 1/min across four endpoints contributes
 ~17,300 requests to a 3-day window. Shape C is a *deliberate* SLO breach at ~3× the knee — one

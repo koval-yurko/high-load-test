@@ -1,8 +1,21 @@
 # ecs-dynamodb-rps-ceiling — design
 
 - **Date:** 2026-08-29
-- **Status:** **partially executed (on hold)** — revision 2. §4, §5, §6, §8 and §9 are built and in
-  force. **D7 is reversed** and its replacement is being designed; see the banner below.
+- **Status:** **partially executed** — revision 4 (2026-09-01).
+  **Built and in force:** §4 infrastructure, §5 service, §6 capacity and cost model, §7 SLO,
+  §8 load profiles and run protocol.
+  **Not executed:** §9, the deliverable — no load test has been run against this environment, and
+  `ecs-dynamodb-rps-ceiling/results.md` does not exist. §9's attribution half is additionally
+  **withdrawn**: nothing names a bound resource any more (see the banner at §9).
+  **Reversed decisions:** D7 (k6 as the SLI source) and D10 (measurement over the HTTP surface),
+  each by a later spec carrying a pointer at the decision itself.
+  Remaining work lives in `docs/superpowers/plans/2026-09-02-ecs-dynamodb-rps-ceiling-scale-and-measure.md`,
+  which is **blocked**.
+- **Plans:** `docs/superpowers/plans/2026-08-29-ecs-dynamodb-rps-ceiling.md` (complete — built the
+  service, infrastructure, SLO and load profiles),
+  `…/2026-09-01-ecs-dynamodb-rps-ceiling-observability-shakedown.md` (verifies the signal chain at
+  free-tier capacity), then `…/2026-09-02-ecs-dynamodb-rps-ceiling-scale-and-measure.md` (the
+  discovery run, the before/after comparison and teardown — §10 and §13 of this document).
 - **Project directory:** `ecs-dynamodb-rps-ceiling/`
 - **Supersedes:** nothing. This is the repo's first project spec.
 - **Amended by:** `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`
@@ -413,12 +426,26 @@ That makes the sequence deterministic rather than lucky:
 2. **Re-run** → service ceiling is now ~2.8× the DB ceiling, so **DynamoDB throttles**: `db_ms` climbs,
    `ThrottledRequests` rises, ~~event-loop lag stays flat~~. **Change: raise capacity per §6.**
 
-> **⚠ The evidence clauses above are wrong; the sequence is right.** Amended 2026-08-31 by
-> `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md` §5. `db_ms` cannot "stay flat" while the
-> service binds — it wraps an `await` and absorbs the queueing (12.1× inflation measured, DB
-> unchanged). Use the four-row table in §5 of that document: `ThrottledRequests` separates DB-capacity
-> from everything else, `SuccessfulRequestLatency` is the clean DB clock, and the **gap** between it
-> and in-process `db` is the queueing signal. The service-binds-then-DB-binds *ordering* is unchanged.
+> **⚠ The evidence clauses above are wrong; the sequence is right.** `db_ms` cannot "stay flat" while
+> the service binds — it wraps an `await` and absorbs the queueing (12.1× inflation measured, DB
+> unchanged).
+>
+> **Amended twice. Read the second amendment; the first is void.**
+>
+> - *2026-08-31* replaced the evidence with a four-row table keyed on `ThrottledRequests`,
+>   `SuccessfulRequestLatency`, the gap between that and in-process `db`, and CPU. **That table was
+>   deleted on 2026-09-01** after it misattributed a DynamoDB throttling event to the service.
+> - *2026-09-01* — `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`
+>   — replaces it with **two metrics read side by side, with nothing computing a verdict**: request
+>   latency (`http_server_request_duration_seconds`, per route) and DynamoDB throttle events
+>   (`ReadThrottleEvents` / `WriteThrottleEvents`, per-minute counts of rejected requests at table
+>   level). Latency up with throttle events non-zero means the database was rejecting the service;
+>   latency up with them at zero means it was not.
+>
+> **The phrase "each with the evidence that identified it" below no longer describes a deliverable.**
+> Nothing names a bound resource, and the results file drops its `bound resource`, `evidence` and
+> `queueing ms` columns. The service-binds-then-DB-binds *ordering* is still what the experiment
+> expects.
 3. **Re-run** → both constraints released; record the new ceiling and the new $/hour.
 
 Two before/after pairs from one environment, each releasing a different constraint, **each with the

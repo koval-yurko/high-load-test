@@ -49,10 +49,34 @@ described in the [Appendix](#8-appendix--running-it-yourself).
 
 Panel: [SLI ratio — proportion meeting per-class threshold](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=19&from=now-6h&to=now)
 
-**Good reading:** the line sits above 99% (the primary objective from `slo.yaml`) — green.
+**Read this before reading the number.** The SLO is defined over **load-bearing traffic**. This
+continuous line is *informational* — between load tests the only traffic is a 1/min heartbeat, and a
+99% objective over ~60 fast-class requests an hour permits 0.6 misses per hour. One slow request
+moves the hourly figure by 1.7 points. **Authoritative attainment is run-scoped**, over a load run's
+own window — that is what [results.md](#7-what-did-the-last-load-test-show) records, and it is the
+number this project exists to produce. Decision and evidence:
+`docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-slo-scope-design.md`.
 
-**Bad reading:** the line dips below 99%, or below 99.9% at 3× the threshold (the tail
-objective) — see [How much error budget is left?](#4-how-much-error-budget-is-left).
+**Good reading, during or just after a load run:** the line sits above 99% (the primary objective
+from `slo.yaml`) — green.
+
+**Good reading, at idle:** roughly 98–99%, and *not* a service problem. Measured 2026-09-01, the
+same fast class in two regimes:
+
+| | idle, ~1 req/min | under 60 rps |
+|---|---|---|
+| p50 | 4.99 ms | 2.99 ms |
+| p95 | 31.93 ms | 4.76 ms |
+| p99 | 129.41 ms | 15.38 ms |
+| meets the 50 ms threshold | 96.67% | **99.43%** |
+
+The whole idle tail is inside the DynamoDB call (`db` p99 equals total p99), and it is not every
+request — p50 is 5 ms, so the connection usually survives. About 3.3% of idle fast requests pay a
+fresh TLS handshake because the socket was reaped. That is a **known, accepted defect**, recorded in
+§5 of the spec above with the conditions that would reopen it. It cannot occur under sustained load.
+
+**Bad reading:** the line dips below 99% *during a load run*, or below 99.9% at 3× the threshold
+(the tail objective) — see [How much error budget is left?](#4-how-much-error-budget-is-left).
 
 One thing to know before trusting this number: it is **server-side**. It is measured from the
 first line of the request handler to the response's `finish` event, so it excludes network time
@@ -77,11 +101,17 @@ metrics for 14 days, so 7 is the only value that satisfies both.
 Two alert rules watch the budget burn rate rather than waiting for the window to close — see
 [Is it about to break?](#6-is-it-about-to-break) for what they mean.
 
-**Good reading:** budget remaining stays near 100% between load tests; a deliberate stress test
-(shape C, below) is expected to burn it — that's what it's for.
+**Good reading:** a deliberate stress test (shape C, below) burns budget — that's what it's for.
 
-**Bad reading:** budget draining outside of a deliberate test means the SLO is being missed in
-production-equivalent conditions right now — treat it the same as an active incident.
+**Do not expect this to sit near 100% between load tests, and do not read that as an incident.** The
+7-day window has been in breach since before the first load run, for the reason in
+[§3](#3-are-we-meeting-the-slo): the idle population is ~4 req/min and its noise floor exceeds the
+objective. The budget figure is informational for the same reason the SLI is.
+
+**What is still worth acting on:** the two burn-rate rules below. They fire on the *rate* of budget
+spend over 14-minute and 84-minute windows, not on the 7-day total, so a depressed headline number
+does not degrade them — verified 2026-09-01 by driving them through `firing` and back. A fast-burn
+alert outside a deliberate test is a real incident.
 
 ---
 
@@ -105,10 +135,16 @@ and its write counterpart ([panel 8](https://k0valchuk.grafana.net/d/agbp7d/ecs-
 show how much headroom is left on row one, before throttling starts.
 
 **A caveat that looks like a bug and isn't:** the Queueing delay panel (22) shows `NaN` for any
-route that had zero traffic in the selected time window. That's a 0/0 average, not a broken panel.
-At idle, the once-a-minute heartbeat only touches each route roughly once a minute, so a short
-window can easily miss a given route entirely and show `NaN` for it. Widen the window, or wait for
-load — under sustained traffic every route gets samples and the `NaN` resolves on its own.
+route that had zero traffic in the last 60 seconds. That's a 0/0 average, not a broken panel. At
+idle, the once-a-minute heartbeat touches each route roughly once a minute, so a given 60-second
+window frequently misses a route entirely — observed 2026-09-01 flipping between all-`NaN` and real
+values across a 20-second gap.
+
+**Changing the dashboard time range does not fix it.** The rate window in panels 21, 22 and 23 is a
+literal `[60s]` emitted by `scripts/generate-slo.js`, not `$__rate_interval` — only the SLI ratio
+(panel 19) follows the picker. Widening `from=now-6h` to `now-24h` changes which 60-second window
+you land on, not its width. The only remedy is traffic: under sustained load every route gets many
+samples per window and the `NaN` cannot occur.
 
 ---
 
@@ -131,6 +167,21 @@ pair has a fast-burn and a slow-burn rule:
 In practice: a fast-burn alert means "something just broke, hard, right now." A slow-burn alert
 means "we're bleeding budget steadily and need to fix it before the window runs out, but nothing
 is on fire this second."
+
+**How long they actually take.** Measured 2026-09-01 by deliberately overloading the service for six
+minutes (250 rps against 25 provisioned RCU) and watching the rules walk:
+
+| | fast burn (14.4× / 14m) | slow burn (6× / 84m) |
+|---|---|---|
+| load starts → `pending` | 1m 49s | 2m 33s |
+| load starts → `firing` | **4m 01s** | ~6m |
+| load stops → `inactive` | **16m** | ~84m — still firing 22 minutes after |
+
+Two things that surprise people. **Recovery is measured from the last bad sample, not the last
+request:** the service kept emitting breached latencies for ~3.5 minutes after the load generator
+stopped, because it was still draining a backlog. And **the slow-burn pair keeps firing for over an
+hour after a six-minute incident** — that is its 84-minute window rolling off, working as designed,
+but it means "still firing" is not evidence that anything is still wrong.
 
 ---
 

@@ -12,141 +12,68 @@
 
 ---
 
-## Status — **in progress**, updated 2026-08-31 (third revision)
+## Status — **complete**, 2026-09-01
 
-> ### ✅ 2026-08-31 — that gate is CLEARED. Tasks 18–23 may proceed.
->
-> `docs/superpowers/plans/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics.md` is
-> **complete**, deployed and verified. `Server-Timing` and `GET /stats` are gone; attribution comes
-> from OTel histograms plus CloudWatch. Five things changed underneath these tasks:
->
-> 1. **`db_ms`, `cpu_ms`, `app_ms` and `el_delay` no longer exist in the k6 summary.** k6 records
->    only what a client can observe. Every server-side number for `results.md` now comes from
->    Grafana, and `/loadtest` fetches it — see `.claude/skills/loadtest/SKILL.md`.
-> 2. **Task 18 Step 7's attribution table is replaced** by the four-row table in §5 of
->    `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`.
->    Discriminators: `ThrottledRequests`, DynamoDB `SuccessfulRequestLatency`, the **gap** between
->    that and in-process `db` (which *is* the queueing measurement), and `rate(cpu_sum)` against the
->    0.25 vCPU allocation. Every row is falsifiable and none needs `db` to be a clean clock.
-> 3. **`pbkdf2_iterations` stays 2662.** Re-derivation was considered and rejected on evidence:
->    the measured `cpu` span wraps `burn()` only, so instrumentation cannot have moved it. **But
->    note the `cpu` phase is load-dependent** — burst figures run ~40% above idle because a 0.25 vCPU
->    container hits its CPU quota. Expect that during the discovery run; it is the binding mechanism,
->    not drift.
-> 4. **Task 22 Step 1 is superseded.** `ecs-dynamodb-rps-ceiling/README.md` has been rewritten around
->    the reader's question with generated Grafana deep-links. Task 22's remaining steps stand.
-> 5. **A latent SLO defect was found and fixed** (that plan's Task 10b). `ratioExpr` applied
->    `histogram_fraction` per series and summed, so one empty series yielded `NaN`. **This would have
->    broken permanently at Task 20 here**, which scales 1 → 4 tasks: any window where one task serves
->    no `fast` request would have taken the SLO and every burn alert to `NaN`. Fixed and applied;
->    `grafana_slo` kept its id, so the accrued error budget survives.
->
-> Two operational notes that cost time: a git worktree has no `.terraform/` (git-ignored, so `init`
-> is per-worktree), and HCP credentials come from the root `.env`, which direnv does not load in a
-> non-interactive shell — `terraform plan` fails with `"organization" must be set` until sourced.
+**Tasks 1–17 were executed under this plan. Tasks 18–23 were re-homed on 2026-09-01 and are not
+executed here.** Nothing in this document remains to do.
 
-**Tasks 1–17 complete. Tasks 18–23 are UNBLOCKED and ready to resume** — the design change they
-waited on has shipped. See the note directly below for what changed underneath them; two of those
-changes alter what Task 18 does and how Task 22 records results.
+Phases 5, 6 and 7 below are **retained as history, not as instructions.** They carry three layers of
+amendment banners written while the plan was live, and reading them top-down now produces a sequence
+that no longer applies — in particular Task 18 opens by raising DynamoDB capacity, which the re-homed
+plan deliberately does not do first. Their reasoning is preserved because the new plans cite it;
+their step lists are superseded.
 
-> ### 2026-08-31 — UNBLOCKED. Tasks 18-23 may resume.
->
-> The SLI-collection plan
-> (`docs/superpowers/plans/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection.md`) is **complete**.
-> The service emits its own latency distribution and the SLO is computed from it, continuously —
-> verified on 2026-08-31 with no load test running: **SLI = 0.99874** against a 99% objective, from
-> a heartbeat-generated population. The premise that blocked Tasks 18–23 — "attainment cannot be
-> reported because there is no SLI" — no longer holds.
->
-> **Both former gates are cleared:**
->
-> 1. **`pbkdf2_iterations` is re-derived and applied: `2662`.** Two Fargate runs, 2665 and 2659,
->    0.23% apart. Read `terraform/dev.tfvars`, never this document. Note the move from 2675 is
->    −0.49%, **inside the measurement's own noise** — and `scripts/calibrate.js` measures `burn()`
->    in isolation, so it cannot see instrumentation cost at all. The real overhead is 0.51 µs/request
->    (0.036% of the 1.4 ms target, about one iteration). Do not read the new number as "the cost of
->    OpenTelemetry".
-> 2. **`grafana_slo` and four burn-rate rule groups exist and evaluate**, all `health=ok`, all
->    generated from `slo.yaml`. `service attainment` and `budget burn x` can now be reported from
->    the SLO rather than inferred from k6.
->
-> **Task 18 of this plan now starts by DELETING two lines.** Capacity is pinned to 25/25 in
-> `terraform/dev.tfvars` (see that plan's Deviation 3), which outranks the generated
-> `capacity.auto.tfvars`. Removing `read_capacity = 25` / `write_capacity = 25` from `dev.tfvars`
-> is what lets 1025/200 apply. **Also delete the matching HCP workspace variables**
-> `read_capacity` and `write_capacity`, or they will override the file and silently hold the free
-> tier. Do not edit `capacity.auto.tfvars`; it is generated and byte-checked by `npm run slo:check`.
->
-> **Two operational changes since this plan last ran:**
->
-> - The workspace is on **remote execution** with `working-directory = "terraform"`. Credentials
->   come from HCP workspace variables, not your shell.
-> - **Terraform does not rebuild the container image.** Any change under `src/` needs an explicit
->   build/push/force-new-deployment cycle — see that plan's Task 11 Step 7. This was missing and
->   cost a full debugging cycle.
->
-> **Task 22's schema changed.** `results.md` now carries **two** attainment columns —
-> `k6 attainment` (the run gate, client-side, includes load-zone RTT and ALB queueing) and
-> `service attainment` (the SLO, server-side only). Never put one number in both. The `awk` check in
-> Task 22 has been extended; its existing `$4`/`$6` indices still resolve, verified rather than
-> assumed. Schema lives in `.claude/skills/loadtest/SKILL.md`.
->
-> **Two things to know before reading the first run's numbers.**
->
-> - **The SLO population is restricted to classified traffic** (`class=~"fast|standard|heavy"`).
->   The ALB is internet-facing and scanner 404s were 68% of the idle population, every one counted
->   as a violation. If a route is added to `handlers.js` without a `slo.yaml` entry it is silently
->   unmeasured — that is deliberate, and the cross-check test in `test/generate-slo.test.js` catches
->   renames but not additions.
-> - **The idle SLI and the under-load SLI measure different regimes.** At ~4 req/min the fast class
->   sits at 98.3% against its 50 ms threshold, because DynamoDB connections go cold between beats
->   and `GetItem` peaks at 105 ms. Under sustained load connections stay warm. Do not read an idle
->   dip as a regression, and do not expect the two figures to line up.
+### Where Tasks 18–23 went
 
-**What is blocking them.** Tasks 18–21 write **SLO attainment** and **error budget burned** into
-`results.md`, and that file is this project's actual deliverable. Those figures would currently be
-computed from k6 metrics — and spec D7, which made k6 the SLI source, has been **reversed** (see
-the banner at the top of the spec). Under the corrected decision those numbers are a *test-run
-pass rate*, not SLO attainment. Running these tasks now would write mislabeled results into the
-deliverable and burn VU-hours, which spec §10 names as the binding budget, to produce them.
+The work was split in two on 2026-09-01, on an explicit decision to **prove the free-tier environment
+is functional and observable before spending anything on capacity**. Task numbers are not reused:
+each new plan numbers its own tasks from 1 and keeps its own SDD ledger directory, following the
+precedent set by the 2026-08-31 plan.
 
-**The blocking spec now exists:** `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md`
-(status: draft). ~~Its plan is not yet written.~~ **Its plan is written and Tasks 1–11 are executed**
-— see the 2026-08-31 note above. **Resume Tasks 18–23 only after that plan has built
-service-emitted metrics** — the SLI has to be collectable before a run can report attainment against
-it. That condition is now met; the remaining gates are its Tasks 13–16.
+| this plan | went to | why |
+|---|---|---|
+| — (new work) | `docs/superpowers/plans/2026-09-01-ecs-dynamodb-rps-ceiling-observability-shakedown.md` | exercise the live stack at 25/25, drive a burn alert deliberately, test the attribution table against a known answer. No capacity change, no `apply` |
+| Task 18 (capacity + discovery) | `docs/superpowers/plans/2026-09-02-ecs-dynamodb-rps-ceiling-scale-and-measure.md`, Tasks 1–2 | amendments applied inline, so the reader no longer chases four banners to learn what the step actually is |
+| Task 19 (baselines B, C) | same plan, Task 3 | |
+| Task 20 (autoscaling 1→4) | same plan, Tasks 4–5 | |
+| Task 21 (raise capacity if the DB binds) | same plan, Task 6 | |
+| Task 22 (write up results) | same plan, Task 7 | its Step 1 was already superseded by the 2026-08-31 plan's Task 14, which rewrote the README |
+| Task 23 (tear down and sweep) | same plan, Task 8 | |
 
-Nothing already executed is invalidated: Tasks 1–17 stand, the infrastructure is live and correct,
-and the k6 thresholds remain a valid *run gate*. Only the label "SLO" moves off k6 and onto the
-service's own metrics.
+### What Tasks 1–17 delivered
 
-**Two things will have changed by the time Tasks 18–23 resume**, and both affect what they record:
+A Node.js service on ECS Fargate backed by provisioned DynamoDB, four endpoints at a frozen
+55/15/25/5 mix, an SLO computed from service-emitted metrics, and four burn-rate alert rules — all
+generated from one `slo.yaml`. Two later plans amended it and both are complete:
 
-1. **`pbkdf2_iterations` will no longer be 2675.** The new spec adds OpenTelemetry instrumentation to
-   the request path, which costs CPU, and 2675 was calibrated against an *uninstrumented* service to
-   place the service ceiling at ~70% of the DB ceiling. It is re-derived on real Fargate hardware in
-   the new plan. Read `terraform/dev.tfvars`, never this document, for the live value.
-2. **The SLO window is `7d`, not `30d`,** and the burn thresholds in `grafana/alerts.tf` change with
-   it (14.4×/**14m** and 6×/**84m**). Grafana Cloud Free retains metrics for 14 days, so 30 days was
-   never evaluable.
+- `docs/superpowers/plans/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection.md` — the SLI moves off
+  k6 and onto the service's own OTel histogram, collected continuously by Alloy. Reverses spec **D7**.
+- `docs/superpowers/plans/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics.md` — every
+  measurement signal moves off the HTTP surface; `Server-Timing` and `GET /stats` are deleted.
+  Reverses spec **D10**.
 
-**Do not renumber Tasks 18–23 in place.** The SDD ledger and the commit history reference task
-numbers; the follow-up work belongs in its own dated plan alongside this one, per `CLAUDE.md`.
+**Read `terraform/dev.tfvars` for live values, never this document.** `pbkdf2_iterations` is **2662**
+(re-derived 2026-08-31), and capacity is pinned to the 25/25 free tier by two lines in that file
+*and* by two HCP workspace variables — the re-homed plan's Task 1 releases both.
 
-**The environment is LIVE in `eu-central-1`, account `042945885621`**, up since
-`2026-08-29T18:27:55Z` and billing at roughly **$0.041/hour** idle — a figure the new plan
-roughly doubles when it adds the always-on collector task. Capacity is still 25/25
-(free tier); Task 18 raises it to 1025/200 (~$0.3212/hour). `terraform destroy` has not run.
+**The environment is LIVE in `eu-central-1`, account `042945885621`**, up since `2026-08-29T18:27:55Z`
+at roughly **$0.055/hour** (service + collector; the heartbeat sits inside the Lambda free tier).
+`terraform destroy` has not run.
+
+State of the environment as of 2026-09-01, after all three plans:
 
 | | |
 |---|---|
 | Service | deployed, healthy, 1 task at 0.25 vCPU / 512 MB |
-| DynamoDB | seeded — all 50 partitions at exactly 20 items, verified |
-| Tests | 52 unit passing; 9 integration passing against pinned `dynamodb-local:2.5.2` |
+| Collector | Alloy on Fargate, 1 task, reachable at the Cloud Map name; CloudWatch discovery by `Project` tag |
+| Heartbeat | EventBridge Scheduler → Lambda, 1/min across all four measured routes |
+| DynamoDB | seeded — all 50 partitions at exactly 20 items, verified. Capacity pinned 25/25 (free tier) |
+| Tests | 82 unit; 9 integration against pinned `dynamodb-local:2.5.2` |
 | Container | built, pushed, smoke-tested as non-root, prod deps only |
-| Terraform | applied, 23 resources; state in HCP workspace `ecs-dynamodb-rps-ceiling` |
-| CPU knob ⚠ | calibrated on real Fargate: `pbkdf2_iterations = 2675` — **to be re-derived**, see above |
-| k6 | mix verified 55/15/25/5; all three profiles pass `k6 inspect` |
+| Terraform | applied; state in HCP workspace `ecs-dynamodb-rps-ceiling`, remote execution, `working-directory = "terraform"` |
+| Grafana | dashboard, `grafana_slo`, and four burn-rate rule groups — all generated from `slo.yaml` |
+| CPU knob | `pbkdf2_iterations = 2662`, re-derived on real Fargate 2026-08-31 |
+| k6 | mix verified 55/15/25/5; all three profiles pass `k6 inspect`. **Not yet frozen** — the freeze is the re-homed plan's Task 2 |
 
 ### Corrections to this plan found during execution
 
@@ -2810,6 +2737,10 @@ git commit -m "test(ecs-dynamodb-rps-ceiling): calibrate the cpu knob against a 
 
 ## Phase 5 — Measure
 
+> **HISTORY, not instructions.** These tasks were re-homed on 2026-09-01 to
+> `docs/superpowers/plans/2026-09-02-ecs-dynamodb-rps-ceiling-scale-and-measure.md`, which applies
+> their amendment banners inline. Execute that plan, not this section.
+
 ### Task 18: APPROVAL GATE — real capacity, then the discovery run
 
 **Files:** none changed (results are recorded in Task 22).
@@ -3047,6 +2978,10 @@ with `RATE=<knee>`. Expected: thresholds breached (k6 exit `99`). **A stress run
 
 ## Phase 6 — Improve and re-measure
 
+> **HISTORY, not instructions.** These tasks were re-homed on 2026-09-01 to
+> `docs/superpowers/plans/2026-09-02-ecs-dynamodb-rps-ceiling-scale-and-measure.md`, which applies
+> their amendment banners inline. Execute that plan, not this section.
+
 ### Task 20: APPROVAL GATE — enable autoscaling, then re-run B and C
 
 **Files:**
@@ -3145,6 +3080,10 @@ git commit -m "perf(ecs-dynamodb-rps-ceiling): raise provisioned capacity to rel
 ---
 
 ## Phase 7 — Record and tear down
+
+> **HISTORY, not instructions.** These tasks were re-homed on 2026-09-01 to
+> `docs/superpowers/plans/2026-09-02-ecs-dynamodb-rps-ceiling-scale-and-measure.md`, which applies
+> their amendment banners inline. Execute that plan, not this section.
 
 ### Task 22: Write up the results
 

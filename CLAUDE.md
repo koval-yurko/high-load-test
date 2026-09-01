@@ -135,6 +135,28 @@ Two skills need translation, because superpowers assumes an application codebase
 
 Load `superpowers:using-superpowers` if the skill set isn't loaded and you're unsure which applies.
 
+## Referring to other documents
+
+**Never cite a document by number alone.** `§5`, `D7`, `S16`, `Task 18 Step 7` and
+`the 2026-08-31 spec` are addresses, not content — they oblige the reader to go and look, and in a
+project with four specs and five plans that is a real cost paid every time.
+
+State the substance, then give the address so it can be checked:
+
+> ~~"Use the four-row table in §5 of the 2026-08-31 spec."~~
+>
+> "Attribute the ceiling with the four-row table — throttle events, DynamoDB's own latency, the gap
+> between that and in-process `db` time, and CPU against the 0.25 vCPU allocation. It is in §5 of
+> `docs/superpowers/specs/2026-08-31-…-attribution-via-metrics-design.md` if you need the reasoning."
+
+This applies hardest to **questions**. A question a reader cannot answer without opening another file
+is not a question, it is a research assignment. Inline every number, metric name and trade-off the
+answer depends on.
+
+The exception is a pure pointer whose whole purpose is navigation — an `Amends:` header, a
+forward-pointer at a superseded decision, a "full reasoning lives here" footer. Those are addresses
+on purpose.
+
 ## Commit messages
 
 Every commit in this repo follows **Conventional Commits 1.0.0**:

@@ -1,4 +1,22 @@
 service: ecs-dynamodb-rps-ceiling
+
+# WHAT THIS SLO IS DEFINED OVER -- decided 2026-09-01, see
+# docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-slo-scope-design.md
+#
+# The SLO is defined over LOAD-BEARING traffic. The continuously-computed 7-day
+# window below is INFORMATIONAL; authoritative attainment is run-scoped, over a
+# load run's own window, as results.md records it.
+#
+# Why: between runs the only traffic is a 1/min heartbeat -- ~60 fast-class
+# requests an hour. A 99% objective over that population permits 0.6 misses per
+# hour, and ~3.3% of idle fast requests (about 2/hour) exceed 50 ms because the
+# DynamoDB socket gets reaped and pays a fresh TLS handshake. Measured: the fast
+# class meets 50 ms 96.67% of the time at idle and 99.43% under 60 rps, p99
+# 129.41 ms cold against 15.38 ms warm, with the whole tail inside the db phase.
+# The threshold is right; the idle population is too small to judge it.
+#
+# NOTHING IS FILTERED HERE. The population is a query-time selector (spec S15),
+# so this decision costs a comment, not a deploy -- and stays reversible.
 window: 7d
 
 # endpoint name -> route TEMPLATE as handlers.js matches it. The collector keys
