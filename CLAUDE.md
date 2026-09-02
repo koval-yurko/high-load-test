@@ -169,6 +169,24 @@ The exception is a pure pointer whose whole purpose is navigation — an `Amends
 forward-pointer at a superseded decision, a "full reasoning lives here" footer. Those are addresses
 on purpose.
 
+## `PIIB` — present it in browser
+
+`PIIB` (any casing, anywhere in a prompt) means: leave the terminal and present the deliverable as
+a claude.ai Artifact page. `STC` means "Send to Claude". Both are defined, with the whole flow, by
+the global skills — `~/.claude/skills/piib` to present, `piib-check` to collect what the page
+recorded, `piib-save` to write it down. They are project-independent on purpose: a fix made in one
+repo reaches every other.
+
+Enter the flow **without being asked** when a report would run past about one screen, when it
+carries a diagram or a table wider than the terminal, or when a decision's options need a paragraph
+each to be understood. `AskUserQuestion` stays for a single question with short, self-explanatory
+options. Rationale: a decision answered from a terminal prompt is answered from memory of the
+options; one answered on the page is answered next to the explanations, and the answer is recorded
+where the next session can read it.
+
+What is specific to this repo: nothing yet. Anything that becomes so belongs here, not in the
+skill.
+
 ## Commit messages
 
 Every commit in this repo follows **Conventional Commits 1.0.0**:
