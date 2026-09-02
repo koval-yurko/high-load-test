@@ -12,11 +12,11 @@ locals {
 
   class_ratio_query = <<-PROMQL
     (
-        (histogram_fraction(0, 0.05, sum(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz", class=~"fast|standard|heavy", class="fast"}[$__rate_interval]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz", class=~"fast|standard|heavy", class="fast"}[$__rate_interval]))) or vector(0))
+        (histogram_fraction(0, 0.05, sum(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz", class=~"fast|standard|heavy", class="fast", http_response_status_code!~"5.."}[$__rate_interval]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz", class=~"fast|standard|heavy", class="fast", http_response_status_code!~"5.."}[$__rate_interval]))) or vector(0))
       +
-        (histogram_fraction(0, 0.2, sum(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz", class=~"fast|standard|heavy", class="standard"}[$__rate_interval]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz", class=~"fast|standard|heavy", class="standard"}[$__rate_interval]))) or vector(0))
+        (histogram_fraction(0, 0.2, sum(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz", class=~"fast|standard|heavy", class="standard", http_response_status_code!~"5.."}[$__rate_interval]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz", class=~"fast|standard|heavy", class="standard", http_response_status_code!~"5.."}[$__rate_interval]))) or vector(0))
       +
-        (histogram_fraction(0, 0.8, sum(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz", class=~"fast|standard|heavy", class="heavy"}[$__rate_interval]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz", class=~"fast|standard|heavy", class="heavy"}[$__rate_interval]))) or vector(0))
+        (histogram_fraction(0, 0.8, sum(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz", class=~"fast|standard|heavy", class="heavy", http_response_status_code!~"5.."}[$__rate_interval]))) * histogram_count(sum(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz", class=~"fast|standard|heavy", class="heavy", http_response_status_code!~"5.."}[$__rate_interval]))) or vector(0))
       )
       /
       histogram_count(sum(rate(http_server_request_duration_seconds{job="${var.project}", http_route!~"/healthz", class=~"fast|standard|heavy"}[$__rate_interval])))

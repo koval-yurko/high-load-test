@@ -87,6 +87,41 @@ resource "aws_iam_role_policy" "collector_task" {
   policy = data.aws_iam_policy_document.collector_cloudwatch_read.json
 }
 
+# Grafana Cloud write tokens, held in SSM and pulled by ECS at task start. The
+# values still live in Terraform Cloud state, as every sensitive variable does;
+# what this removes is the copy in the task definition that any ECS reader could
+# see. Standard-tier SecureString parameters are free, and the default aws/ssm
+# key lets SSM decrypt on the caller's behalf, so no kms:Decrypt grant is needed.
+resource "aws_ssm_parameter" "otlp_password" {
+  name  = "/${var.project}/collector/otlp_password"
+  type  = "SecureString"
+  value = var.grafana_otlp_password
+}
+
+resource "aws_ssm_parameter" "prom_password" {
+  name  = "/${var.project}/collector/prom_password"
+  type  = "SecureString"
+  value = var.grafana_prom_password
+}
+
+# The EXECUTION role fetches secrets, not the task role: ECS resolves `secrets`
+# before the container exists, using the role it pulls the image with.
+data "aws_iam_policy_document" "collector_secrets" {
+  statement {
+    actions = ["ssm:GetParameters"]
+    resources = [
+      aws_ssm_parameter.otlp_password.arn,
+      aws_ssm_parameter.prom_password.arn,
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "execution_collector_secrets" {
+  name   = "${var.project}-collector-secrets"
+  role   = aws_iam_role.execution.id
+  policy = data.aws_iam_policy_document.collector_secrets.json
+}
+
 locals {
   # OTTL statements, one per route template, generated from slo.yaml by
   # `npm run slo:generate`. Sorted so the rendered config is stable across plans
@@ -140,10 +175,17 @@ resource "aws_ecs_task_definition" "collector" {
       { name = "ALLOY_CONFIG_CONTENT", value = local.alloy_config },
       { name = "OTLP_ENDPOINT", value = var.grafana_otlp_endpoint },
       { name = "OTLP_USERNAME", value = var.grafana_otlp_username },
-      { name = "OTLP_PASSWORD", value = var.grafana_otlp_password },
       { name = "PROM_URL", value = var.grafana_prom_url },
       { name = "PROM_USERNAME", value = var.grafana_prom_username },
-      { name = "PROM_PASSWORD", value = var.grafana_prom_password },
+    ]
+
+    # The two write tokens, injected by ECS at task start from SSM. As plain
+    # `environment` entries they were readable by anyone with
+    # ecs:DescribeTaskDefinition. `sensitive = true` on the variable protects the
+    # plan output and nothing else.
+    secrets = [
+      { name = "OTLP_PASSWORD", valueFrom = aws_ssm_parameter.otlp_password.arn },
+      { name = "PROM_PASSWORD", valueFrom = aws_ssm_parameter.prom_password.arn },
     ]
 
     logConfiguration = {

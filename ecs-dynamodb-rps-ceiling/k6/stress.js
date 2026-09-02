@@ -22,7 +22,12 @@ export const options = {
       executor: 'ramping-arrival-rate',
       startRate: RATE,
       timeUnit: '1s',
-      preAllocatedVUs: Number(__ENV.PRE_VUS || 1200),
+      // Sized for PEAK at the SLO-boundary mean latency of 125 ms (see
+      // constant.js), capped at the org's 100-VU limit. This profile is meant
+      // to breach, so it WILL drop iterations past the knee and fail the
+      // dropped_iterations gate -- that is the expected verdict for shape C,
+      // and the k6 result still carries the delivered rate.
+      preAllocatedVUs: Number(__ENV.PRE_VUS || Math.min(100, Math.ceil(PEAK * 0.125))),
       stages: [
         { target: RATE, duration: '1m' },   // hold at the known-good rate
         { target: PEAK, duration: '30s' },  // spike

@@ -1,30 +1,28 @@
 # ecs-dynamodb-rps-ceiling
 
-This README is organised around the questions a reader arrives with, from "is it up?" down to "how
-do I run it myself?" Every Grafana link goes to the live [attribution dashboard](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution),
-and opens the last 6 hours by default — widen the time range in Grafana if you're looking further
-back.
+Organised around the questions a reader arrives with, from "is it up?" down to "how do I run it
+myself?" Every Grafana link opens the live [attribution dashboard](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution)
+at the last 6 hours — widen the range in Grafana if you're looking further back.
 
 ---
 
 ## 1. What is this?
 
-A Node.js service running on AWS ECS Fargate, backed by a provisioned-capacity DynamoDB table, in
+A Node.js service on AWS ECS Fargate, backed by a provisioned-capacity DynamoDB table, in
 `eu-central-1`. It exists to answer two questions with evidence rather than a guess: **at what
-request rate does a class-based latency SLO start breaking, and was DynamoDB refusing requests
-when it did?** Nothing computes a verdict from those two — a person reads them side by side.
-Four endpoints are graded against three latency classes (fast/standard/heavy), traffic is
-driven at a fixed 55/15/25/5 read/write/feed/report mix, and the project's
-method is to find that breaking point, release one constraint at a time (more service capacity,
-then more database capacity), and re-measure — never both at once, or the comparison is worthless.
+request rate does the latency SLO start breaking, and was DynamoDB refusing requests when it did?**
+Nothing computes a verdict from those two — a person reads them side by side.
 
-The service emits its own Service Level Indicator continuously (an OpenTelemetry histogram sent to
-Grafana Cloud), so "are we meeting the SLO" does not depend on a load test having just run — a
-Lambda heartbeat keeps traffic flowing once a minute even when nobody is testing.
+Four endpoints are graded against three latency classes (fast / standard / heavy) and driven at a
+fixed 55/15/25/5 read/write/feed/report mix. The method is: find the breaking point, release **one**
+constraint (first service capacity, then database capacity), re-measure. Never both at once, or the
+comparison is worthless.
 
-**Running cost right now, idle:** approximately **$0.055/hour** (Fargate task + ALB base + ALB LCU
-+ DynamoDB provisioned capacity at 25 RCU/25 WCU, which is within the AWS free tier). See
-[Cost](#cost) below for the breakdown and source.
+The service emits its own latency measurement continuously to Grafana Cloud, and a Lambda heartbeat
+keeps a trickle of traffic flowing once a minute — so "are we meeting the SLO" does not depend on a
+load test having just run.
+
+**Cost while idle:** about **$0.055/hour**. See [Cost](#cost).
 
 ---
 
@@ -32,90 +30,66 @@ Lambda heartbeat keeps traffic flowing once a minute even when nobody is testing
 
 | check | panel |
 |---|---|
-| Is the ECS task running and healthy? | [ECS LiveTaskCount](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=12&from=now-6h&to=now) |
+| Is the ECS task running? | [ECS LiveTaskCount](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=12&from=now-6h&to=now) |
 | Is the load balancer routing to it? | [ALB HealthyHostCount](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=17&from=now-6h&to=now) |
-| Is traffic reaching it, and is it answering? | [ALB RequestCount](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=14&from=now-6h&to=now) and [HTTP status codes](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=16&from=now-6h&to=now) |
+| Is traffic arriving, and answered? | [ALB RequestCount](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=14&from=now-6h&to=now) and [HTTP status codes](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=16&from=now-6h&to=now) |
 
-**Good reading:** `HealthyHostCount` equals the desired task count (normally 1; 4 if autoscaling
-has scaled out), and the status-code panel is almost entirely 2XX — the only traffic besides the
-heartbeat is internet scanners hitting unmatched paths, which the ALB returns as 4XX, not 5XX.
+**Good:** `HealthyHostCount` equals the desired task count (1 normally, 4 if autoscaling has scaled
+out) and the status panel is almost all 2XX. The stray 4XX are internet scanners hitting paths that
+don't exist.
 
-**Bad reading:** `HealthyHostCount` at 0, or `LiveTaskCount` below desired, or a run of 5XX. The
-task is failing its health check — check the ECS service events and CloudWatch logs described in the
-[Appendix](#8-appendix--running-it-yourself). Check the throttle-events panel alongside them rather
-than reading this as the task's own fault: on 2026-09-01, SDK retry backoff on a throttled DynamoDB
-call pinned event-loop utilisation at 1.000 with CPU at 3–16%, and a saturated event loop fails
-health checks too.
+**Bad:** `HealthyHostCount` at 0, or a run of 5XX. Before blaming the service, check the throttle
+panel in [§5](#5-what-is-the-bottleneck-right-now) — when DynamoDB throttles, the SDK's retry backoff
+happens *inside* the Node process and can fail the health check for a database-side reason.
 
 ---
 
 ## 3. Are we meeting the SLO?
 
-Panel: [SLI ratio — proportion meeting per-class threshold](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=19&from=now-6h&to=now)
+Panel: [SLI ratio](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=19&from=now-6h&to=now)
+— the proportion of requests meeting their class threshold (fast < 50 ms, standard < 200 ms,
+heavy < 800 ms). A request only counts as meeting it if it also succeeded: a **5xx is a miss however
+fast it was**, which is the same rule k6's `slo_met` applies, so the two attainment columns in
+results.md measure the same thing. A 4xx is not a miss — a client error is not charged to the
+service (decided 2026-09-02, recorded in `slo.yaml`).
 
-**Read this before reading the number.** The SLO is defined over **load-bearing traffic**. This
-continuous line is *informational* — between load tests the only traffic is a 1/min heartbeat, and a
-99% objective over ~60 fast-class requests an hour permits 0.6 misses per hour. One slow request
-moves the hourly figure by 1.7 points. **Authoritative attainment is run-scoped**, over a load run's
-own window — that is what [results.md](#7-what-did-the-last-load-test-show) records, and it is the
-number this project exists to produce. Decision and evidence:
+**The continuous line is informational, not the verdict.** Between load tests the only traffic is a
+1/min heartbeat, so a single slow request moves the hourly figure by more than a point. **Authoritative
+attainment is run-scoped** — measured over a load run's own window, which is what results.md records
+and what this project exists to produce.
+
+**Good during a run:** above 99%.
+
+**Good at idle:** roughly 98–99%, and not a service problem. About 3% of idle requests pay a fresh
+TLS handshake to DynamoDB because the connection was reaped while unused; under sustained load that
+cannot happen. Measured 2026-09-01, the fast class: p95 of 31.9 ms and 96.67% attainment at idle,
+against p95 of 4.8 ms and 99.43% at 60 rps. This is a known, accepted defect, recorded in
 `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-slo-scope-design.md`.
 
-**Good reading, during or just after a load run:** the line sits above 99% (the primary objective
-from `slo.yaml`) — green.
+**Bad:** the line dips below 99% *during a load run*.
 
-**Good reading, at idle:** roughly 98–99%, and *not* a service problem. Measured 2026-09-01, the
-same fast class in two regimes:
-
-| | idle, ~1 req/min | under 60 rps |
-|---|---|---|
-| p50 | 4.99 ms | 2.99 ms |
-| p95 | 31.93 ms | 4.76 ms |
-| p99 | 129.41 ms | 15.38 ms |
-| meets the 50 ms threshold | 96.67% | **99.43%** |
-
-The whole idle tail is inside the DynamoDB call (`db` p99 equals total p99), and it is not every
-request — p50 is 5 ms, so the connection usually survives. About 3.3% of idle fast requests pay a
-fresh TLS handshake because the socket was reaped. That is a **known, accepted defect**, recorded in
-§5 of the spec above with the conditions that would reopen it. It cannot occur under sustained load.
-
-**Bad reading:** the line dips below 99% *during a load run*, or below 99.9% at 3× the threshold
-(the tail objective) — see [How much error budget is left?](#4-how-much-error-budget-is-left).
-
-One thing to know before trusting this number: it is **server-side**. It is measured from the
-first line of the request handler to the response's `finish` event, so it excludes network time
-between a client and the ALB entirely. That means it reads *higher* than a number you'd measure
-from your own laptop, and higher than the client-side `slo_met` rate a k6 run reports for the same
-traffic. Both are legitimate answers to "did we meet the SLO" — they are just measuring from
-different vantage points, which is why [results.md](#7-what-did-the-last-load-test-show) records
-them as two separate columns rather than one.
+One thing to know: this number is **server-side**, measured from the first line of the request
+handler to the response finishing. It excludes network time between client and load balancer, so it
+reads higher than what a k6 run reports for the same traffic. Both are legitimate — results.md
+records them as two separate columns rather than reconciling them.
 
 ---
 
 ## 4. How much error budget is left?
 
-Panel: [SLO app](https://k0valchuk.grafana.net/a/grafana-slo-app/slos)
+Page: [SLO app](https://k0valchuk.grafana.net/a/grafana-slo-app/slos)
 
-Error budget is the allowance for *not* meeting the objective before the SLO is considered broken:
-at a 99% objective, up to 1% of requests in the window may miss their class threshold without the
-SLO being violated. The window here is **7 days**, not the more familiar 30 — that was forced, not
-chosen: Grafana Cloud's SLO API only evaluates windows of 7–32 days, and the free tier only retains
-metrics for 14 days, so 7 is the only value that satisfies both.
+Error budget is the allowance for missing the objective: at 99%, up to 1% of requests in the window
+may exceed their class threshold before the SLO is broken. The window is **7 days** — that was
+forced, not chosen: Grafana's SLO API only accepts 7–32 days and the free tier only keeps metrics
+for 14.
 
-Two alert rules watch the budget burn rate rather than waiting for the window to close — see
-[Is it about to break?](#6-is-it-about-to-break) for what they mean.
+**Do not expect this near 100% between load tests, and do not read that as an incident.** For the
+reason in [§3](#3-are-we-meeting-the-slo), the idle traffic population is too small to judge the
+objective against, and the 7-day figure has been in breach since before the first load run.
 
-**Good reading:** a deliberate stress test (shape C, below) burns budget — that's what it's for.
-
-**Do not expect this to sit near 100% between load tests, and do not read that as an incident.** The
-7-day window has been in breach since before the first load run, for the reason in
-[§3](#3-are-we-meeting-the-slo): the idle population is ~4 req/min and its noise floor exceeds the
-objective. The budget figure is informational for the same reason the SLI is.
-
-**What is still worth acting on:** the two burn-rate rules below. They fire on the *rate* of budget
-spend over 14-minute and 84-minute windows, not on the 7-day total, so a depressed headline number
-does not degrade them — verified 2026-09-01 by driving them through `firing` and back. A fast-burn
-alert outside a deliberate test is a real incident.
+**What is worth acting on** are the burn-rate alerts below. They watch the *rate* of spend over 14
+and 84 minutes, not the 7-day total, so the depressed headline number does not affect them.
 
 ---
 
@@ -125,478 +99,332 @@ Two questions, two metrics, read side by side. Nothing here computes a verdict.
 
 | question | where to look | what it means |
 |---|---|---|
-| **How long is the endpoint taking?** | [SLI ratio](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=19&from=now-6h&to=now) and the latency panels | the service-side request duration the SLO is computed from |
-| **Was DynamoDB rejecting us?** | [Throttle events, read and write](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=2&from=now-6h&to=now) — one line for `ReadThrottleEvents`, one for `WriteThrottleEvents`, plotted separately rather than summed | non-zero means DynamoDB refused requests; the SDK retried them with backoff, inside the service |
+| **How long is the endpoint taking?** | [SLI ratio](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=19&from=now-6h&to=now) and the latency panels | the server-side request duration the SLO is computed from |
+| **Was DynamoDB rejecting us?** | [Throttle events](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=2&from=now-6h&to=now) — read and write, plotted separately | non-zero means DynamoDB refused requests and the SDK retried them with backoff |
 
-Latency up **and** throttle events non-zero → the database was the constraint; the knob is capacity.
-Latency up **and** throttle events at zero → it was not; look at the service.
+- Latency up **and** throttles non-zero → the database was the constraint. The knob is capacity.
+- Latency up **and** throttles at zero → it wasn't. Look at the service.
 
-**Read the throttle panel first, and judge nothing about the service while it is non-zero.** When
-DynamoDB throttles, the AWS SDK retries with backoff *inside the Node process*, so every service-side
-signal turns red for a database-side cause. Measured 2026-09-01 at 250 rps against 25 provisioned RCU,
-with DynamoDB rejecting 5,588 reads per minute: the service's own database timing read 642–938 ms
-while DynamoDB's own clock read 0.9–2.2 ms, and event-loop utilization pinned at 1.000 with CPU at
-only 3–16%. That is why nothing here computes a verdict —
-`docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`.
+**Read the throttle panel first, and judge nothing about the service while it is non-zero.** Retry
+backoff happens inside the Node process, so every service-side signal turns red for a database-side
+cause. Measured 2026-09-01 at 250 rps against 25 RCU: the service's own database timing read
+642–938 ms while DynamoDB's own clock read 0.9–2.2 ms, and event-loop utilization pinned at 1.000
+with CPU at 3–16%.
 
-**And a trap in the other direction:** DynamoDB's `SuccessfulRequestLatency` *falls* when the table
-throttles — 0.887 ms mid-throttle against 1.473 ms at idle — because rejected requests are never
-served and so never enter the statistic. A flat or falling DynamoDB latency is not evidence that
-DynamoDB is healthy.
+**And the trap in the other direction:** DynamoDB's own latency metric *falls* when the table
+throttles (0.887 ms mid-throttle against 1.473 ms idle), because rejected requests are never served
+and never enter the statistic. Flat or falling DynamoDB latency is not evidence of a healthy database.
 
-Three more panels are worth reading when throttle events are at zero and the service still looks
-slow: [Event-loop delay p99 by task](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=24&from=now-6h&to=now)
-breaks the CPU story down per task, which is what makes a 1→4 scale-out decision visible — a
-single flat aggregate line would hide whether the load is spread evenly. [Read capacity: consumed
-vs provisioned](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=7&from=now-6h&to=now)
-and its write counterpart ([panel 8](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=8&from=now-6h&to=now))
-show how much headroom is left on provisioned capacity, before throttling starts.
+When throttles are at zero and the service still looks slow, three more panels help:
+[event-loop delay per task](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=24&from=now-6h&to=now)
+(per-task, which is what makes a 1→4 scale-out decision visible), and consumed-vs-provisioned
+capacity for [reads](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=7&from=now-6h&to=now)
+and [writes](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=8&from=now-6h&to=now),
+which show the headroom left before throttling starts.
 
-**A caveat that looks like a bug and isn't:** the Queueing delay panel (22) shows `NaN` for any
-route that had zero traffic in the last 60 seconds. That's a 0/0 average, not a broken panel. At
-idle, the once-a-minute heartbeat touches each route roughly once a minute, so a given 60-second
-window frequently misses a route entirely — observed 2026-09-01 flipping between all-`NaN` and real
-values across a 20-second gap.
-
-**Changing the dashboard time range does not fix it.** The rate window in panels 21, 22 and 23 is a
-literal `[60s]` emitted by `scripts/generate-slo.js`, not `$__rate_interval` — only the SLI ratio
-(panel 19) follows the picker. Widening `from=now-6h` to `now-24h` changes which 60-second window
-you land on, not its width. The only remedy is traffic: under sustained load every route gets many
-samples per window and the `NaN` cannot occur.
+**A caveat that looks like a bug and isn't:** the queueing-delay panel shows `NaN` for any route with
+no traffic in the last 60 seconds — a 0/0 average, common at idle. Widening the dashboard time range
+does not fix it; only traffic does.
 
 ---
 
 ## 6. Is it about to break?
 
-Panel: [alert rules](https://k0valchuk.grafana.net/alerting/list)
+Page: [alert rules](https://k0valchuk.grafana.net/alerting/list)
 
-Rather than waiting for the 7-day SLO window to close, four rules watch how fast the error budget
-is being *spent* right now, so a bad trend pages before the budget is actually gone. There are two
-pairs — one for the 99% primary objective, one for the stricter 99.9% tail objective — and each
-pair has a fast-burn and a slow-burn rule:
+Rather than waiting seven days for the window to close, six rules watch how fast the budget is being
+spent right now — a fast-burn and a slow-burn rule for each of three objectives: latency primary
+(99% meet their class threshold), latency tail (99.9% meet three times it), and availability
+(99.9% are not 5xx):
 
-- **14.4× over 14 minutes** ("fast burn"): if this rate of misses kept up, the entire 7-day budget
-  would be gone in about 12 hours. It fires on a short window so a sharp spike (a bad deploy, DynamoDB
-  throttling under a spike test) pages quickly, without waiting for a slow trend to prove itself.
-- **6× over 84 minutes** ("slow burn"): if this rate kept up, the budget would be gone in a little
-  over a day. It fires on a longer window so a milder, sustained degradation — the kind a short
-  spike-detector would miss — still gets caught before the budget actually runs out.
+- **Fast burn (14.4× over 14 minutes)** — at this rate the whole budget is gone in ~12 hours. Means
+  *something just broke, hard, right now.*
+- **Slow burn (6× over 84 minutes)** — budget gone in a little over a day. Means *we're bleeding
+  steadily and it needs fixing, but nothing is on fire this second.*
 
-In practice: a fast-burn alert means "something just broke, hard, right now." A slow-burn alert
-means "we're bleeding budget steadily and need to fix it before the window runs out, but nothing
-is on fire this second."
+A seventh rule, **SLI absent**, fires when no SLI sample has arrived for ten minutes. It exists
+because every burn rule treats "no data" as OK — correctly, since no traffic is not a burn — which
+means a dead heartbeat, a stopped collector or a broken export leaves all six silent and the
+dashboard flat, and both look healthy. This rule is what separates *quiet* from *blind*. When it
+fires, the service is not slow; the measurement has stopped, and nothing else on this page can be
+trusted until it clears.
 
-**How long they actually take.** Measured 2026-09-01 by deliberately overloading the service for six
-minutes (250 rps against 25 provisioned RCU) and watching the rules walk:
+All seven route to the stack's existing Slack contact point, named on each rule rather than
+inherited from the default policy, so a `terraform plan` shows where they go.
 
-| | fast burn (14.4× / 14m) | slow burn (6× / 84m) |
+**How long they actually take**, measured 2026-09-01 by overloading the service for six minutes:
+
+| | fast burn | slow burn |
 |---|---|---|
-| load starts → `pending` | 1m 49s | 2m 33s |
-| load starts → `firing` | **4m 01s** | ~6m |
-| load stops → `inactive` | **16m** | ~84m — still firing 22 minutes after |
+| load starts → firing | **4m 01s** | ~6m |
+| load stops → clear | **16m** | ~84m |
 
-Two things that surprise people. **Recovery is measured from the last bad sample, not the last
-request:** the service kept emitting breached latencies for ~3.5 minutes after the load generator
-stopped, because it was still draining a backlog. And **the slow-burn pair keeps firing for over an
-hour after a six-minute incident** — that is its 84-minute window rolling off, working as designed,
-but it means "still firing" is not evidence that anything is still wrong.
+Two things that surprise people. Recovery is measured from the last bad sample, not the last request
+— the service kept emitting breached latencies for ~3.5 minutes after load stopped while it drained
+its backlog. And the slow-burn rule keeps firing for over an hour after a six-minute incident, as its
+84-minute window rolls off. "Still firing" is not evidence that anything is still wrong.
 
 ---
 
 ## 7. What did the last load test show?
 
-**Nothing has been measured yet: no load test has been run against this environment, and
-`results.md` does not exist.** This section will point to it once one has. Every RPS, latency and
-attainment figure this project reports must come from a k6 run or Grafana query executed in the same
-working session that reports it — remembered or extrapolated numbers are not allowed here. What a run
-records, and the two separate attainment columns it records it in, is
-[Phase 8](#phase-8--record-the-results).
+**Nothing has been measured yet** — no load test has been run against this environment and
+`results.md` does not exist. Every number this project reports must come from a k6 run or Grafana
+query executed in the same session that reports it; remembered or extrapolated figures are not
+allowed. What a run records is [Phase 8](#phase-8--record-the-results).
 
 ---
 
 ## 8. Appendix — running it yourself
 
-This is the full operator runbook, from first setup through measuring, improving, and tearing the
-environment down. Read sections 1–7 above first if you're trying to understand the
-project rather than operate it — everything below assumes you already know why each step exists.
+The operator runbook. Read sections 1–7 first if you want to understand the project rather than
+operate it.
 
 ### Where everything lives
 
-| what | where | notes |
-|---|---|---|
-| **Service (ALB)** | `terraform -chdir=terraform output -raw base_url`, or `BASE_URL` in the root `.env` | plain HTTP, internet-facing, no TLS, no auth — **the hostname is deliberately not in this repo** |
-| **Terraform Cloud** | https://app.terraform.io/app/failwin/workspaces/ecs-dynamodb-rps-ceiling | org `failwin`, project `high-load-test`, **remote** execution, working directory `terraform` |
-| **Grafana Cloud** | https://k0valchuk.grafana.net | stack root |
-| **Grafana attribution dashboard** | https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution | the dashboard linked throughout this README (uid `agbp7d`) |
-| **Grafana Cloud k6** | https://k0valchuk.grafana.net/a/k6-app/projects/8474786 | project `high-load-test`; holds the three uploaded tests and every cloud run result |
-| **ECS service** | https://eu-central-1.console.aws.amazon.com/ecs/v2/clusters/ecs-dynamodb-rps-ceiling/services?region=eu-central-1 | 1 task, 0.25 vCPU / 512 MB |
-| **DynamoDB table** | https://eu-central-1.console.aws.amazon.com/dynamodbv2/home?region=eu-central-1#table?name=ecs-dynamodb-rps-ceiling | metrics tab is the one to watch |
-| **CloudWatch logs** | https://eu-central-1.console.aws.amazon.com/cloudwatch/home?region=eu-central-1#logsV2:log-groups | log group `/ecs/ecs-dynamodb-rps-ceiling`, 1-day retention |
-| **ECR** | https://eu-central-1.console.aws.amazon.com/ecr/repositories/private/042945885621/ecs-dynamodb-rps-ceiling?region=eu-central-1 | `:latest` only |
+| what | where |
+|---|---|
+| **Service URL** | `terraform -chdir=terraform output -raw base_url`, or `BASE_URL` in the root `.env` — **deliberately not in this repo** |
+| **Terraform Cloud** | https://app.terraform.io/app/failwin/workspaces/ecs-dynamodb-rps-ceiling |
+| **Grafana dashboard** | https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution |
+| **Grafana Cloud k6** | https://k0valchuk.grafana.net/a/k6-app/projects/8474786 — the three uploaded tests and every run result |
+| **ECS service** | https://eu-central-1.console.aws.amazon.com/ecs/v2/clusters/ecs-dynamodb-rps-ceiling/services?region=eu-central-1 |
+| **DynamoDB table** | https://eu-central-1.console.aws.amazon.com/dynamodbv2/home?region=eu-central-1#table?name=ecs-dynamodb-rps-ceiling |
+| **CloudWatch logs** | log group `/ecs/ecs-dynamodb-rps-ceiling`, 1-day retention |
 
-AWS account `042945885621`, region `eu-central-1`. Console links are constructed from the region
-and resource names; the ALB, Terraform Cloud and Grafana values come from `terraform output` and
-`.env`.
+AWS account `042945885621`, region `eu-central-1`.
 
 ### Service endpoints
 
 | endpoint | work | class | threshold |
 |---|---|---|---|
-| `GET /healthz` | none — **never touches DynamoDB** | — | — |
+| `GET /healthz` | none — never touches DynamoDB | — | — |
 | `GET /items/:pk/:sk` | `GetItem` | fast | < 50 ms |
-| `POST /items` | `PutItem` under a `w#` prefix | fast | < 50 ms |
+| `POST /items` | `PutItem` | fast | < 50 ms |
 | `GET /feeds/:pk` | `Query`, 20 items | standard | < 200 ms |
-| `POST /reports` | `Query` 20 + `pbkdf2` + `PutItem` | heavy | < 800 ms |
+| `POST /reports` | `Query` + hash + `PutItem` | heavy | < 800 ms |
 
-Traffic runs at a **frozen 55/15/25/5** mix (read/write/feed/report). Every number this project
-produces is stated *at that mix*; change it and every recorded figure is void.
+Traffic runs at a **frozen 55/15/25/5** mix. Every number this project produces is stated *at that
+mix*; change it and every recorded figure is void.
 
-The table is seeded with 1,000 items across 50 feed partitions (20 each) and runs at 25/25
-provisioned read/write capacity — the free-tier ceiling. Actual item count drifts above the seed
-because the heartbeat's `POST /items` writes land under a `w#` prefix; they never enter a feed
-partition, so the feed `Query` keeps costing 2.5 RCU.
+The table is seeded with 1,000 items across 50 feed partitions, 20 each.
 
 ### Phase 0 — Setup (done once; already done)
 
 ```bash
-cp .env.example .env          # fill in AWS, Terraform Cloud, Grafana, k6 tokens
+cp .env.example .env          # AWS, Terraform Cloud, Grafana, k6 tokens
 cd ecs-dynamodb-rps-ceiling
 npm ci
 terraform -chdir=terraform init
 ```
 
-`.env` must carry `TF_CLOUD_PROJECT=high-load-test` and `TF_WORKSPACE=ecs-dynamodb-rps-ceiling`.
-Without them `terraform init` silently creates the workspace in the org's *default* project.
+`.env` must carry `TF_CLOUD_PROJECT=high-load-test` and `TF_WORKSPACE=ecs-dynamodb-rps-ceiling` —
+without them `terraform init` silently creates the workspace in the org's *default* project.
 
 Then, once approved: `terraform apply`, push the image, seed the table.
 
+Tests: `npm test` for unit tests. Integration tests need a local DynamoDB and **skip silently**
+without one, so a bare `npm test` is green either way:
+
 ```bash
-npm test                                  # unit tests
 docker compose -f docker-compose.test.yml up -d
-DYNAMO_ENDPOINT=http://localhost:8000 npm run test:integration   # integration tests
+DYNAMO_ENDPOINT=http://localhost:8000 npm run test:integration
 docker compose -f docker-compose.test.yml down
 ```
 
-Integration tests **skip** unless `DYNAMO_ENDPOINT` is set, so a bare `npm test` is green.
-
-### Phase 1 — Check current state
-
-Run this before and after every phase. It is read-only and generates no load.
+### Phase 1 — Is it alive?
 
 ```bash
 BASE=$(terraform -chdir=terraform output -raw base_url)
-
-curl -fsS "$BASE/healthz"                                    # {"ok":true}
-curl -fsS "$BASE/feeds/feed-07" | jq .                       # a real feed page
-aws ecs describe-services --cluster ecs-dynamodb-rps-ceiling \
-  --services ecs-dynamodb-rps-ceiling \
-  --query 'services[0].[runningCount,desiredCount,pendingCount]' --output text
-aws dynamodb describe-table --table-name ecs-dynamodb-rps-ceiling \
-  --query 'Table.ProvisionedThroughput' --output table
+curl -fsS "$BASE/healthz"                 # {"ok":true}
+curl -fsS "$BASE/feeds/feed-07" | jq .    # a real feed page, 20 items
 ```
 
-**What good looks like:** `/healthz` answers `{"ok":true}`; `/feeds/…` returns a 20-item summary; the
-service is `running=1 pending=0`; the ALB target is `healthy`. Responses carry no timing data at all —
-to see where a request spent its time, open Grafana: row 1 *Latency and DynamoDB throttling*, then
-panel 21 (DB wall-clock vs DynamoDB's own clock) and panel 23 (CPU saturation).
-
-**Confirm the seed is intact** — every partition must hold exactly 20 items, or the feed `Query`
-stops costing 2.5 RCU and the capacity model is wrong:
-
-```bash
-curl -fsS "$BASE/feeds/feed-49" | jq .count      # must be 20
-```
+Responses carry no timing data — for where a request spent its time, open the Grafana dashboard
+([§5](#5-what-is-the-bottleneck-right-now)). Everything about the infrastructure's shape (task
+count, table capacity) is in Terraform; read it there, not from the AWS CLI.
 
 ### Phase 2 — Run a load test
 
-**Capacity is still pinned to the 25/25 free tier** by two lines at the top of
-`terraform/dev.tfvars`. At that pin the binding constraint is the DynamoDB free tier, not the service
-— measured 2026-09-01, 250 rps drove 5,588 rejected reads/minute. **A run at 25/25 must not be
-recorded as an RPS ceiling.** Delete those two lines so the generated `capacity.auto.tfvars`
-(1025/200) applies, then `plan` and apply — **approval gate**, and it raises the bill from
-~$0.055/hour to **$0.3212/hour** (~$234/month if forgotten). That is Task 1 of
-`docs/superpowers/plans/2026-09-02-ecs-dynamodb-rps-ceiling-scale-and-measure.md`, which is the
-authoritative version of everything from here to Phase 9.
+**Three shapes, run in this order.** Each has a different job and B and C depend on A's answer:
 
-All runs go through Grafana Cloud k6 from **Frankfurt** (`amazon:de:frankfurt`), same city as
-`eu-central-1`, so RTT is not charged against the latency budget.
+| shape | file | what it's for |
+|---|---|---|
+| **A — discovery** | `k6/discovery.js` | Twenty **steps**, 100 → 2000 rps in 100 rps increments, 60 s each, every step its own scenario with its own threshold. **The knee is the lowest step whose threshold breached**; that number is the capacity, and everything else needs it, so this runs first. |
+| **B — constant** | `k6/constant.js` | Holds steady at the discovered rate. This is the repeatable baseline — the run you compare before and after an infrastructure change. |
+| **C — stress** | `k6/stress.js` | ~3× the discovered rate. Deliberately breaches the SLO and burns error budget, which is how autoscaling and the alerts get tested at all. It has no abort, because aborting would discard the very burn it exists to measure. |
 
-```bash
-cd ecs-dynamodb-rps-ceiling
-BASE=$(terraform -chdir=terraform output -raw base_url)
+**Two settings must be aligned before the first run.**
 
-k6 cloud run -e BASE_URL="$BASE" --summary-export=summary.json k6/discovery.js
-echo "exit=$?"     # 0 = all thresholds held, 99 = a threshold was breached
-```
+**1. Table capacity — `terraform/dev.tfvars`.** Two lines at the top pin the table to 25/25, the
+DynamoDB free tier. At that pin the binding constraint is the free tier, not the service: 250 rps
+produced 5,588 rejected reads per minute. **A run at 25/25 must not be recorded as an RPS ceiling.**
+Delete those two lines so the generated `terraform/capacity.auto.tfvars` (1025 RCU / 200 WCU) takes
+over, then `plan` and apply — **approval gate**, and it raises the bill from ~$0.055/hour to
+**$0.3212/hour** (~$234/month if left running).
 
-**Use `-e` flags, not a shell prefix.** `k6 run` honours the shell environment but `k6 inspect`
-does not, and `BASE_URL` has no guard — unset, requests silently go to `undefined/…`.
+**2. k6 environment variables** — on
+[Settings → Environment variables](https://k0valchuk.grafana.net/a/k6-app/settings/environment-variables)
+in the k6 app. A run started from the UI passes no flags, so these are the only way it learns them:
 
-**Capture the exit code on the k6 line itself.** Behind a pipe you get the pipe's status.
+| variable | value | when |
+|---|---|---|
+| `BASE_URL` | the service URL | before the first UI run, and again after any apply that recreates the load balancer — the hostname changes |
+| `RATE` | the rate discovery measured | after shape A has run; leaving it unset is correct until then |
 
-#### Mandatory 6-minute drain before *every* run
+This page is browser-only — the k6 Cloud API is read-only and Terraform has no resource for it.
+With `BASE_URL` unset a run fails immediately and loudly. With `RATE` unset it does **not** fail: B
+and C quietly fall back to 50 rps and tag every sample `rate_source=default`. That tag is the only
+thing marking such a run as not a capacity measurement.
 
-DynamoDB banks unused capacity for ~300 s. A run starting from a partly-drained burst bucket is
-not comparable to one starting full. **A run performed without the drain must not be recorded.**
+**Wait 6 minutes before every run.** DynamoDB banks unused capacity for about 300 seconds, so a run
+starting from a partly-drained burst bucket is not comparable to one starting full. **A run performed
+without the drain must not be recorded.**
 
-```bash
-echo "draining; started $(date -u +%H:%M:%S)"; sleep 360
-```
+Then start the run from the [k6 app](https://k0valchuk.grafana.net/a/k6-app/projects/8474786).
+When discovery finishes, open its thresholds. Each step has one, named `slo_met{scenario:rps_N}`,
+and k6 reports a threshold as **breached**, not passed — in the summary export the boolean is `true`
+when it was crossed. **The knee is the lowest `rps_N` whose threshold breached, and `RATE` for B and
+C is the step before it.** With 100 rps steps that is the knee to within 100 rps, which is the
+resolution every recorded figure carries.
 
-#### Running from the Grafana Cloud UI — no terminal
+Why steps and not a ramp: k6 evaluates a threshold over every sample since the test began, so on a
+continuous ramp the cumulative figure crosses 99% long after the real knee — ten good minutes dilute
+the misses — and reading the rate at abort time overstated capacity by however long that took. One
+scenario per step gives each rate its own population and its own verdict. The cumulative `slo_met`
+abort is still in the script, but only as a stop so a clearly broken service does not run all
+twenty steps; it is not the measurement.
 
-Two steps, in this order. **Uploading a script is not enough to run it** — a UI run passes no `-e`
-flags, so until step 2 is done the profiles resolve `BASE_URL` to `http://localhost:1` and every
-request fails instantly.
+If no step breached, the ceiling is above 2000 rps — raise `MAX_RATE` and re-run rather than
+reporting 2000 as the answer.
 
-**Step 1 — upload the scripts** (terminal, once per script change):
-
-```bash
-cd ecs-dynamodb-rps-ceiling
-for f in discovery constant stress; do k6 cloud upload k6/$f.js; done
-```
-
-This updates each stored test in place — same `options.cloud.name` → same test id — in project
-[`high-load-test` (8474786)](https://k0valchuk.grafana.net/a/k6-app/projects/8474786):
-
-| test | id |
-|---|---|
-| `ecs-dynamodb-rps-ceiling discovery` | 1330768 |
-| `ecs-dynamodb-rps-ceiling constant` | 1330772 |
-| `ecs-dynamodb-rps-ceiling stress` | 1330773 |
-
-> ### ⚠️ Step 2 — define the environment variables BEFORE running anything
->
-> On **[Settings → Environment variables](https://k0valchuk.grafana.net/a/k6-app/settings/environment-variables)**
-> in the k6 app, set:
->
-> | variable | value | when |
-> |---|---|---|
-> | `BASE_URL` | `terraform -chdir=terraform output -raw base_url`, or `BASE_URL` from the root `.env` | before the first UI run, and again after any apply that **recreates the ALB** — the DNS name changes |
-> | `RATE` | the knee discovery measured | only after shape A has run; leaving it unset is correct until then |
->
-> **This is manual and there is no way around it.** The k6 Cloud v5 API is **read-only** — its own
-> OpenAPI spec at `api.k6.io/cloud/v5/openapi_spec` lists 24 paths, every one a `GET` — and the
-> Grafana Terraform provider has no k6 environment-variable resource, so neither a script nor
-> `terraform apply` can set these. Only a browser can write to that page.
->
-> **Symptoms of skipping it.** With `BASE_URL` unset the run fails immediately with connection
-> errors to `localhost:1` — loud, and deliberately so. With `RATE` unset the run does *not* fail: B
-> and C fall back to 50 rps and tag every sample `rate_source=default`. **That run is not a capacity
-> measurement**, and the tag is the only thing that says so.
-
-**The deployed hostname is deliberately not in this repo.** This repo is public and the ALB is plain
-HTTP with no auth, so a hostname in a commit is a hostname anyone can send load to. It lives in the
-root `.env` and on that settings page, nowhere else.
-
-**Local runs need neither step.** `-e` wins over everything, so a terminal run supplies its own
-values and ignores what the settings page holds:
+**Running from a terminal instead** needs neither settings-page value; `-e` wins over everything:
 
 ```bash
 set -a; source ../.env; set +a     # .env has no `export`; without this the vars never reach k6
 k6 cloud run -e BASE_URL="$BASE_URL" -e RATE=<knee> k6/constant.js
+echo "exit=$?"                     # 0 = the gates held, 99 = one of them breached
 ```
 
-`k6 cloud upload` also accepts `-e` and bakes those values into the stored archive, which is an
-alternative to the settings page. Two cautions if you use it: a baked value **cannot be read back**
-— the API returns only `{"archive": "<hash>.tar"}`, never its contents — and which source wins when
-a value is both baked and set on the settings page is **unverified**. Prefer the settings page,
-where the value is visible and editable.
+Capture that exit code on the k6 line itself — behind a pipe you get the pipe's status instead.
+**Four thresholds decide the exit code:** `slo_met` (99% meet their class threshold), `slo_met_tail`
+(99.9% meet three times it), `http_req_failed` (error rate under 0.1%), and `dropped_iterations`
+(zero — a run that ran out of virtual users delivered less than `RATE` and must not be recorded as a
+measurement at `RATE`). The per-class p99 lines in the summary are **reported only**: k6 has no
+non-gating threshold, so they are written as `p(99)>=0` to appear in the output without being able
+to fail it. All runs go from Frankfurt, the same city as the region, so network round-trip is not
+charged against the latency budget.
 
-A UI run produces **no local `summary.json`**. `/loadtest` reads the run from the k6 Cloud API
-instead, so a UI-started run can still be recorded — see the skill for which endpoint it reads.
+### Phase 3 — Read the result
 
-#### The three shapes
+All in Grafana, no CLI. Set the dashboard time range to the run's window.
 
-| shape | file | purpose |
-|---|---|---|
-| **A — discovery** | `k6/discovery.js` | ramps until the SLO breaks and **aborts at the knee** |
-| **B — constant** | `k6/constant.js` | holds at the discovered knee; the repeatable baseline |
-| **C — stress** | `k6/stress.js` | ~3× the knee; **supposed to breach** and burn error budget |
-
-C has no `abortOnFail`, because aborting would discard the very budget burn it exists to measure.
-
-**B and C used to throw when `RATE` was unset.** They no longer do — a UI-started run passes no `-e`
-flags, so a module-scope throw made them impossible to store in the cloud at all. `RATE` now falls
-back to the default in `k6/lib/env.js`, and **every sample is tagged `rate_source`**: `explicit` when
-a knee was passed, `default` when it was not. **A run tagged `rate_source=default` is not a capacity
-measurement and must not be recorded as one** — that tag is what replaced the guard.
-
-Discovery aborts at the knee, so the arrival rate at that instant *is* the capacity number:
-
-```
-knee_rps = START_RATE + (MAX_RATE − START_RATE) × (elapsed_seconds / RAMP_SECONDS)
-         = 50 + 1950 × (elapsed / 900)
-```
-
-If it finishes without aborting, the ceiling is above `MAX_RATE` — raise it and re-run rather
-than reporting 2000 as the answer.
-
-### Phase 3 — Check state: how long did it take, and was DynamoDB rejecting us?
-
-Both questions are panels on the attribution dashboard. **Do not shell out to
-`aws cloudwatch get-metric-statistics` for them** — Grafana is the one place to look, and the
-dashboard queries the same CloudWatch metrics through its own datasource, at full resolution:
-
-| question | panel |
+| question | where |
 |---|---|
-| Was DynamoDB rejecting us? | [DynamoDB throttle events (read and write)](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=2&from=now-6h&to=now) — non-zero means yes |
-| How long did DynamoDB itself take? | [SuccessfulRequestLatency by operation](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=5&from=now-6h&to=now) — `GetItem`, `PutItem`, `Query`, Average and Maximum |
+| What rate did we reach, and did the SLO hold? | the [k6 run result](https://k0valchuk.grafana.net/a/k6-app/projects/8474786) — client-side view |
+| Did the SLO hold, server-side? | [SLI ratio](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=19) |
+| **Was DynamoDB rejecting us?** | [throttle events](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=2) — read this first |
+| How much capacity headroom was left? | [read](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=7) and [write](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=8) capacity |
+| Was the service itself the limit? | [event-loop delay per task](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=24) |
+| Did the burn-rate alerts fire? | [alert rules](https://k0valchuk.grafana.net/alerting/list) |
+| How much budget did it cost? | [SLO app](https://k0valchuk.grafana.net/a/grafana-slo-app/slos) |
 
-Widen the dashboard time range to cover the run; these links open the last 6 hours.
-
-**These panels read CloudWatch directly, and that is deliberate.** The collector also forwards the
-same metrics to Prometheus, but that copy is not equivalent: Alloy requests a 300-second window and
-CloudWatch aligns its 60-second buckets to the request rather than the wall-clock minute, so a spiky
-`Sum` loses its peak. Measured 2026-09-01 over the 250 rps run, `ReadThrottleEvents` peaked at
-**5588** natively and only **4360** in the forwarded copy — a 21% understatement of the number this
-README reports. Smooth `Average` metrics survive intact, which is why the forwarded copy is still the
-right source for the queueing subtraction below. Full reasoning:
-`docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-datasource-fidelity-design.md`.
-
-**Do not read `db_wall_avg_by_route` on its own.** It is wall-clock around an `await`, so it absorbs
-event-loop queueing. Its value is the *gap*:
-
-```
-queueing_delay(route) ≈ db_wall_avg_by_route
-                      − Σ SuccessfulRequestLatency over the operations that route issues
-```
-
-The subtrahend is **per route**, not one average over the table: `/items/:pk/:sk` → `GetItem`,
-`/items` → `PutItem`, `/feeds/:pk` → `Query`, `/reports` → `Query + PutItem`. That mapping is
-`attribution.operations` in `slo.yaml`, and `queueing_ms_by_route` in `grafana/queries.json` is
-generated from it — do not hand-write this subtraction.
-
-**The two sides of that subtraction are ~2 minutes out of step.** `db_wall_avg_by_route` is emitted
-by the service and reaches Grafana via OTLP within seconds; the `SuccessfulRequestLatency` being
-subtracted is scraped from CloudWatch by the collector and lands about two minutes later. Measured
-2026-09-01, the forwarded series is the native one shifted +2 min with values preserved exactly, so
-at steady state the error is hundredths of a millisecond — but at a transition it is as large as the
-excursion, worst observed 7.4 ms against a 642–938 ms signal (~1%). Fine for deciding *where* the
-queue is; do not read the gap as instantaneous while load is changing.
-
-**Both traps in [§5](#5-what-is-the-bottleneck-right-now) apply to these panels directly** — a
-falling `SuccessfulRequestLatency` is not a healthy database, and the service's db timing, event-loop
-delay and event-loop utilization are not evidence about the service while throttle events are
-non-zero. Read that section before drawing a conclusion from the panels above.
-
-**Throttling shows up as latency before it shows up as errors.** The SDK retries with backoff and
-those retries sit *inside* the wall-clock db time. Always check `ReadThrottleEvents` and
-`WriteThrottleEvents` before blaming the service.
+Both traps in [§5](#5-what-is-the-bottleneck-right-now) apply here: while throttle events are
+non-zero, no service-side signal is evidence about the service — and a falling DynamoDB latency is
+not a healthy database.
 
 ### Phase 4 — Improve: scale the service out (1 → 4 tasks)
 
-**One change only.** If Phase 3 already showed non-zero throttle events, skip this and go to
-Phase 6 instead — scaling tasks would change nothing, and recording why the order was swapped is
-itself a result.
+**One change only.** If Phase 3 already showed non-zero throttle events, skip this and go to Phase 6
+— scaling tasks would change nothing, and recording why the order was swapped is itself a result.
 
 ```hcl
 # terraform/dev.tfvars
 autoscaling_enabled = true
 ```
 
-```bash
-terraform -chdir=terraform plan -var-file=dev.tfvars
-```
+`terraform -chdir=terraform plan -var-file=dev.tfvars` must show **exactly two resources added**
+(the autoscaling target and its CPU policy) and nothing else. Anything more means more than one
+thing is changing and the comparison is worthless. Then apply — **approval gate.**
 
-Expect **exactly two resources added** (`aws_appautoscaling_target.ecs[0]`,
-`aws_appautoscaling_policy.cpu[0]`) and nothing else. If anything else appears, more than one
-thing is changing and the comparison is worthless. Then apply — **this is an approval gate.**
+Scale-out cooldown is 30 s, scale-in 120 s: out fast, in slow, so a spike isn't answered and then
+un-answered inside one run.
 
-Scale-out cooldown is 30 s, scale-in 120 s: out fast, in slow, so a spike is not answered and
-then un-answered inside one run.
+### Phase 5 — Re-measure identically
 
-### Phase 5 — Check state, then re-measure identically
-
-Wait for the service to stabilise, drain 6 minutes, then re-run **B and C byte-identically** —
-same `RATE`, same scripts, same load zone.
-
-```bash
-aws ecs wait services-stable --cluster ecs-dynamodb-rps-ceiling --services ecs-dynamodb-rps-ceiling
-sleep 360
-k6 cloud run -e BASE_URL="$BASE" -e RATE=<knee> --summary-export=summary.json k6/constant.js
-k6 cloud run -e BASE_URL="$BASE" -e RATE=<knee> --summary-export=summary.json k6/stress.js
-```
-
-Re-run the Phase 3 checks. The expected outcome is that throttle events are now non-zero — the
-database becomes the next constraint to release, which is what Phase 6 exists for.
+Wait for the service to stabilise, drain 6 minutes, re-run **B and C unchanged** — same `RATE`, same
+scripts, same load zone — and re-read Phase 3. The expected outcome is that throttle events are now
+non-zero: the database has become the next constraint, which is what Phase 6 releases.
 
 ### Phase 6 — Improve: raise database capacity
 
-Only if the Phase 5 re-run left `ReadThrottleEvents` or `WriteThrottleEvents` non-zero. Raising
-capacity that is not the constraint spends money and proves nothing — with both at zero over the run
-window, DynamoDB was not refusing requests and there is nothing here to release.
+Only if Phase 5 left throttle events non-zero. Raising capacity that isn't the constraint spends
+money and proves nothing.
 
-Capacity comes from the model, never a hand-typed number. Raise `target_rps` in `slo.yaml`, then
-regenerate `terraform/capacity.auto.tfvars`:
+Capacity comes from the model, never a hand-typed number: raise `target_rps` in `slo.yaml` and
+regenerate `terraform/capacity.auto.tfvars` with `/slo`. Confirm the plan is an **in-place** capacity
+change — if it proposes to *replace* the table, stop, the seeded data would be lost. Then apply —
+**approval gate.**
 
-```
-RCU/rps = 0.55×0.5 + 0.25×2.5 + 0.05×2.5 = 1.025
-WCU/rps = 0.15×1   + 0.05×1              = 0.200
-```
+### Phase 7 — Re-measure again
 
-Confirm the plan is an **in-place** capacity change. If it proposes to *replace* the table, stop —
-the seeded data would be lost. Then apply — **approval gate.**
-
-### Phase 7 — Check state and re-measure again
-
-Drain 6 minutes, re-run B and C, and check the two metrics again. Both constraints should now be
-released; record the new ceiling and the new $/hour.
+Drain 6 minutes, re-run B and C, read Phase 3 again. Both constraints should now be released. Record
+the new ceiling and the new $/hour.
 
 ### Phase 8 — Record the results
 
-Every number must come from a run in this session, quoted with the k6 output or CloudWatch query
-that produced it. No remembered figures, no extrapolation.
+Append one row per run to `results.md` (the `/loadtest` skill does this, including for a run started
+from the UI — it reads the result from the k6 API). Every number must come from a run in this
+session, quoted with the k6 output or Grafana query that produced it. No remembered figures.
 
-Per run: RPS achieved, SLO attainment, error budget burned, burn-rate multiple, p95/p99 by class,
-`db_wall_avg_by_route`/`cpu_seconds_per_second`, event-loop lag, the peak per-minute
-`ReadThrottleEvents` and `WriteThrottleEvents`, provisioned RCU/WCU, $/hour, and the one change
-distinguishing it from the previous run.
+A row is only useful if it answers "what was different?" and "what was the limit?", so record:
+
+- **what distinguished this run** from the previous one — the single infrastructure change
+- **rate achieved**, and **SLO attainment twice**: client-side from k6, server-side from Grafana
+  (they differ by network time, and [§3](#3-are-we-meeting-the-slo) explains why both are kept)
+- **p95 / p99 per class**, and error rate
+- **error budget burned**, and whether the burn-rate alerts fired
+- **peak per-minute read and write throttle events** — a run with throttling measured the database,
+  not the service, and the row must say so
+- **provisioned RCU/WCU** and **$/hour** at the time of the run
 
 A result is never written as "N RPS". It is **"N RPS at the 55/15/25/5 mix"**.
 
-### Phase 9 — Scale down and tear out
+### Phase 9 — Tear down
 
 ```bash
 terraform -chdir=terraform destroy -var-file=dev.tfvars     # approval gate
-```
 
-**A clean destroy is not evidence of a clean account.** Sweep afterwards:
-
-```bash
 aws resourcegroupstaggingapi get-resources \
   --tag-filters Key=Project,Values=ecs-dynamodb-rps-ceiling \
   --query 'ResourceTagMappingList[].ResourceARN' --output table
-
-aws ec2 describe-nat-gateways --filter Name=state,Values=available --output table   # must be none
-aws ec2 describe-addresses --query 'Addresses[?AssociationId==null]' --output table
-aws logs describe-log-groups --log-group-name-prefix /ecs/ecs-dynamodb-rps-ceiling --output table
 ```
 
-Once autoscaling has run, Application Auto Scaling leaves two `TargetTracking-…` CloudWatch
-alarms that carry **no `Project` tag** and are therefore invisible to the tag sweep. They are
-normally removed with the policy — check explicitly.
+**A clean destroy is not evidence of a clean account** — hence the sweep. It finds anything tagged
+for this project that survived.
 
-**Do not delete anything the sweep finds without asking** — a survivor may belong to another
-project in this account.
+One thing it cannot find: once autoscaling has run, Application Auto Scaling leaves two
+`TargetTracking-…` CloudWatch alarms that carry no `Project` tag. They normally go with the policy;
+check the CloudWatch alarms page if Phase 4 was ever applied.
+
+**Do not delete anything the sweep finds without asking** — a survivor may belong to another project
+in this account.
 
 ---
 
 ## Cost
 
-| item | rate | source |
-|---|---|---|
-| Fargate 0.25 vCPU + 0.5 GB | $0.0142/hr | Pricing API, eu-central-1 |
-| ALB base (excl. LCU) | $0.0270/hr | Pricing API, `Load Balancer-Application` |
-| ALB LCU | $0.0080/LCU-hr | Pricing API |
-| DynamoDB RCU / WCU | $0.0001586 / $0.0007930 per unit-hr | `pricing.json` |
+| item | rate |
+|---|---|
+| Fargate 0.25 vCPU + 0.5 GB | $0.0142/hr |
+| ALB base | $0.0270/hr |
+| ALB LCU | $0.0080/LCU-hr |
+| DynamoDB RCU / WCU | $0.0001586 / $0.0007930 per unit-hr |
 
-- **Idle now (25/25):** approximately **$0.055/hr** → roughly $1.32/day → roughly $40/month.
-  25/25 sits exactly at the free tier (25 × 744 h = 18,600 unit-hours), so DynamoDB capacity is
-  free unless other DynamoDB usage in the account already consumed it — Fargate and ALB are billed
-  regardless.
-- **At higher provisioned capacity** (after Phase 6): recompute from `pricing.json` and the
-  capacity actually applied; do not carry forward a number from a different configuration.
+- **Idle at 25/25 capacity:** about **$0.055/hr** — roughly $40/month. 25/25 sits exactly at the
+  DynamoDB free tier, so capacity is free unless other usage in the account already consumed it;
+  Fargate and the ALB are billed regardless.
+- **At full capacity (1025/200, after Phase 2 or 6):** **$0.3212/hr**, ~$234/month.
 
 **The forgotten environment, not the load test, is the cost risk.** Prices are never typed from
 memory — they live in `pricing.json` with the query that produced them.
@@ -604,39 +432,11 @@ memory — they live in `pricing.json` with the query that produced them.
 ## Known gaps
 
 - **Terraform does not rebuild the container image.** Any change under `src/` needs an explicit
-  build / push / `--force-new-deployment` cycle. This is easy to forget and fails silently: the
-  collector receives nothing from a service that looks healthy in every other respect.
-- **A UI-started run needs `BASE_URL` and `RATE` set by hand first, and nothing can automate it.**
-  The k6 Cloud v5 API is read-only (24 paths, all `GET`) and the Grafana provider has no k6
-  environment-variable resource, so the settings page is browser-only. Uploading a script does not
-  carry the values with it. Missing `BASE_URL` fails loudly against `localhost:1`; missing `RATE`
-  fails **silently** at 50 rps, marked only by the `rate_source=default` tag.
-- **The SLO window is `7d` and cannot be anything else here.** Grafana's SLO API refuses windows
-  outside 7–32 days; Grafana Cloud Free retains metrics for 14. Those two limits leave one usable
-  value.
-- **`traffic_source` classification is fixed but unconfirmed against a real run.** `trafficSource()`
-  at `src/otel.js:94` keys on a `k6/` **prefix**, and k6 v1.4.0's own default user-agent is
-  `Grafana k6/1.4.0` — which contains `k6/` without starting with it, so both 2026-09-01 runs landed
-  under `other`. The profiles now set `userAgent: 'k6/1.4.0'` via `k6/lib/env.js`; this had to be an
-  *option* rather than the `--user-agent` CLI flag, because a UI-started run passes no flags. Verify
-  a `traffic_source="k6"` series actually appears on the first run — an empty one reads exactly like
-  a healthy silence. The label is bounded in the service rather than the collector (a raw user-agent
-  would put unbounded cardinality on a public ALB), so adding a source means editing `src/otel.js`
-  and redeploying.
-- **Client-side latency measured from a laptop is ~80 ms and is almost all RTT to Frankfurt.**
-  Server-side `db` is ~4 ms. Runs originating in-zone will not pay that cost.
-
-## Reference
-
-- **Current plan** (everything not yet done — the capacity raise, the discovery run, the before/after
-  comparison, teardown): `docs/superpowers/plans/2026-09-02-ecs-dynamodb-rps-ceiling-scale-and-measure.md`.
-  It applies inline every amendment the earlier plans accumulated; prefer it over Phases 2–9 above.
-- **Design authority**, in force order — the base design
-  `docs/superpowers/specs/2026-08-29-ecs-dynamodb-rps-ceiling-design.md`, amended by
-  `…/2026-08-30-…-sli-collection-design.md` (the SLI is emitted by the service, not by k6),
-  `…/2026-08-31-…-attribution-via-metrics-design.md` (measurement leaves over OTel, not over HTTP),
-  `…/2026-09-01-…-attribution-simplified-design.md` (two metrics, no computed verdict) and
-  `…/2026-09-01-…-slo-scope-design.md` (the SLO is defined over load-bearing traffic).
-  Do not act on the base design's D7 or D10 — both were reversed, and each carries a pointer at the
-  decision itself.
-- Capacity/cost chart: `capacity-model.html`.
+  build / push / `--force-new-deployment` cycle. This fails silently: the service looks healthy in
+  every other respect while the collector receives nothing new.
+- **A UI-started run needs `BASE_URL` and `RATE` set by hand first, and nothing can automate it** —
+  the k6 Cloud API is read-only and Terraform has no resource for that settings page. Missing
+  `BASE_URL` fails loudly; missing `RATE` fails **silently** at 50 rps, marked only by the
+  `rate_source=default` tag.
+- **The SLO window is 7 days and cannot be anything else here.** Grafana's SLO API refuses windows
+  outside 7–32 days and the free tier retains metrics for 14. Those two limits leave one usable value.

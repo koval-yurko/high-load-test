@@ -122,8 +122,15 @@ export const thresholds = {
   // Availability ${availability.objective}%. k6's rate metric counts FAILURES, so the objective inverts:
   // ${availability.objective}% success  ->  failure rate < ${rate(100 - availability.objective)}.
   http_req_failed: ['rate<${rate(100 - availability.objective)}'],
-  // Secondary, per class. Diagnostic only — these are NOT the gate.
-${Object.entries(slo.classes).map(([n, c]) => `  'http_req_duration{class:${n}}': ['p(99)<${c.threshold_ms}'],`).join('\n')}
+  // An arrival-rate run that exhausts its VUs does not slow down or fail: it
+  // records dropped iterations and delivers LESS than RATE, then passes the SLO
+  // at that lower rate. Such a run is not a measurement at RATE. Refuse it.
+  dropped_iterations: ['count==0'],
+  // Per class, REPORTED not gated. k6 prints a tagged sub-metric in the summary
+  // only when some threshold references it, and every threshold sets the exit
+  // code, so a threshold that cannot fail is the one form that shows p99 per
+  // class without making it part of the verdict.
+${Object.entries(slo.classes).map(([n]) => `  'http_req_duration{class:${n}}': ['p(99)>=0'],`).join('\n')}
 };
 `;
 }
@@ -188,13 +195,26 @@ const METRIC = 'http_server_request_duration_seconds';
 const CLASSES = (doc) => Object.keys(classRatio(doc).classes).join('|');
 const SCOPE = (doc) => `job="${doc.service}", http_route!~"/healthz", class=~"${CLASSES(doc)}"`;
 
+/**
+ * What a "good" request is, beyond being fast: not a server error. Applied to
+ * the NUMERATOR only -- a 5xx stays in the denominator and so counts as a miss,
+ * which is what k6's slo_met does (it requires a 2xx before it looks at the
+ * duration). Without this a request that fails in 3 ms sits inside
+ * histogram_fraction and is scored as meeting its class, and results.md ends up
+ * recording two different indicators under one name. 4xx is deliberately NOT a
+ * miss here: a client error is not charged to the service (decided 2026-09-02,
+ * recorded in slo.yaml). Label name verified live against Grafana Cloud the
+ * same day: http.response.status_code arrives as http_response_status_code.
+ */
+const GOOD = 'http_response_status_code!~"5.."';
+
 /** Proportion of requests meeting their own class threshold, over `range`. */
 export function ratioExpr(doc, { multiplier = 1, range, job }) {
   const slo = classRatio(doc);
   const base = job ? SCOPE(doc).replace(`job="${doc.service}"`, `job="${job}"`) : SCOPE(doc);
   const good = Object.entries(slo.classes).map(([name, c]) => {
     const bound = ((c.threshold_ms * multiplier) / 1000);
-    const sel = `${METRIC}{${base}, class="${name}"}`;
+    const sel = `${METRIC}{${base}, class="${name}", ${GOOD}}`;
     // Aggregate BEFORE taking the fraction. Applying histogram_fraction per
     // series and summing afterwards yields NaN whenever any one series has zero
     // observations in the window -- which happens on every deploy (the retired
@@ -266,23 +286,49 @@ ${body}
 /** Burn alerting reads the MISS rate, so the ratio inverts. */
 const missExpr = (doc, opts) => `1 - (\n  ${ratioExpr(doc, opts)}\n)`;
 
+/**
+ * The availability SLI: non-5xx requests over all requests, same population as
+ * the latency ratio. Native histograms carry the count, so this is
+ * histogram_count over histogram_count -- no _count series exists to read.
+ * `or vector(0)` for the same reason ratioExpr needs it: a window with only
+ * failures would otherwise return an empty numerator and no alert.
+ */
+export function availabilityMissExpr(doc, { range }) {
+  const scope = SCOPE(doc);
+  return `1 - (\n`
+    + `  (histogram_count(sum(rate(${METRIC}{${scope}, ${GOOD}}[${range}]))) or vector(0))\n`
+    + `  /\n`
+    + `  histogram_count(sum(rate(${METRIC}{${scope}}[${range}])))\n`
+    + `)`;
+}
+
 export function renderAlerts(doc) {
   const slo = classRatio(doc);
+  const availability = doc.slos.find((s) => s.sli === 'success_rate');
   const blocks = [];
   for (const [kind, burn] of Object.entries(doc.burn)) {
-    for (const [label, objective, multiplier] of [
-      ['primary', slo.objective, 1],
-      ['tail', slo.tail_objective, slo.tail_multiplier],
-    ]) {
+    // [resource suffix, human label, objective %, expression]
+    const objectives = [
+      ['latency_classes_primary', 'latency-classes primary', slo.objective,
+        missExpr(doc, { multiplier: 1, range: burn.window })],
+      ['latency_classes_tail', 'latency-classes tail', slo.tail_objective,
+        missExpr(doc, { multiplier: slo.tail_multiplier, range: burn.window })],
+    ];
+    if (availability) {
+      objectives.push(['availability', 'availability', availability.objective,
+        availabilityMissExpr(doc, { range: burn.window })]);
+    }
+    for (const [suffix, label, objective, expr] of objectives) {
       const sustainable = (100 - objective) / 100;
       const threshold = Number((burn.multiplier * sustainable).toFixed(6));
-      blocks.push(`resource "grafana_rule_group" "latency_classes_${label}_${kind}burn" {
-  name             = "${doc.service} / latency-classes ${label} / ${kind} burn"
+      const sloLabel = label.replace(/ /g, '-');
+      blocks.push(`resource "grafana_rule_group" "${suffix}_${kind}burn" {
+  name             = "${doc.service} / ${label} / ${kind} burn"
   folder_uid       = grafana_folder.project.uid
   interval_seconds = 60
 
   rule {
-    name      = "latency-classes ${label} burn rate >= ${burn.multiplier}x over ${burn.window}"
+    name      = "${label} burn rate >= ${burn.multiplier}x over ${burn.window}"
     condition = "C"
     for       = "${burn.forDuration}"
 
@@ -308,7 +354,7 @@ export function renderAlerts(doc) {
         instant = true
         range   = false
         expr    = <<-PROMQL
-          ${missExpr(doc, { multiplier, range: burn.window }).split('\n').join('\n          ')}
+          ${expr.split('\n').join('\n          ')}
         PROMQL
       })
     }
@@ -353,13 +399,23 @@ export function renderAlerts(doc) {
     no_data_state  = "OK"
     exec_err_state = "Error"
 
+    // Explicit, not inherited. Without this block the rule reaches whatever the
+    // stack's ROOT notification policy names -- a default declared nowhere in
+    // this repo, which another project's edit can redirect with no diff here.
+    // The contact point is the one the stack already has; nothing is created.
+    // group_by adds slo so primary, tail and availability arrive separately.
+    notification_settings {
+      contact_point = var.alert_contact_point
+      group_by      = ["alertname", "slo"]
+    }
+
     annotations = {
-      summary     = "latency-classes ${label} (${objective}% objective) burning error budget ~${burn.multiplier}x sustainable over ${burn.window}."
+      summary     = "${label} (${objective}% objective) burning error budget ~${burn.multiplier}x sustainable over ${burn.window}."
       computation = "window ${doc.window}; sustainable miss rate = 1 - ${objective / 100} = ${(sustainable * 100).toFixed(3)}%; ${kind}-burn threshold = ${burn.multiplier} * ${(sustainable * 100).toFixed(3)}% = ${(threshold * 100).toFixed(3)}%; alert window ${burn.window} = ${burn.budgetFraction * 100}% of budget"
     }
     labels = {
       severity = "${burn.severity}"
-      slo      = "latency-classes-${label}"
+      slo      = "${sloLabel}"
     }
   }
 }`);
@@ -374,9 +430,10 @@ export function renderAlerts(doc) {
 # mean something else. Each rule's \`computation\` annotation shows its own
 # arithmetic.
 #
-# The SLI is emitted by the service continuously -- these rules no longer depend
-# on a k6 run having happened, which was the unresolved precondition the previous
-# version of this file documented at its top.
+# Three objectives, two speeds each: latency-classes primary and tail (the
+# per-class threshold ratio, a 5xx counted as a miss), and availability (non-5xx
+# over all). The SLI is emitted by the service continuously -- these rules do
+# not depend on a k6 run having happened.
 
 ${blocks.join('\n\n')}
 `;

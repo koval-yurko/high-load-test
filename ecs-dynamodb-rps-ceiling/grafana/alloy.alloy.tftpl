@@ -101,49 +101,27 @@ prometheus.exporter.cloudwatch "aws" {
     }
   }
 
-  discovery {
-    type        = "AWS/ApplicationELB"
-    regions     = ["${region}"]
-    search_tags = { "Project" = "${project}" }
-
-    metric {
-      name       = "RequestCount"
-      statistics = ["Sum"]
-      period     = "60s"
-      length     = "300s"
-    }
-    metric {
-      name       = "TargetResponseTime"
-      statistics = ["Average", "Maximum", "p95"]
-      period     = "60s"
-      length     = "300s"
-    }
-    metric {
-      name       = "HTTPCode_Target_5XX_Count"
-      statistics = ["Sum"]
-      period     = "60s"
-      length     = "300s"
-    }
-  }
-
-  discovery {
-    type        = "AWS/ECS"
-    regions     = ["${region}"]
-    search_tags = { "Project" = "${project}" }
-
-    metric {
-      name       = "CPUUtilization"
-      statistics = ["Average", "Maximum"]
-      period     = "60s"
-      length     = "300s"
-    }
-    metric {
-      name       = "MemoryUtilization"
-      statistics = ["Average", "Maximum"]
-      period     = "60s"
-      length     = "300s"
-    }
-  }
+  // NO AWS/ApplicationELB or AWS/ECS discovery here, and removing them lost no data.
+  // Every ALB and ECS panel target already queries the CloudWatch datasource live
+  // (decision D1 in the datasource-fidelity spec) -- 14 targets covering all 9
+  // metric-statistics these two blocks used to forward, plus HealthyHostCount,
+  // LiveTaskCount and HTTPCode_Target_2XX/4XX/ELB_4XX, which they never scraped. So
+  // the forwarded copy was a strict subset that nothing queried: no panel reads
+  // aws_applicationelb_* or aws_ecs_*, and the four burn-rate rules in alerts.tf read
+  // only http_server_request_duration_seconds.
+  //
+  // GetMetricData is billed per METRIC REQUESTED, so cost tracks the metric{} count,
+  // not the block count -- the blocks only decide how many API calls carry them.
+  // Measured off AWS/Usage CallCount: 3 blocks = 3 calls/min = 198 calls/hr, flat and
+  // around the clock whether or not anyone is looking, carrying 16 metric-statistics
+  // = ~25,100 metrics/day = $0.25/day. Dropping these two leaves 7, about $0.11/day.
+  //
+  // The DynamoDB block stays because SuccessfulRequestLatency/Average has something
+  // panels cannot replicate: "Queueing delay by route" and "DB wall-clock vs
+  // DynamoDB's own clock" subtract it from the service's OTLP histogram, a join that
+  // needs both series in one store. Its other six metric-statistics have no reader
+  // today and are kept deliberately per D2 (throttles are two lines, and a future
+  // burn-rate rule would want PromQL over them). ALB and ECS had no such claim.
 }
 
 prometheus.scrape "cloudwatch" {

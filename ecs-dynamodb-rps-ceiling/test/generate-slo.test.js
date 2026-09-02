@@ -241,9 +241,67 @@ test('an absent latency class contributes zero rather than emptying the numerato
     assert.ok(line.trimEnd().endsWith('or vector(0))'),
       `class ${name}'s term is not empty-safe -- an absent class would empty the numerator: ${line.trim()}`);
   }
-  // And the derived files carry it, since they are the ones that actually alert.
-  assert.equal((renderAlerts(doc).match(/or vector\(0\)\)/g) ?? []).length, classes.length * 4);
+  // And the derived files carry it, since they are the ones that actually alert:
+  // one per class per latency rule (2 objectives x 2 speeds), plus one per
+  // availability rule (2 speeds), whose numerator needs the same guard.
+  assert.equal((renderAlerts(doc).match(/or vector\(0\)\)/g) ?? []).length, classes.length * 4 + 2);
   assert.equal((renderLocals(doc).match(/or vector\(0\)\)/g) ?? []).length, classes.length);
+});
+
+test('a fast 5xx is a miss: the numerator excludes server errors, the denominator keeps them', () => {
+  // k6's slo_met requires a 2xx before it looks at the duration. Without the
+  // same rule here a request that fails in 3 ms sits inside histogram_fraction
+  // and is scored as meeting its class, and results.md records two different
+  // indicators under one name. 4xx is deliberately not excluded (slo.yaml).
+  const doc = loadSlo(`${HERE}slo.yaml`);
+  const expr = ratioExpr(doc, { range: '5m' });
+  const [numerator, denominator] = expr.split('\n  /\n');
+  const classes = Object.keys(doc.slos.find((s) => s.sli === 'class_threshold_ratio').classes);
+  // Every class term filters, in BOTH of its selectors (fraction and count).
+  assert.equal((numerator.match(/http_response_status_code!~"5\.\."/g) ?? []).length, classes.length * 2);
+  assert.doesNotMatch(denominator, /http_response_status_code/);
+  // The only thing ever excluded is 5xx. A 4xx is not charged to the service.
+  for (const [, pattern] of expr.matchAll(/http_response_status_code!~"([^"]*)"/g)) {
+    assert.equal(pattern, '5..', `numerator excludes ${pattern}; only 5xx may be excluded`);
+  }
+  // Label name as Grafana Cloud's OTLP translation emits it, verified live 2026-09-02.
+  assert.doesNotMatch(expr, /http\.response\.status_code/);
+});
+
+test('the availability objective gets its own burn rules, on the same population', () => {
+  const doc = loadSlo(`${HERE}slo.yaml`);
+  const out = renderAlerts(doc);
+  assert.match(out, /resource "grafana_rule_group" "availability_fastburn"/);
+  assert.match(out, /resource "grafana_rule_group" "availability_slowburn"/);
+  // 99.9% -> sustainable miss 0.1%; 14.4x = 1.44%, 6x = 0.6%.
+  assert.match(out, /params = \[0\.0144\]/);
+  assert.match(out, /params = \[0\.006\]/);
+  // Ratio of counts, native-histogram form, non-5xx over all.
+  assert.match(out, /histogram_count\(sum\(rate\(http_server_request_duration_seconds\{[^}]*http_response_status_code!~"5\.\."\}\[14m\]\)\)\)/);
+  assert.equal((out.match(/^resource "grafana_rule_group"/gm) ?? []).length, 6);
+});
+
+test('every generated rule names its contact point instead of inheriting the root policy', () => {
+  // The stack's root policy happens to route to Slack today. That default is
+  // declared nowhere in this repo, so an edit for another project would
+  // redirect these rules with no diff here. Each rule says where it goes.
+  const out = renderAlerts(loadSlo(`${HERE}slo.yaml`));
+  const rules = (out.match(/^\s{2}rule \{/gm) ?? []).length;
+  const routed = (out.match(/contact_point = var\.alert_contact_point/g) ?? []).length;
+  assert.equal(rules, 6);
+  assert.equal(routed, rules, 'a rule without notification_settings inherits the root policy');
+  assert.match(out, /group_by\s+= \["alertname", "slo"\]/);
+});
+
+test('k6 thresholds gate on dropped iterations and report per-class p99 without gating on it', () => {
+  // An arrival-rate run that exhausts its VUs delivers less than RATE and
+  // passes the SLO at that lower rate. count==0 refuses it.
+  const out = renderK6(loadSlo(`${HERE}slo.yaml`));
+  assert.match(out, /dropped_iterations: \['count==0'\]/);
+  // k6 has no non-gating threshold, and only prints a tagged sub-metric when a
+  // threshold references it. p(99)>=0 is the one form that reports without gating.
+  assert.match(out, /'http_req_duration\{class:fast\}': \['p\(99\)>=0'\]/);
+  assert.doesNotMatch(out, /p\(99\)<\d/, 'a per-class p99 threshold that can fail makes p99 part of the verdict');
 });
 
 test('the cpu saturation query divides by the real vCPU allocation', () => {

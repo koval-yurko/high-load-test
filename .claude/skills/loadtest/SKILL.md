@@ -49,7 +49,31 @@ Two things about this JSON are counterintuitive and will invert your conclusions
 - **`http_req_failed.passes`/`.fails` do not mean pass/fail of the test.** For a rate metric, `passes`
   counts requests that *were* failures. Use `.value` (0..1) for the error rate.
 
-Exit code: **0** = all thresholds satisfied, **99** = at least one breached.
+Exit code: **0** = all thresholds satisfied, **99** = at least one breached. Since 2026-09-02 only
+four thresholds can breach: `slo_met`, `slo_met_tail`, `http_req_failed` and `dropped_iterations`.
+The per-class `http_req_duration{class:…}` entries are `p(99)>=0` — present so the sub-metric is
+printed, unable to fail — so read their `p(99)` values for the row but never treat them as a verdict.
+
+### Reading a discovery run (shape A)
+
+Discovery is twenty scenarios, `rps_100` … `rps_2000`, 60 s each, and every one has its own
+threshold `slo_met{scenario:rps_N}`. **The knee is the lowest `rps_N` whose threshold reads
+`true` (breached); `RATE` for shapes B and C is the step before it.** Do not compute the knee from
+elapsed time or from the cumulative `slo_met` — that cumulative threshold is only an abort so a
+broken service does not run all twenty steps, and it lags the real knee by design.
+
+```bash
+# Verified against k6 v1.4.0 output on 2026-09-02. Each metric is {passes, fails, thresholds, value},
+# so after to_entries the threshold booleans are under .value.thresholds, not .thresholds.
+jq -r '.metrics | to_entries[] | select(.key | startswith("slo_met{scenario:rps_"))
+       | "\(.key)  breached=\(.value.thresholds["rate>0.99"])  rate=\(.value.value)"' "$S" \
+  | sort -t_ -k3 -n
+```
+
+If no step breached, the ceiling is above `MAX_RATE`; raise it and re-run. If `dropped_iterations`
+breached during discovery, note which step it started at — past the knee it is expected (a step
+that breaches also starves), but a drop *before* the knee means the 100-VU cap bit first and that
+step measured the generator.
 
 ```bash
 S=/tmp/k6-<project>-<profile>.json
@@ -190,17 +214,21 @@ Verified against the installed k6 v1.4.0:
   fast and free on the first `k6 cloud run` — so the practical verification step is: submit the run
   and watch for an immediate rejection, not a pre-flight `load-zone list` call.
 
-Capture the exit code on the k6 line itself — behind a pipe you get the pipe's status. `99` means a
-threshold was breached; `0` means all passed.
+Capture the exit code on the k6 line itself — behind a pipe you get the pipe's status. `99` means
+one of the four gating thresholds was breached (`slo_met`, `slo_met_tail`, `http_req_failed`,
+`dropped_iterations`); `0` means all passed.
 
 - **The project caps virtual users, and the cap bites at upload time.** Verified 2026-09-01: project
   `high-load-test` (8474786) rejects any test asking for more than **100 VUs** with
   `(400/E2004) The Virtual User (VU) count for this test (400 VUs) exceeds the maximum allowed for
-  your project (100 VUs)`. `preAllocatedVUs` is what the check reads. This is a **generator** limit,
-  not a service limit: at 100 VUs the achievable rate is roughly `100 / mean_iteration_seconds`, so
-  it collapses exactly where the service slows down — near the knee. If k6 reports dropped
-  iterations, the generator ran out of VUs and **the run measured the generator, not the service**.
-  Check `dropped_iterations` before recording anything.
+  your project (100 VUs)`. `preAllocatedVUs` is what the check reads. Since 2026-09-02 the scripts
+  derive it as `min(100, ceil(rate × 0.125))` — 125 ms is the frozen mix's mean latency at the SLO
+  boundary — so a run that meets the SLO never starves and the cap is only reached from 800 rps up.
+  This is a **generator** limit, not a service limit: at 100 VUs the achievable rate is roughly
+  `100 / mean_iteration_seconds`, so it collapses exactly where the service slows down — near the
+  knee. `dropped_iterations` is now a **gating threshold** (`count==0`): a run that ran out of VUs
+  exits 99 and the summary shows the breach. Such a run delivered less than `RATE` and **measured
+  the generator, not the service**; record it as a failed run, never as a pass at a lower rate.
 
 - **`BASE_URL` never appears in a command line in git.** It comes from the root `.env` (this repo is
   public and the ALB has no auth). Source it, pass it through.

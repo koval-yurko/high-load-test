@@ -19,6 +19,12 @@ resource "grafana_dashboard" "attribution" {
       {
         cloudwatch_datasource_uid = var.cloudwatch_datasource_uid
         prometheus_datasource_uid = var.prometheus_datasource_uid
+        # CloudWatch dimension values. Literal ARN suffixes here broke on every
+        # recreate; the ECS and DynamoDB names are stable but come from the same
+        # variable the resources are named from, for the same reason.
+        alb_arn_suffix          = var.alb_arn_suffix
+        target_group_arn_suffix = var.target_group_arn_suffix
+        project                 = var.project
       }
     )
   )

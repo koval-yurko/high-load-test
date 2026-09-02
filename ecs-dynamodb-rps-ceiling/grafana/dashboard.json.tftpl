@@ -6,7 +6,7 @@
   ],
   "timezone": "utc",
   "schemaVersion": 39,
-  "refresh": "10s",
+  "refresh": "1m",
   "time": {
     "from": "now-1h",
     "to": "now"
@@ -135,8 +135,8 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "SuccessfulRequestLatency by operation (Average & Maximum)",
-      "description": "The DynamoDB-reported clock, split by GetItem/PutItem/Query. This is what db_wall_avg_by_route is compared against \u2014 that metric is wall-clock around the SDK await and absorbs event-loop queueing (measured 12.1x inflation with the database unchanged), so a gap between this panel and it is the queueing signal, not extra DB time. Read that gap PER ROUTE: each route is compared against the sum of only the operations it issues (/reports issues Query then PutItem), which is what the \"Queueing delay by route\" panel computes. db_ms was the k6 Trend that carried this number before the SLI moved into the service; it no longer exists. Average and Maximum both shown: Maximum surfaces tail spikes Average hides.",
+      "title": "SuccessfulRequestLatency by operation (Average, p99 & Maximum)",
+      "description": "The DynamoDB-reported clock, split by GetItem/PutItem/Query. This is what db_wall_avg_by_route is compared against \u2014 that metric is wall-clock around the SDK await and absorbs event-loop queueing (measured 12.1x inflation with the database unchanged), so a gap between this panel and it is the queueing signal, not extra DB time. Read that gap PER ROUTE: each route is compared against the sum of only the operations it issues (/reports issues Query then PutItem), which is what the \"Queueing delay by route\" panel computes. db_ms was the k6 Trend that carried this number before the SLI moved into the service; it no longer exists. Average, p99 and Maximum shown: Average hides the tail the SLO is about, Maximum is one request, p99 is the statistic to read against a class threshold.",
       "datasource": {
         "type": "cloudwatch",
         "uid": "${cloudwatch_datasource_uid}"
@@ -180,6 +180,29 @@
           "namespace": "AWS/DynamoDB",
           "metricName": "SuccessfulRequestLatency",
           "statistic": "Maximum",
+          "dimensions": {
+            "TableName": "$table_name",
+            "Operation": [
+              "GetItem",
+              "PutItem",
+              "Query"
+            ]
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/DynamoDB",
+          "metricName": "SuccessfulRequestLatency",
+          "statistic": "p99",
           "dimensions": {
             "TableName": "$table_name",
             "Operation": [
@@ -432,8 +455,8 @@
           "metricName": "CPUUtilization",
           "statistic": "Average",
           "dimensions": {
-            "ClusterName": "ecs-dynamodb-rps-ceiling",
-            "ServiceName": "ecs-dynamodb-rps-ceiling"
+            "ClusterName": "${project}",
+            "ServiceName": "${project}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -451,8 +474,8 @@
           "metricName": "CPUUtilization",
           "statistic": "Maximum",
           "dimensions": {
-            "ClusterName": "ecs-dynamodb-rps-ceiling",
-            "ServiceName": "ecs-dynamodb-rps-ceiling"
+            "ClusterName": "${project}",
+            "ServiceName": "${project}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -514,8 +537,8 @@
           "metricName": "MemoryUtilization",
           "statistic": "Average",
           "dimensions": {
-            "ClusterName": "ecs-dynamodb-rps-ceiling",
-            "ServiceName": "ecs-dynamodb-rps-ceiling"
+            "ClusterName": "${project}",
+            "ServiceName": "${project}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -533,8 +556,8 @@
           "metricName": "MemoryUtilization",
           "statistic": "Maximum",
           "dimensions": {
-            "ClusterName": "ecs-dynamodb-rps-ceiling",
-            "ServiceName": "ecs-dynamodb-rps-ceiling"
+            "ClusterName": "${project}",
+            "ServiceName": "${project}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -596,8 +619,8 @@
           "metricName": "LiveTaskCount",
           "statistic": "Average",
           "dimensions": {
-            "ClusterName": "ecs-dynamodb-rps-ceiling",
-            "ServiceName": "ecs-dynamodb-rps-ceiling"
+            "ClusterName": "${project}",
+            "ServiceName": "${project}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -671,7 +694,7 @@
           "metricName": "RequestCount",
           "statistic": "Sum",
           "dimensions": {
-            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+            "LoadBalancer": "${alb_arn_suffix}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -732,7 +755,7 @@
           "metricName": "TargetResponseTime",
           "statistic": "p95",
           "dimensions": {
-            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+            "LoadBalancer": "${alb_arn_suffix}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -750,7 +773,7 @@
           "metricName": "TargetResponseTime",
           "statistic": "Average",
           "dimensions": {
-            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+            "LoadBalancer": "${alb_arn_suffix}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -768,7 +791,7 @@
           "metricName": "TargetResponseTime",
           "statistic": "Maximum",
           "dimensions": {
-            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+            "LoadBalancer": "${alb_arn_suffix}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -830,7 +853,7 @@
           "metricName": "HTTPCode_Target_2XX_Count",
           "statistic": "Sum",
           "dimensions": {
-            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+            "LoadBalancer": "${alb_arn_suffix}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -848,7 +871,7 @@
           "metricName": "HTTPCode_Target_4XX_Count",
           "statistic": "Sum",
           "dimensions": {
-            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+            "LoadBalancer": "${alb_arn_suffix}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -866,7 +889,7 @@
           "metricName": "HTTPCode_Target_5XX_Count",
           "statistic": "Sum",
           "dimensions": {
-            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+            "LoadBalancer": "${alb_arn_suffix}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -884,7 +907,7 @@
           "metricName": "HTTPCode_ELB_4XX_Count",
           "statistic": "Sum",
           "dimensions": {
-            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+            "LoadBalancer": "${alb_arn_suffix}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -945,8 +968,8 @@
           "metricName": "HealthyHostCount",
           "statistic": "Average",
           "dimensions": {
-            "TargetGroup": "targetgroup/ecs-dynamodb-rps-ceiling/901238716f26dd35",
-            "LoadBalancer": "app/ecs-dynamodb-rps-ceiling/ac6391a947d04ee8"
+            "TargetGroup": "${target_group_arn_suffix}",
+            "LoadBalancer": "${alb_arn_suffix}"
           },
           "region": "eu-central-1",
           "period": "60",
@@ -1026,9 +1049,22 @@
             "lineWidth": 1,
             "fillOpacity": 10,
             "pointSize": 5,
-            "spanNulls": true
+            "spanNulls": true,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
           },
-          "unit": "percentunit"
+          "unit": "percentunit",
+          "min": 0.95,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.99 },
+              { "color": "green", "value": 0.999 }
+            ]
+          }
         },
         "overrides": []
       },

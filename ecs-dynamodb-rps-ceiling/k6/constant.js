@@ -20,7 +20,12 @@ export const options = {
       rate: RATE,
       timeUnit: '1s',
       duration: DURATION,
-      preAllocatedVUs: Number(__ENV.PRE_VUS || 400),
+      // VUs = rate x mean latency. At the SLO boundary the frozen mix averages
+      // 0.55*50 + 0.15*50 + 0.25*200 + 0.05*800 ms = 125 ms, so this is exactly
+      // enough for a run that meets the SLO; one that breaches it also drops
+      // iterations, which the dropped_iterations gate reports. Capped at the
+      // org's 100-VU limit (grafana/k6.tf). A fixed 400 tripped that cap.
+      preAllocatedVUs: Number(__ENV.PRE_VUS || Math.min(100, Math.ceil(RATE * 0.125))),
       gracefulStop: '10s',
     },
   },
