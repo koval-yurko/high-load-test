@@ -12,11 +12,6 @@ variable "cloudwatch_datasource_uid" {
   type        = string
 }
 
-variable "k6_project_id" {
-  description = "Grafana Cloud k6 project holding this scenario's uploaded load tests."
-  type        = string
-}
-
 # CloudWatch dimension values for the ALB panels. These used to be literal ARN
 # suffixes in dashboard.json.tftpl; a destroy + recreate gives both a new suffix
 # and every ALB panel went silently empty. The root module passes the live

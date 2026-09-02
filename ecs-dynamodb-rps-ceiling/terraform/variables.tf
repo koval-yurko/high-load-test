@@ -162,8 +162,3 @@ variable "heartbeat_rate" {
   type        = string
   default     = "rate(1 minute)"
 }
-
-variable "k6_project_id" {
-  description = "Grafana Cloud k6 project id holding this scenario's uploaded load tests. Non-secret; the token that reaches it is GRAFANA_K6_ACCESS_TOKEN in the environment."
-  type        = string
-}

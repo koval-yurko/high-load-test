@@ -187,7 +187,7 @@ operate it.
 | **Service URL** | `terraform -chdir=terraform output -raw base_url`, or `BASE_URL` in the root `.env` — **deliberately not in this repo** |
 | **Terraform Cloud** | https://app.terraform.io/app/failwin/workspaces/ecs-dynamodb-rps-ceiling |
 | **Grafana dashboard** | https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution |
-| **Grafana Cloud k6** | https://k0valchuk.grafana.net/a/k6-app/projects/8474786 — the three uploaded tests and every run result |
+| **Grafana Cloud k6** | `https://k0valchuk.grafana.net/a/k6-app/projects/<id>` — the three uploaded tests and every run result. **The id changes on every apply**; get it from `terraform -chdir=terraform output -raw k6_project_id`, which is also the source of truth for `K6_CLOUD_PROJECT_ID` in `.env`. `8474786` was the hand-made project that preceded `docs/k6-project-as-code.md`. |
 | **ECS service** | https://eu-central-1.console.aws.amazon.com/ecs/v2/clusters/ecs-dynamodb-rps-ceiling/services?region=eu-central-1 |
 | **DynamoDB table** | https://eu-central-1.console.aws.amazon.com/dynamodbv2/home?region=eu-central-1#table?name=ecs-dynamodb-rps-ceiling |
 | **CloudWatch logs** | log group `/ecs/ecs-dynamodb-rps-ceiling`, 1-day retention |
@@ -281,7 +281,8 @@ thing marking such a run as not a capacity measurement.
 starting from a partly-drained burst bucket is not comparable to one starting full. **A run performed
 without the drain must not be recorded.**
 
-Then start the run from the [k6 app](https://k0valchuk.grafana.net/a/k6-app/projects/8474786).
+Then start the run from the k6 app —
+`https://k0valchuk.grafana.net/a/k6-app/projects/$(terraform -chdir=terraform output -raw k6_project_id)`.
 When discovery finishes, open its thresholds. Each step has one, named `slo_met{scenario:rps_N}`,
 and k6 reports a threshold as **breached**, not passed — in the summary export the boolean is `true`
 when it was crossed. **The knee is the lowest `rps_N` whose threshold breached, and `RATE` for B and
@@ -321,7 +322,7 @@ All in Grafana, no CLI. Set the dashboard time range to the run's window.
 
 | question | where |
 |---|---|
-| What rate did we reach, and did the SLO hold? | the [k6 run result](https://k0valchuk.grafana.net/a/k6-app/projects/8474786) — client-side view |
+| What rate did we reach, and did the SLO hold? | the k6 run result, in the project at `output -raw k6_project_id` — client-side view |
 | Did the SLO hold, server-side? | [SLI ratio](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=19) |
 | **Was DynamoDB rejecting us?** | [throttle events](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=2) — read this first |
 | How much capacity headroom was left? | [read](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=7) and [write](https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution?viewPanel=8) capacity |
@@ -410,6 +411,15 @@ check the CloudWatch alarms page if Phase 4 was ever applied.
 **Do not delete anything the sweep finds without asking** — a survivor may belong to another project
 in this account.
 
+**The k6 project goes down with this destroy too.** As of 2026-09-02 `grafana_k6_project.this`
+is managed in `grafana/k6.tf`, so a teardown deletes the project, its uploaded tests and its run
+history — and the next `/env up` creates a **new project with a new numeric id**. Three things then
+have to be redone by hand, and nothing warns when they are not: re-upload `k6/discovery.js`,
+`k6/constant.js`, `k6/stress.js` and set `BASE_URL` / `RATE` on the settings page; reset
+`K6_CLOUD_PROJECT_ID` in the root `.env` from `terraform -chdir=terraform output -raw
+k6_project_id`; and update the `.../a/k6-app/projects/<id>` links in this file. Full procedure:
+`docs/k6-project-as-code.md`.
+
 ---
 
 ## Cost
@@ -437,6 +447,15 @@ memory — they live in `pricing.json` with the query that produced them.
 - **A UI-started run needs `BASE_URL` and `RATE` set by hand first, and nothing can automate it** —
   the k6 Cloud API is read-only and Terraform has no resource for that settings page. Missing
   `BASE_URL` fails loudly; missing `RATE` fails **silently** at 50 rps, marked only by the
-  `rate_source=default` tag.
+  `rate_source=default` tag. (This is about the *settings page* specifically — the k6 project itself
+  is a Terraform resource.)
+- **The k6 project's id is not stable, and three things must follow it.** Terraform creates the
+  project rather than importing one, so every apply produces a new id: `K6_CLOUD_PROJECT_ID` in the
+  root `.env`, the `.../a/k6-app/projects/<id>` links below, and the three uploaded scripts all have
+  to be redone by hand afterwards. `terraform -chdir=terraform output -raw k6_project_id` is the
+  source of truth; the checklist is in `docs/k6-project-as-code.md`.
+- **The old hand-made project `8474786` still exists** and is not in Terraform state. Delete it in
+  the k6 app once the first Terraform-created project is confirmed working, or two projects named
+  `high-load-test` will sit side by side.
 - **The SLO window is 7 days and cannot be anything else here.** Grafana's SLO API refuses windows
   outside 7–32 days and the free tier retains metrics for 14. Those two limits leave one usable value.

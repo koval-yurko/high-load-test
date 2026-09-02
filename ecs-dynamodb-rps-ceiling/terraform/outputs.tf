@@ -3,6 +3,11 @@ output "base_url" {
   value       = "http://${aws_lb.main.dns_name}"
 }
 
+output "k6_project_id" {
+  description = "Grafana Cloud k6 project. New id after every apply; set K6_CLOUD_PROJECT_ID from it and fix the k6-app links in README.md."
+  value       = module.grafana.k6_project_id
+}
+
 output "table_name" {
   value = aws_dynamodb_table.items.name
 }

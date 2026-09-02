@@ -120,6 +120,19 @@ provider uses to manage dashboards, alert rules, and SLOs as code.
 
 **Grafana Cloud k6** — `K6_CLOUD_TOKEN` and `K6_CLOUD_PROJECT_ID` for `k6 cloud run`.
 
+`K6_CLOUD_PROJECT_ID` is the numeric id of the k6 project the run uploads into. Find it in the URL
+of the project page in Grafana Cloud — **Performance Testing (k6) → Projects**, then read the last
+path segment of `https://<stack>.grafana.net/a/k6-app/projects/<id>`. Once a project is managed by
+Terraform it is **recreated with a new id on every apply**, so the id is also a Terraform output:
+
+```bash
+terraform -chdir=<project>/terraform output -raw k6_project_id
+```
+
+Re-set `K6_CLOUD_PROJECT_ID` after any apply that recreated the project. A stale value does not warn
+— `k6 cloud run` uploads into a project that no longer exists and fails, or worse, into the wrong
+one.
+
 **Streaming local runs to Grafana** — `K6_PROMETHEUS_RW_SERVER_URL` (ends in `/api/prom/push`),
 `K6_PROMETHEUS_RW_USERNAME` (the numeric Prometheus instance ID), and `K6_PROMETHEUS_RW_PASSWORD`
 (a Grafana Cloud access-policy token). Used as:
