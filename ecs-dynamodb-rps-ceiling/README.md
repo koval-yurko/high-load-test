@@ -187,7 +187,7 @@ operate it.
 | **Service URL** | `terraform -chdir=terraform output -raw base_url`, or `BASE_URL` in the root `.env` — **deliberately not in this repo** |
 | **Terraform Cloud** | https://app.terraform.io/app/failwin/workspaces/ecs-dynamodb-rps-ceiling |
 | **Grafana dashboard** | https://k0valchuk.grafana.net/d/agbp7d/ecs-dynamodb-rps-ceiling-e28094-attribution |
-| **Grafana Cloud k6** | `https://k0valchuk.grafana.net/a/k6-app/projects/<id>` — the three uploaded tests and every run result. **The id changes on every apply**; get it from `terraform -chdir=terraform output -raw k6_project_id`, which is also the source of truth for `K6_CLOUD_PROJECT_ID` in `.env`. `8474786` was the hand-made project that preceded `docs/k6-project-as-code.md`. |
+| **Grafana Cloud k6** | `https://k0valchuk.grafana.net/a/k6-app/projects/<id>` — the three uploaded tests and every run result. **The id changes on every apply**; get it from `terraform -chdir=terraform output -raw k6_project_id`, which is also the source of truth for `K6_CLOUD_PROJECT_ID` in `.env`. `8474786` was the hand-made project that preceded it. |
 | **ECS service** | https://eu-central-1.console.aws.amazon.com/ecs/v2/clusters/ecs-dynamodb-rps-ceiling/services?region=eu-central-1 |
 | **DynamoDB table** | https://eu-central-1.console.aws.amazon.com/dynamodbv2/home?region=eu-central-1#table?name=ecs-dynamodb-rps-ceiling |
 | **CloudWatch logs** | log group `/ecs/ecs-dynamodb-rps-ceiling`, 1-day retention |
@@ -417,8 +417,7 @@ history — and the next `/env up` creates a **new project with a new numeric id
 have to be redone by hand, and nothing warns when they are not: re-upload `k6/discovery.js`,
 `k6/constant.js`, `k6/stress.js` and set `BASE_URL` / `RATE` on the settings page; reset
 `K6_CLOUD_PROJECT_ID` in the root `.env` from `terraform -chdir=terraform output -raw
-k6_project_id`; and update the `.../a/k6-app/projects/<id>` links in this file. Full procedure:
-`docs/k6-project-as-code.md`.
+k6_project_id`; and update the `.../a/k6-app/projects/<id>` links in this file.
 
 ---
 
@@ -453,7 +452,7 @@ memory — they live in `pricing.json` with the query that produced them.
   project rather than importing one, so every apply produces a new id: `K6_CLOUD_PROJECT_ID` in the
   root `.env`, the `.../a/k6-app/projects/<id>` links below, and the three uploaded scripts all have
   to be redone by hand afterwards. `terraform -chdir=terraform output -raw k6_project_id` is the
-  source of truth; the checklist is in `docs/k6-project-as-code.md`.
+  source of truth.
 - **The old hand-made project `8474786` still exists** and is not in Terraform state. Delete it in
   the k6 app once the first Terraform-created project is confirmed working, or two projects named
   `high-load-test` will sit side by side.

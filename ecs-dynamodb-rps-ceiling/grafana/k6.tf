@@ -14,8 +14,6 @@
 # all import from k6/lib/, so managing them as code needs a bundler first. A fresh
 # project is therefore empty: re-upload the scripts and set BASE_URL / RATE on the
 # settings page, which has no provider resource at all.
-#
-# Full reasoning: docs/k6-project-as-code.md
 resource "grafana_k6_project" "this" {
   name = "high-load-test"
 }
