@@ -11,6 +11,7 @@
   each by a later spec carrying a pointer at the decision itself.
   Remaining work lives in `docs/superpowers/plans/2026-09-02-ecs-dynamodb-rps-ceiling-scale-and-measure.md`,
   which is **blocked**.
+  > Project renamed to `ecs-dynamodb-rps` on 2026-09-03; paths and names below are pre-rename. See `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md`.
 - **Plans:** `docs/superpowers/plans/2026-08-29-ecs-dynamodb-rps-ceiling.md` (complete — built the
   service, infrastructure, SLO and load profiles),
   `…/2026-09-01-ecs-dynamodb-rps-ceiling-observability-shakedown.md` (verifies the signal chain at

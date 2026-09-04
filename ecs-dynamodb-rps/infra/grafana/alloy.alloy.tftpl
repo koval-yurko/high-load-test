@@ -1,0 +1,119 @@
+// GENERATED into ALLOY_CONFIG_CONTENT by Terraform. Do not edit in the console.
+// Spec: docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md section 16
+
+// === Pipeline 1: service metrics. OTLP in, OTLP out, exponential histograms
+// === pass through unconverted and land in Mimir as native histograms.
+otelcol.receiver.otlp "app" {
+  http { endpoint = "0.0.0.0:4318" }
+  grpc { endpoint = "0.0.0.0:4317" }
+  output { metrics = [otelcol.processor.transform.classify.input] }
+}
+
+otelcol.processor.transform "classify" {
+  error_mode = "ignore"
+
+  metric_statements {
+    context = "datapoint"
+    statements = [
+${class_statements}
+      // NO traffic_source rules here. They used to live in this block, keyed on
+      // attributes["user_agent.original"] -- an attribute the service never
+      // records, so neither override could ever match and the unconditional
+      // default pinned every datapoint at "other". Worse, that default would now
+      // CLOBBER the value the service does set. The label is produced by
+      // trafficSource() in src/otel.js, where it can be bounded before it ever
+      // reaches the histogram.
+    ]
+  }
+
+  output { metrics = [otelcol.processor.batch.default.input] }
+}
+
+otelcol.processor.batch "default" {
+  output { metrics = [otelcol.exporter.otlphttp.grafana_cloud.input] }
+}
+
+otelcol.auth.basic "grafana_cloud_otlp" {
+  username = sys.env("OTLP_USERNAME")
+  password = sys.env("OTLP_PASSWORD")
+}
+
+otelcol.exporter.otlphttp "grafana_cloud" {
+  client {
+    endpoint = sys.env("OTLP_ENDPOINT")
+    auth     = otelcol.auth.basic.grafana_cloud_otlp.handler
+  }
+}
+
+// === Pipeline 2: AWS metrics, discovered by the Project tag. One collector for
+// === the cluster, so this polls once rather than once per app task.
+// CloudWatch publishes with lag, so polling only the newest 60s period returns
+// empty recent windows that look like an outage during a load test. `delay` is
+// how YACE handles that -- but Alloy v1.10.0's prometheus.exporter.cloudwatch
+// does NOT expose it, on `discovery`, on `metric`, or at the exporter root
+// (verified with `alloy validate` out of grafana/alloy:v1.10.0 itself). The lag
+// is absorbed instead by `length` being 5x `period`: each poll asks for a 300s
+// window and takes the newest datapoint CloudWatch has actually published.
+// period/length are per-METRIC attributes here, not per-discovery.
+prometheus.exporter.cloudwatch "aws" {
+  sts_region = "${region}"
+
+  discovery {
+    type        = "AWS/DynamoDB"
+    regions     = ["${region}"]
+    search_tags = { "Project" = "${project}" }
+
+    metric {
+      name       = "SuccessfulRequestLatency"
+      statistics = ["Average", "Maximum"]
+      period     = "60s"
+      length     = "300s"
+    }
+  }
+
+  // NO AWS/ApplicationELB or AWS/ECS discovery here, and removing them lost no data.
+  // Every ALB and ECS panel target already queries the CloudWatch datasource live
+  // (decision D1 in the datasource-fidelity spec) -- 14 targets covering all 9
+  // metric-statistics these two blocks used to forward, plus HealthyHostCount,
+  // LiveTaskCount and HTTPCode_Target_2XX/4XX/ELB_4XX, which they never scraped. So
+  // the forwarded copy was a strict subset that nothing queried: no panel reads
+  // aws_applicationelb_* or aws_ecs_*, and the four burn-rate rules in alerts.tf read
+  // only http_server_request_duration_seconds.
+  //
+  // GetMetricData is billed per METRIC REQUESTED, so cost tracks the metric{} count,
+  // not the block count -- the blocks only decide how many API calls carry them.
+  // Measured off AWS/Usage CallCount: 3 blocks = 3 calls/min = 198 calls/hr, flat and
+  // around the clock whether or not anyone is looking, carrying 16 metric-statistics
+  // = ~25,100 metrics/day = $0.25/day. What is left after this trim is one block
+  // carrying 2 metric-statistics: ~2,900 metrics/day, about $0.03/day.
+  //
+  // The DynamoDB block keeps exactly ONE metric, and only because
+  // SuccessfulRequestLatency/Average has something panels cannot replicate: "Queueing
+  // delay by route" and "DB wall-clock vs DynamoDB's own clock" SUBTRACT it from the
+  // service's OTLP histogram, and that join needs both series in one store. Average
+  // and Maximum are the two statistics, so this block costs 2 metric-statistics per
+  // minute.
+  //
+  // Everything else DynamoDB publishes -- ReadThrottleEvents, WriteThrottleEvents,
+  // ThrottledRequests, ConsumedRead/WriteCapacityUnits -- is read LIVE from CloudWatch
+  // by the reader that wants it: the dashboard's throttle and capacity panels, the
+  // throttle alert rule in throttles.tf, and /loadtest. A forwarded Prometheus copy of
+  // those was a second path to the same numbers with a collector task in the middle of
+  // it, queried by nothing. ALB and ECS were dropped earlier for the same reason.
+}
+
+prometheus.scrape "cloudwatch" {
+  targets         = prometheus.exporter.cloudwatch.aws.targets
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "60s"
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = sys.env("PROM_URL")
+    basic_auth {
+      username = sys.env("PROM_USERNAME")
+      password = sys.env("PROM_PASSWORD")
+    }
+  }
+}

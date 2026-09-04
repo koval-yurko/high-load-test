@@ -10,6 +10,7 @@
   proved disabled at the account level.
   **One claim in this document has since been narrowed** — the continuous error budget it builds is
   informational, not authoritative; see the pointer at §17.1.
+  > Project renamed to `ecs-dynamodb-rps` on 2026-09-03; paths and names below are pre-rename. See `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md`.
 - **Project directory:** `ecs-dynamodb-rps-ceiling/`
 - **Amended by:** `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`
   (2026-08-31), which extends this pipeline with two phase histograms and amends **§11**. S1–S12 all stand;

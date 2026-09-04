@@ -16,6 +16,8 @@
 
 ## Status — **complete**, 2026-08-31
 
+> Project renamed to `ecs-dynamodb-rps` on 2026-09-03; paths and names below are pre-rename. See `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md`.
+
 All 16 tasks executed (15 planned, plus **Task 10b** added during execution — see below). Deployed
 and verified against the live environment in `eu-central-1`, account `042945885621`.
 

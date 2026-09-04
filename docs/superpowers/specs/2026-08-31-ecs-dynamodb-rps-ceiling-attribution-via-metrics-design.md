@@ -11,6 +11,7 @@
   executed and deployed. Every decision A1–A10 shipped as written, with one addition made during
   execution: **Task 10b**, fixing a pre-existing `NaN` in the SLO query that only appears with more
   than one instance — see that plan's status header.
+  > Project renamed to `ecs-dynamodb-rps` on 2026-09-03; paths and names below are pre-rename. See `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md`.
 - **Project directory:** `ecs-dynamodb-rps-ceiling/`
 - **Amended by:** `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified-design.md`
   (2026-09-01), which **deletes the four-row attribution table in §5** after it misattributed a

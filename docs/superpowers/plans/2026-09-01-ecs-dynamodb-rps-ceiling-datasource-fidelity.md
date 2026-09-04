@@ -16,6 +16,8 @@
 
 ## Status — **complete**, 2026-09-01
 
+> Project renamed to `ecs-dynamodb-rps` on 2026-09-03; paths and names below are pre-rename. See `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md`.
+
 Executed in the worktree `.claude/worktrees/datasource-fidelity`, branch
 `worktree-datasource-fidelity`, branched from `5829d18`.
 

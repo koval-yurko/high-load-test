@@ -16,6 +16,8 @@
 
 ## Status — **complete**, 2026-09-01
 
+> Project renamed to `ecs-dynamodb-rps` on 2026-09-03; paths and names below are pre-rename. See `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md`.
+
 All seven tasks executed. Commits: Task 1 `dc9a4cb`, Task 2 `9c8a115`, Task 3 `8619039`, Task 4
 `2e4fa08`, Task 5 `1594c26`/`90af238`/`fa07dbb`, Task 6 (approval gate, no commits — one Grafana
 dashboard resource applied and verified by reading the live dashboard back), Task 7 (this

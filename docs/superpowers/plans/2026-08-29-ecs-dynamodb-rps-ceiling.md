@@ -14,6 +14,8 @@
 
 ## Status — **complete**, 2026-09-01
 
+> Project renamed to `ecs-dynamodb-rps` on 2026-09-03; paths and names below are pre-rename. See `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md`.
+
 **Tasks 1–17 were executed under this plan. Tasks 18–23 were re-homed on 2026-09-01 and are not
 executed here.** Nothing in this document remains to do.
 

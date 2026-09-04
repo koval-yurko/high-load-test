@@ -5,6 +5,7 @@
   `docs/superpowers/plans/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified.md`; see that
   plan's ledger and `.superpowers/sdd/2026-09-01-ecs-dynamodb-rps-ceiling-attribution-simplified/report.md`
   for the close-out evidence.
+  > Project renamed to `ecs-dynamodb-rps` on 2026-09-03; paths and names below are pre-rename. See `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md`.
 - **Project directory:** `ecs-dynamodb-rps-ceiling/`
 - **Amends:** `docs/superpowers/specs/2026-08-31-ecs-dynamodb-rps-ceiling-attribution-via-metrics-design.md`.
   It **deletes that document's four-row attribution table** — the one keyed on DynamoDB's

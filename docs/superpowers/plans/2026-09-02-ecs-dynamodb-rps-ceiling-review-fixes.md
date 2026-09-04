@@ -6,6 +6,7 @@
   `/loadtest` text) is edited in the main working tree on top of the owner's README rewrite and
   lands with that rewrite's commit. One owner check remains open and is recorded under the ledger:
   confirm the discovery test's Script tab in the k6 app shows the twenty `rps_N` steps.
+  > Project renamed to `ecs-dynamodb-rps` on 2026-09-03; paths and names below are pre-rename. See `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md`.
 - **Spec:** `IMPROVEMENTS.md` at the repo root, items 1–9 (tier 1). Decisions on items 1, 3, 6 and
   12 were taken by the owner on 2026-09-02 and are recorded in that file's *Open questions*
   section. Items 10–15 are out of scope here by that file's own sequencing.

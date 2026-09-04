@@ -30,6 +30,8 @@ and keeps its own SDD ledger at `.superpowers/sdd/2026-09-01-ecs-dynamodb-rps-ce
 
 ## Status — **complete**, 2026-09-01
 
+> Project renamed to `ecs-dynamodb-rps` on 2026-09-03; paths and names below are pre-rename. See `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md`.
+
 All 7 tasks executed. The goal is met: the signal chain works end to end, and the alerting path is
 proven rather than assumed — a burn alert was driven from `inactive` through `pending` to `firing`
 and back to `inactive` against real load, with every transition timed.

@@ -47,21 +47,37 @@ lambda-concurrency-limit   lambda-dynamodb            lambda-provisioned-concurr
 ```
 
 This name is also the `Project` tag value on every AWS resource and the commit scope, so it must be
-stable — renaming later orphans tagged resources from the sweep that is supposed to find them.
+stable — renaming later orphans tagged resources from the sweep that is supposed to find them (done
+once, on 2026-09-03, `ecs-dynamodb-rps-ceiling` → `ecs-dynamodb-rps`, while nothing was deployed and
+the tag therefore pointed at nothing — see
+`docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md`).
 
 ```
 <project>/            one directory per scenario, fully independent
-  terraform/          all infra for the scenario; no manual console changes
-  src/                Node.js service code (ECS: container app; Lambda: handlers)
-  k6/                 load profiles for this scenario
-  grafana/            dashboards, SLO definitions, alert rules as code
+  infra/
+    main/             ROOT MODULE: the AWS infrastructure; calls ../grafana and ../k6 as modules
+    grafana/          dashboards, SLO definitions, alert rules as code
+    k6/               tests/ holds the load profiles; a data source reads the k6 project id
+  service/            the Node.js service: src/ test/ scripts/, package.json, Dockerfile
+  heartbeat/          small side pieces managed separately from the service (ECS: the idle-load Lambda)
+  slo.yaml            SLO source of truth; generates the k6 thresholds and the Grafana rules
+  results.md          the run ledger (/loadtest appends here)
   README.md           what it provisions, how to run it, measured results
 ```
 
-Global (repo root) holds only shared credentials/config for AWS, Terraform Cloud, and Grafana Cloud.
-**Everything else is per-project.** Projects must not import each other's Terraform modules or state;
-duplication between projects is acceptable and preferred over coupling, because each must be
-creatable and destroyable in isolation.
+This layout was chosen in
+`docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md` (section 4); the working
+directory `infra/main` is what makes `../grafana`, `../k6` and `../../heartbeat` resolve inside a
+remote HCP run, so it is set on the workspace by `platform/`, not in HCL.
+
+Global (repo root) holds only shared credentials/config for AWS, Terraform Cloud, and Grafana Cloud —
+and `platform/`, the one Terraform root that is not a project: it owns the TFC project, the project
+workspaces, the shared variable set, the Grafana folder `high-load-test` and the k6 projects (the
+restructure spec, section 6). **Everything else is per-project.** Projects must not import each
+other's Terraform modules or state; duplication between projects is acceptable and preferred over
+coupling, because each must be creatable and destroyable in isolation. What `platform/` creates is
+found by a **fixed string** — the folder title `high-load-test`, the k6 project's own name — never by
+reading its state, so that rule still holds.
 
 ## Hard constraints
 
@@ -74,13 +90,14 @@ creatable and destroyable in isolation.
 - **Every resource carries a `Project = <project-dir>` tag.** The teardown sweep finds orphans with a
   single `resourcegroupstaggingapi` query; an untagged resource is invisible to it and bills forever.
   Set it via `default_tags` on the AWS provider so it cannot be forgotten per-resource.
-- **State lives in Terraform Cloud**, one workspace per project. Never commit `.tfstate` or
-  `.terraform/`.
+- **State lives in Terraform Cloud**, one workspace per project, plus the `platform` workspace that
+  owns the project and workspaces themselves (the restructure spec, section 6). Never commit
+  `.tfstate` or `.terraform/`.
 - **Secrets are global and never in a project folder.** AWS, Terraform Cloud, and Grafana Cloud
   credentials come from the environment / a gitignored root-level env file. Per-project `.tfvars`
   hold only non-secret sizing knobs (instance class, task count, load profile).
 - **SLOs are code**, not dashboard clicks — Grafana dashboards, SLO definitions, and alert rules are
-  checked in under the project's `grafana/` and applied via Terraform (Grafana provider).
+  checked in under the project's `infra/grafana/` and applied via Terraform (Grafana provider).
 
 ## Spec-driven development (superpowers)
 
@@ -254,9 +271,11 @@ syntax.
 Three skills in `.claude/skills/` automate the loop. Prefer them over ad-hoc commands — each encodes
 gotchas that cost real money or produce wrong numbers:
 
-- **`/env up|down|status <project>`** — Terraform lifecycle with an approval gate before apply/destroy
-  and a billable-resource sweep after teardown. `terraform destroy` succeeding is not evidence the
-  account is clean.
+- **`/env up|down|status <project>`** — Terraform lifecycle for `<project>/infra/main`, with an
+  approval gate before apply/destroy and a billable-resource sweep after teardown. `terraform
+  destroy` succeeding is not evidence the account is clean. The `platform/` stack is **not** part of
+  `/env up|down` — it is long-lived and brought up by hand with
+  `env -u TF_WORKSPACE terraform -chdir=platform apply`.
 - **`/loadtest <project> <profile> [--compare]`** — runs k6, parses the summary, appends a result row
   with the infra change that distinguishes the run. Encodes two verified k6 quirks (below).
 - **`/slo <project> [--check]`** — one `slo.yaml` generates both the k6 thresholds and the Grafana
@@ -281,18 +300,28 @@ unattended AWS spend — do not add them to the allowlist.
 Per project, from that project's directory:
 
 ```bash
-terraform -chdir=terraform init
-terraform -chdir=terraform plan  -var-file=<env>.tfvars
-terraform -chdir=terraform apply -var-file=<env>.tfvars
-terraform -chdir=terraform destroy -var-file=<env>.tfvars   # always, when done measuring
+terraform -chdir=infra/main init
+terraform -chdir=infra/main plan  -var-file=<env>.tfvars
+terraform -chdir=infra/main apply -var-file=<env>.tfvars
+terraform -chdir=infra/main destroy -var-file=<env>.tfvars   # always, when done measuring
 
-k6 run k6/<profile>.js                       # local run
-k6 cloud run k6/<profile>.js                 # Grafana Cloud k6 run
-k6 run -e BASE_URL=<url> -e VUS=200 k6/<profile>.js
+k6 run infra/k6/tests/<profile>.js                       # local run
+k6 cloud run infra/k6/tests/<profile>.js                 # Grafana Cloud k6 run
+k6 run -e BASE_URL=<url> -e VUS=200 infra/k6/tests/<profile>.js
 ```
 
-Node service (ECS project): `npm ci`, `npm test`, `npm start`. A single test is
-`npm test -- <pattern>` — pin the exact runner in the project README once chosen.
+The shared stack is separate and runs from the repo root, not from a project directory:
+
+```bash
+env -u TF_WORKSPACE terraform -chdir=platform plan     # also init / apply
+```
+
+`TF_WORKSPACE` is unset for it because the root `.env` exports the *project* workspace name while
+`platform/`'s `cloud` block names its own, and Terraform refuses to run when the two disagree
+(`platform/README.md`).
+
+Node service (ECS project), from `<project>/service/`: `npm ci`, `npm test`, `npm start`. A single
+test is `npm test -- <pattern>` — pin the exact runner in the project README once chosen.
 
 Verified locally: Node 22.13, npm 10.9, Terraform 1.14, AWS CLI 2.23, k6 1.4, Docker 27.4.
 

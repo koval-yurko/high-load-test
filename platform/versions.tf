@@ -1,0 +1,39 @@
+terraform {
+  required_version = "~> 1.14.0"
+
+  # The exception to "workspace comes from TF_WORKSPACE" (CLAUDE.md, .env.example):
+  # this stack must never be run against a project workspace by accident, so
+  # project and workspace are named explicitly rather than left to the shell.
+  cloud {
+    workspaces {
+      project = "high-load-test"
+      name    = "platform"
+    }
+  }
+
+  required_providers {
+    # Verified against hashicorp/tfe 0.80.0 (2026-09-03): tfe_project_variable_set,
+    # tfe_variable_set, tfe_variable (variable_set_id) and tfe_workspace_settings all
+    # exist; tfe_workspace.execution_mode is deprecated in favour of
+    # tfe_workspace_settings.execution_mode, and terraform_version still accepts a
+    # constraint string ("~> 1.14.0"), not only an exact version.
+    tfe = {
+      source  = "hashicorp/tfe"
+      version = "~> 0.80"
+    }
+    grafana = {
+      source  = "grafana/grafana"
+      version = "~> 3.0"
+    }
+  }
+}
+
+# TFE_TOKEN from the shell (.envrc aliases it from TF_TOKEN_app_terraform_io).
+provider "tfe" {
+  organization = var.tfc_organization
+}
+
+# GRAFANA_URL / GRAFANA_AUTH, plus GRAFANA_K6_ACCESS_TOKEN and GRAFANA_STACK_ID for the
+# k6 resources -- all from the shell. Local execution is the point: this stack creates
+# the credentials the remote workspaces run with, so it cannot itself run remotely.
+provider "grafana" {}

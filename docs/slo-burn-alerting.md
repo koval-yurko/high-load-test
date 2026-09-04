@@ -181,6 +181,8 @@ target is right; the idle traffic is far too sparse to judge it.
 
 ---
 
-*Where this lives in the repo: the per-project source file is `slo.yaml`; the generated alert rules
-are in each project's `grafana/` directory. The reasoning behind measuring over load runs rather
+*Where this lives in the repo: the per-project source file is `slo.yaml` at the project root; the
+generator is `service/scripts/generate-slo.js`, and its outputs are the alert rules in
+`infra/grafana/` and the k6 thresholds in `infra/k6/tests/lib/slo.js`. The reasoning behind
+measuring over load runs rather
 than continuously is in `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-slo-scope-design.md`.*

@@ -7,7 +7,7 @@ description: Run a k6 load profile against a deployed project environment, parse
 
 Usage: `/loadtest <project> <profile> [--compare]`
 
-Profiles live in `<project>/k6/<profile>.js`. Results are appended to `<project>/results.md`.
+Profiles live in `<project>/infra/k6/tests/<profile>.js`. Results are appended to `<project>/results.md`.
 
 ## The rule that makes results meaningful
 
@@ -36,7 +36,7 @@ it happens.
    reports the last command's status, not k6's). A UI run has no exit code; use `result_status`
    from the API instead.
 5. **Check `rate_source` before recording.** The B and C profiles no longer throw when `RATE` is
-   unset — they fall back to the default in `k6/lib/env.js` and tag every sample
+   unset — they fall back to the default in `infra/k6/tests/lib/env.js` and tag every sample
    `rate_source=default`. **A run tagged `default` is not a capacity measurement.** Record it only as
    a smoke test, never as a knee or a baseline.
 
@@ -99,9 +99,10 @@ one you are quoting.
 
 ## Read the server-side numbers from Grafana
 
-k6 records only what a client can observe. `service attainment` and the throttle-event readings do
-not come from the k6 summary at all — they come from the SLO query and the queries in
-`<project>/grafana/queries.json`, evaluated over the run's own window, **after** the run finishes.
+k6 records only what a client can observe. `service attainment` does not come from the k6 summary at
+all — it comes from the SLO query and the queries in `<project>/infra/grafana/queries.json`,
+evaluated over the run's own window, **after** the run finishes. (The `throttles` column is
+server-side too, but it is read straight from CloudWatch — see the next section.)
 
 `queries.json` is generated from `slo.yaml`; do not hand-write PromQL against it. `GRAFANA_AUTH` is
 **required**, not optional, for this step — it is the read-capable Grafana service-account token.
@@ -115,8 +116,8 @@ but a raw Prometheus query does not understand. Substitute the run's own window 
 ```bash
 set -a && . .env && set +a
 P="$GRAFANA_URL/api/datasources/proxy/uid/grafanacloud-prom/api/v1"
-Q=<project>/grafana/queries.json
-for k in sli_ratio read_throttle_events write_throttle_events cpu_saturation_ratio; do
+Q=<project>/infra/grafana/queries.json
+for k in sli_ratio cpu_saturation_ratio; do
   EXPR=$(jq -r --arg k "$k" '.[$k]' "$Q" | sed "s/\$__rate_interval/${RUN_WINDOW:-5m}/g")
   printf '%-24s ' "$k"
   curl -s -H "Authorization: Bearer $GRAFANA_AUTH" --get \
@@ -125,18 +126,48 @@ done
 ```
 
 Verified live against this repo's stack (2026-09-01, idle service — expect `0`/`1`, not a live-run
-number): `sli_ratio` → `"1"`, `cpu_saturation_ratio` → `"0"`, `read_throttle_events` → `"0"`,
-`write_throttle_events` → `"0"`. Each returns a **value**, not an empty result — the collector
-emits the zero rather than omitting the series, which is what makes a `> 0` test sound.
+number): `sli_ratio` → `"1"`, `cpu_saturation_ratio` → `"0"`. Each returns a **value**, not an empty
+result — the collector emits the zero rather than omitting the series.
+
+## Read the throttle counts from CloudWatch
+
+The two throttle readings no longer come from Grafana. Alloy's DynamoDB block was trimmed to
+`SuccessfulRequestLatency`, so `read_throttle_events` / `write_throttle_events` are gone from
+`queries.json` and from Prometheus — read the source instead, over the run's own window, per-60s
+`Sum`, peak of each:
+
+```bash
+TABLE=$(terraform -chdir=<project>/infra/main output -raw table_name)
+for m in ReadThrottleEvents WriteThrottleEvents; do
+  printf '%-20s ' "$m"
+  aws cloudwatch get-metric-statistics --namespace AWS/DynamoDB --metric-name "$m" \
+    --dimensions Name=TableName,Value="$TABLE" --statistics Sum --period 60 \
+    --start-time "$RUN_START" --end-time "$RUN_END" \
+    --query 'max(Datapoints[].Sum) || `0`' --output text
+done
+```
+
+`RUN_START` / `RUN_END` are the run's own timestamps in UTC ISO-8601 (e.g.
+`2026-09-04T10:00:00Z`). `aws cloudwatch get-metric-statistics` is already on the permission
+allowlist.
+
+**CloudWatch publishes these two metrics sparsely: a minute with no throttling produces no
+datapoint at all, not a zero.** So an empty `Datapoints` list means "nothing was throttled", which
+is why the JMESPath query ends in a ``|| `0` `` fallback — a missing datapoint is zero, not
+missing data. (The zeros
+that used to come back from Prometheus were the Alloy exporter filling gaps, not CloudWatch.) The
+same sparseness is why the throttle alert in `infra/grafana/throttles.tf` is two rules rather than
+one summed rule.
 
 **Nothing derives a bound resource.** The four-row attribution table this skill used to reference
 was deleted on 2026-09-01 — it named the service while DynamoDB was rejecting 5,588 reads per
 minute, because SDK retry backoff inflates every service-side signal. Record `throttles` as **`read/write`** — the peak
-per-minute value of `read_throttle_events`, a slash, then the peak per-minute value of
-`write_throttle_events`, both over the run window: e.g. `5588/0`. Two numbers, not the larger of the
+per-minute value of `ReadThrottleEvents`, a slash, then the peak per-minute value of
+`WriteThrottleEvents`, both over the run window: e.g. `5588/0`. Two numbers, not the larger of the
 two, mirroring the `RCU/WCU` column's convention — separating reads from writes is the entire reason
-these two metrics were chosen over `ThrottledRequests`. Then let whoever reads the row draw the
-conclusion from that plus the latency columns.
+these two metrics were chosen over `ThrottledRequests` (which is published only per
+`TableName`+`Operation` and reads 0 at instants during sustained throttling). Then let whoever reads
+the row draw the conclusion from that plus the latency columns.
 
 ## Recording
 
@@ -218,8 +249,11 @@ Capture the exit code on the k6 line itself — behind a pipe you get the pipe's
 one of the four gating thresholds was breached (`slo_met`, `slo_met_tail`, `http_req_failed`,
 `dropped_iterations`); `0` means all passed.
 
-- **The project caps virtual users, and the cap bites at upload time.** Verified 2026-09-01: project
-  `high-load-test` (8474786) rejects any test asking for more than **100 VUs** with
+- **The project caps virtual users, and the cap bites at upload time.** Verified 2026-09-01 against
+  the hand-made k6 project `8474786`, and the cap is an organization/subscription one rather than a
+  property of the project object — so it applies unchanged to the k6 project `platform/` now owns
+  (`ecs-dynamodb-rps`), whose own `vu_max_per_test` reads 25000. Any test asking for more than
+  **100 VUs** is rejected with
   `(400/E2004) The Virtual User (VU) count for this test (400 VUs) exceeds the maximum allowed for
   your project (100 VUs)`. `preAllocatedVUs` is what the check reads. Since 2026-09-02 the scripts
   derive it as `min(100, ceil(rate × 0.125))` — 125 ms is the frozen mix's mean latency at the SLO
@@ -236,7 +270,7 @@ one of the four gating thresholds was breached (`slo_met`, `slo_met_tail`, `http
 ```bash
 source .env
 k6 cloud run --summary-export=/tmp/k6-<project>-<profile>.json \
-  -e BASE_URL="$BASE_URL" -e RATE=<measured knee> <project>/k6/<profile>.js
+  -e BASE_URL="$BASE_URL" -e RATE=<measured knee> <project>/infra/k6/tests/<profile>.js
 echo "exit: $?"
 ```
 

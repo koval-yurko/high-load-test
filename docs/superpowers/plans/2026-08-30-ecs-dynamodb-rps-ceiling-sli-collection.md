@@ -16,6 +16,8 @@
 
 ## Status — **complete**, 2026-08-31
 
+> Project renamed to `ecs-dynamodb-rps` on 2026-09-03; paths and names below are pre-rename. See `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md`.
+
 **All 18 tasks executed.** Task 14 was folded into Task 16 by decision (its change was smaller than
 its own measurement noise); Synthetic Monitoring was abandoned for an EventBridge heartbeat after
 its tenant proved to be disabled at the account level.

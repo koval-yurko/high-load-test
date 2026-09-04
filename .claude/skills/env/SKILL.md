@@ -8,8 +8,22 @@ description: Bring a project environment up or down with Terraform, with an appr
 Usage: `/env up <project>` · `/env down <project>` · `/env status [project]`
 
 `<project>` is a top-level directory named for its scenario (e.g. `ecs-document-db`,
-`lambda-concurrency-limit`) — never a bare platform name. Terraform lives in `<project>/terraform`.
+`lambda-concurrency-limit`) — never a bare platform name. The root module lives in
+`<project>/infra/main`, and it calls `<project>/infra/grafana` and `<project>/infra/k6` as modules.
 If the directory does not exist, stop and say so — do not scaffold one here; that belongs in a plan.
+
+`platform/` is **not** a project and is not part of `/env up|down`. It is a long-lived root module
+that owns the Terraform Cloud project, the per-project workspaces, the shared variable set, the
+Grafana folder `high-load-test` and the Grafana Cloud k6 projects — the things a project workspace
+needs to exist *before* `/env up` can run. Bring it up by hand, once:
+
+```bash
+env -u TF_WORKSPACE terraform -chdir=platform apply
+```
+
+`TF_WORKSPACE` is unset for that one command because the root `.env` exports the *project*
+workspace name while `platform/`'s `cloud` block names its own workspace, and Terraform refuses to
+run when the two disagree. See `platform/README.md`.
 
 ## `up`
 
@@ -26,19 +40,19 @@ echo "account $ACTUAL confirmed"
    fail — it silently authenticates as a different account. Never skip this check, and never substitute
    remembering that you checked earlier in the session. Also confirm the Terraform Cloud workspace.
 
-2. `terraform -chdir=<project>/terraform fmt -check` then `validate`. Fix failures before continuing.
-3. `terraform -chdir=<project>/terraform plan -var-file=<env>.tfvars -out=tfplan`
+2. `terraform -chdir=<project>/infra/main fmt -check` then `validate`. Fix failures before continuing.
+3. `terraform -chdir=<project>/infra/main plan -var-file=<env>.tfvars -out=tfplan`
 4. **Summarize the plan in chat**: counts of add/change/destroy, and name every resource that costs
    money while idle — NAT gateways, RDS/DocumentDB instances, ALBs, provisioned DynamoDB capacity.
 5. **STOP. Get explicit approval.** Apply creates billable resources; per CLAUDE.md this is a hard
    gate that a running plan does not get to skip.
-6. `terraform -chdir=<project>/terraform apply tfplan`
+6. `terraform -chdir=<project>/infra/main apply tfplan`
 7. Report the outputs the load test needs (base URL, DB endpoint) and note the time the environment
    came up, so idle cost is visible later.
 
 ## `down`
 
-1. `terraform -chdir=<project>/terraform destroy -var-file=<env>.tfvars` — **stop for approval first**;
+1. `terraform -chdir=<project>/infra/main destroy -var-file=<env>.tfvars` — **stop for approval first**;
    this deletes data.
 2. **Then sweep.** `terraform destroy` reporting success is not evidence the account is clean:
    resources created outside the state, or with `prevent_destroy`/retain semantics, survive it.

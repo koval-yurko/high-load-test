@@ -10,13 +10,13 @@ Usage: `/slo <project>` (generate/refresh) · `/slo <project> --check` (report d
 Both run the project's own generator — there is no skill-level script:
 
 ```bash
-cd <project> && npm run slo:generate     # rewrite the generated outputs
-cd <project> && npm run slo:check        # exit 1 if any output has drifted
+cd <project>/service && npm run slo:generate     # rewrite the generated outputs
+cd <project>/service && npm run slo:check        # exit 1 if any output has drifted
 ```
 
 `--check` is what makes "one file, many outputs" a property rather than a promise. Run it before
 any commit that touches `slo.yaml` or a generated file. The authoritative list of what is
-generated is the `OUTPUTS` array in `<project>/scripts/generate-slo.js` — read it there rather
+generated is the `OUTPUTS` array in `<project>/service/scripts/generate-slo.js` — read it there rather
 than trusting this page, because a file absent from that array is not checked for drift no matter
 what the section headings below imply.
 
@@ -94,7 +94,7 @@ capacity:
     report: { rcu: 2.5, wcu: 1 }
 ```
 
-Generates `<project>/terraform/capacity.auto.tfvars`:
+Generates `<project>/infra/main/capacity.auto.tfvars`:
 
 ```hcl
 # GENERATED from slo.yaml by /slo. Do not edit by hand.
@@ -127,7 +127,7 @@ that scales an alert window to a fraction of a second would emit a value the Gra
 
 ## Generated output 1 — k6 thresholds
 
-Into `<project>/k6/lib/slo.js`, imported by every profile so no profile can quietly assert
+Into `<project>/infra/k6/tests/lib/slo.js`, imported by every profile so no profile can quietly assert
 something different:
 
 ```javascript
@@ -144,7 +144,7 @@ fail. State the arithmetic in a comment on every generated line, as above.
 
 ## Generated output 2 — Grafana alert rules
 
-Into `<project>/grafana/alerts.tf` as `grafana_rule_group` resources, applied by Terraform (SLOs are
+Into `<project>/infra/grafana/alerts.tf` as `grafana_rule_group` resources, applied by Terraform (SLOs are
 code — never click these into the UI).
 
 Alert on **error-budget burn rate**, not on the raw SLI. A latency alert that fires on every momentary
@@ -158,10 +158,10 @@ sustained for an hour. Write the computed number into the rule's annotation so t
 
 ## Generated output 3 — Terraform capacity variables
 
-Into `<project>/terraform/capacity.auto.tfvars`, from the `capacity:` block. Terraform loads
+Into `<project>/infra/main/capacity.auto.tfvars`, from the `capacity:` block. Terraform loads
 `*.auto.tfvars` automatically, so no `-var-file` flag changes. Note `.gitignore` covers
 `*.auto.tfvars` at the repo root — for a generated, non-secret file that is wrong; add a negation
-(`!<project>/terraform/capacity.auto.tfvars`) so the derived capacity is committed alongside the
+(`!<project>/infra/main/capacity.auto.tfvars`) so the derived capacity is committed alongside the
 `slo.yaml` it came from.
 
 ## `--check`

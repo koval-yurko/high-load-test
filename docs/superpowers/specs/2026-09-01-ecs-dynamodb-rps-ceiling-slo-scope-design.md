@@ -11,6 +11,7 @@
   k6 traffic cannot be isolated by `traffic_source`, because k6 v1.4.0 sends no `k6/`-prefixed
   User-Agent and both shakedown runs landed under `other`. That work is Task 1 Step 0 of
   `docs/superpowers/plans/2026-09-02-ecs-dynamodb-rps-ceiling-scale-and-measure.md` — see §4 here.
+  > Project renamed to `ecs-dynamodb-rps` on 2026-09-03; paths and names below are pre-rename. See `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md`.
 - **Project directory:** `ecs-dynamodb-rps-ceiling/`
 - **Amends:** `docs/superpowers/specs/2026-08-30-ecs-dynamodb-rps-ceiling-sli-collection-design.md` —
   settles **§17.1** and narrows the error-budget claim in **§1** and **§7**. It reverses nothing:
