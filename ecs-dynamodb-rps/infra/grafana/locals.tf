@@ -6,8 +6,8 @@
 # grafana_slo REQUIRES (it rejects a hardcoded range), and var.project for the
 # job name.
 locals {
-  # 99% of requests meet their own class threshold, over 7d.
-  slo_objective = 0.99
+  # 95% of requests meet their own class threshold, over 7d.
+  slo_objective = 0.95
   slo_window    = "7d"
 
   class_ratio_query = <<-PROMQL

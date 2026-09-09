@@ -341,6 +341,15 @@ than per endpoint, and recommends multiple thresholds over the same population.
 
 ### The objective
 
+> **⚠ The objectives below are now `95%` / `99%`, not `99%` / `99.9%`** (R1 and R2 of
+> `docs/superpowers/specs/2026-09-09-ecs-dynamodb-rps-slo-relaxation-design.md`, relaxed
+> 2026-09-09). At 99% the error budget was too small to observe a burn in any regime: the idle
+> heartbeat alone spent 166% of the 7-day budget before a run started. **The class thresholds
+> below did not change** — 50 / 200 / 800 ms stand, and everything this section says about *why*
+> a class-ratio SLI was chosen over a percentile is untouched. The tail moved with the primary on
+> purpose: at 95% the primary's fast-burn rule pages only above a 72% miss rate, and a 99% tail
+> puts its own fast burn back at 14.4%, where the primary's used to be.
+
 ```
 good  = latency < the request's class threshold  AND  not a 5xx
 total = all valid requests

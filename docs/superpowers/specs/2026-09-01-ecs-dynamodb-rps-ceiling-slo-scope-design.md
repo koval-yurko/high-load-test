@@ -69,6 +69,18 @@ SLI by 1.7 percentage points.
 | **P4** | **The cold-socket tail is recorded as a known service defect, not fixed now.** | An explicit keep-alive agent on the DynamoDB client is the honest fix, and first-request-after-quiet is a real user experience. But it changes `src/`, needs an image rebuild and redeploy, and moves a number that no measurement in this project depends on — every run that matters is warm. Deferred, not dismissed: see §5. |
 | **P5** | **The burn-rate alerts stay armed and stay meaningful.** | They fire on *rate of budget spend over 14m/84m windows*, not on the 7-day total. The shakedown drove them `inactive → pending → firing → inactive` against real load with the same configuration. A permanently-depressed 7-day figure does not degrade them. |
 
+> **⚠ P5 still holds, but not for the same rule** (R1/R2 of
+> `docs/superpowers/specs/2026-09-09-ecs-dynamodb-rps-slo-relaxation-design.md`, 2026-09-09). The
+> primary objective was relaxed 99% → 95%, and a burn threshold is `multiplier × (1 − objective)`,
+> so the **latency-primary** fast-burn rule now pages above a 72% miss rate rather than 14.4% — a
+> much later page. The tail objective went 99.9% → 99% in the same change specifically to carry
+> that sensitivity: the **latency-tail** fast-burn rule now sits at 14.4%, exactly where the
+> primary rule sat when this decision was written. All six burn rules remain firable, and a test
+> now enforces the 93.06% floor below which they would not be. The windows are unchanged.
+>
+> §6 of this document is **not** amended: raising the class thresholds was rejected here and is
+> rejected again there (R3), on the same grounds plus the k6 VU-sizing cost.
+
 ## 4. What this makes true, that was not before
 
 - **"The SLO is in breach" is no longer a statement about the service.** Anyone reading the 7-day

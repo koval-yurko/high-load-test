@@ -2,11 +2,18 @@
 export const CLASS_THRESHOLD_MS = { fast: 50, standard: 200, heavy: 800 };
 export const TAIL_MULTIPLIER = 3;
 
+// The primary objective as a bare 0..1 rate, exported so a profile that needs it
+// OUTSIDE the thresholds object below does not retype it. discovery.js does: it
+// builds one threshold per step, plus an abortOnFail stop, and both were typed as
+// literal 'rate>0.99' until 2026-09-09 -- so the discovery run kept measuring the
+// knee against 99% while slo.yaml said something else, silently and for free.
+export const SLO_MET_RATE = 0.95;
+
 export const thresholds = {
-  // PRIMARY gate: >=99.0% of requests meet their own class threshold.
-  slo_met: ['rate>0.99'],
-  // TAIL: >=99.9% meet 3x their class threshold.
-  slo_met_tail: ['rate>0.999'],
+  // PRIMARY gate: >=95.0% of requests meet their own class threshold.
+  slo_met: ['rate>0.95'],
+  // TAIL: >=99.0% meet 3x their class threshold.
+  slo_met_tail: ['rate>0.99'],
   // Availability 99.9%. k6's rate metric counts FAILURES, so the objective inverts:
   // 99.9% success  ->  failure rate < 0.001.
   http_req_failed: ['rate<0.001'],

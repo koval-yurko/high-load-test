@@ -114,6 +114,13 @@ export function renderK6(doc) {
 export const CLASS_THRESHOLD_MS = { ${map} };
 export const TAIL_MULTIPLIER = ${slo.tail_multiplier};
 
+// The primary objective as a bare 0..1 rate, exported so a profile that needs it
+// OUTSIDE the thresholds object below does not retype it. discovery.js does: it
+// builds one threshold per step, plus an abortOnFail stop, and both were typed as
+// literal 'rate>0.99' until 2026-09-09 -- so the discovery run kept measuring the
+// knee against 99% while slo.yaml said something else, silently and for free.
+export const SLO_MET_RATE = ${rate(slo.objective)};
+
 export const thresholds = {
   // PRIMARY gate: >=${slo.objective.toFixed(1)}% of requests meet their own class threshold.
   slo_met: ['rate>${rate(slo.objective)}'],

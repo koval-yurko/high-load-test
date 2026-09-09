@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { matchRoute } from '../src/handlers.js';
 import { burnWindows, loadSlo, renderCapacityTfvars, renderClassMap, renderK6, renderAlerts, renderQueries } from '../scripts/generate-slo.js';
-import { ratioExpr, renderLocals } from '../scripts/generate-slo.js';
+import { ratioExpr, renderLocals, classRatio, rate } from '../scripts/generate-slo.js';
 
 const HERE = new URL('../../', import.meta.url).pathname;
 
@@ -74,6 +74,35 @@ test('every generated burn duration is a duration the grafana provider accepts',
   for (const burn of Object.values(model.burn)) {
     assert.match(burn.window, valid);
     assert.match(burn.forDuration, valid);
+  }
+});
+
+test('every objective is high enough for its burn rules to be able to fire', () => {
+  // A burn threshold is multiplier x (1 - objective) compared against a MISS
+  // RATE, which cannot exceed 1. Push an objective low enough and the threshold
+  // goes over 100%: the rule stops being strict, it becomes unfirable, and it
+  // renders green forever while the alert list still shows nine healthy rules.
+  //
+  // At 14.4x the floor is 93.06%. This is the whole reason the 2026-09-09
+  // relaxation stopped at 95% instead of the 85% originally asked for -- at 85%
+  // the latency-primary page threshold is a 216% miss rate.
+  const model = loadSlo(`${HERE}slo.yaml`);
+  const slo = classRatio(model);
+  const objectives = [
+    ['latency primary', slo.objective],
+    ['latency tail', slo.tail_objective],
+    ...model.slos.filter((s) => s.sli === 'success_rate').map((s) => [s.name, s.objective]),
+  ];
+  for (const [name, objective] of objectives) {
+    for (const [kind, burn] of Object.entries(model.burn)) {
+      const threshold = burn.multiplier * ((100 - objective) / 100);
+      assert.ok(
+        threshold < 1,
+        `${name} at ${objective}% makes the ${kind}-burn rule unfirable: it needs a ` +
+        `${(threshold * 100).toFixed(1)}% miss rate. Floor for ${burn.multiplier}x is ` +
+        `${(100 - 100 / burn.multiplier).toFixed(2)}%.`,
+      );
+    }
   }
 });
 
@@ -444,15 +473,20 @@ test('grafana/locals.tf is generated, so the SLO objective cannot drift from slo
 });
 
 test('the generated locals carry slo.yaml\'s objective and window verbatim', () => {
+  // Derived from slo.yaml, not pinned to a literal. Pinning 0.99 here made this
+  // test assert "the objective is 99%" rather than "locals restates whatever
+  // slo.yaml says" -- so it failed on the 2026-09-09 relaxation to 95% even
+  // though the property it names held perfectly.
   const doc = loadSlo(`${HERE}slo.yaml`);
   const out = renderLocals(doc);
-  assert.match(out, /slo_objective = 0\.99\n/);
-  assert.match(out, /slo_window    = "7d"\n/);
+  const objective = classRatio(doc).objective;
+  assert.match(out, new RegExp(`slo_objective = ${rate(objective)}\n`));
+  assert.match(out, new RegExp(`slo_window    = "${doc.window}"\n`));
   // And slo.tf must READ them rather than restate them.
   const sloTf = readFileSync(`${HERE}infra/grafana/slo.tf`, 'utf8');
   assert.match(sloTf, /value  = local\.slo_objective/);
   assert.match(sloTf, /window = local\.slo_window/);
-  assert.doesNotMatch(sloTf, /value  = 0\.99/);
+  assert.doesNotMatch(sloTf, /value  = 0\.\d+/);
 });
 
 test('the SLO query is the same ratio the burn rules read', () => {

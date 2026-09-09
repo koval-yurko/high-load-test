@@ -70,8 +70,13 @@ broken service does not run all twenty steps, and it lags the real knee by desig
 ```bash
 # Verified against k6 v1.4.0 output on 2026-09-02. Each metric is {passes, fails, thresholds, value},
 # so after to_entries the threshold booleans are under .value.thresholds, not .thresholds.
+#
+# Read the threshold by POSITION, not by name. The key is the threshold's own source text --
+# "rate>0.95" today, "rate>0.99" before the 2026-09-09 relaxation -- so a literal ["rate>0.99"]
+# lookup returns null for every step the moment slo.yaml's objective moves, and null prints as
+# "breached=null" rather than failing. Each per-step metric carries exactly one threshold.
 jq -r '.metrics | to_entries[] | select(.key | startswith("slo_met{scenario:rps_"))
-       | "\(.key)  breached=\(.value.thresholds["rate>0.99"])  rate=\(.value.value)"' "$S" \
+       | "\(.key)  breached=\(.value.thresholds | to_entries | .[0].value)  rate=\(.value.value)"' "$S" \
   | sort -t_ -k3 -n
 ```
 

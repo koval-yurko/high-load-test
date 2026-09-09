@@ -8,7 +8,7 @@ service: ecs-dynamodb-rps
 # load run's own window, as results.md records it.
 #
 # Why: between runs the only traffic is a 1/min heartbeat -- ~60 fast-class
-# requests an hour. A 99% objective over that population permits 0.6 misses per
+# requests an hour. A 99% objective over that population permitted 0.6 misses per
 # hour, and ~3.3% of idle fast requests (about 2/hour) exceed 50 ms because the
 # DynamoDB socket gets reaped and pays a fresh TLS handshake. Measured: the fast
 # class meets 50 ms 96.67% of the time at idle and 99.43% under 60 rps, p99
@@ -17,6 +17,12 @@ service: ecs-dynamodb-rps
 #
 # NOTHING IS FILTERED HERE. The population is a query-time selector (spec S15),
 # so this decision costs a comment, not a deploy -- and stays reversible.
+#
+# THE WINDOW IS PINNED AT 7d and is not a lever. Grafana's SLO API refuses any
+# window outside 7-32 days, and Grafana Cloud Free retains 14, so 7d..14d is the
+# whole legal range. A SHORTER window would burn the budget FASTER, not slower:
+# the budget is (1 - objective) x requests in the window, so shrinking the window
+# shrinks the budget with it. Do not reach for this to slow a burn down.
 window: 7d
 
 # endpoint name -> route TEMPLATE as handlers.js matches it. The collector keys
@@ -36,8 +42,28 @@ slos:
     # requires a 2xx before it looks at the duration. A 4xx is NOT a miss: a
     # client error is not charged to the service. Decided 2026-09-02; the
     # selector lives in scripts/generate-slo.js (GOOD) so it cannot drift.
-    objective: 99.0
-    tail_objective: 99.9
+    #
+    # 95.0 / 99.0, relaxed from 99.0 / 99.9 on 2026-09-09 -- see
+    # docs/superpowers/specs/2026-09-09-ecs-dynamodb-rps-slo-relaxation-design.md
+    #
+    # The budget is five times larger, so a run's burn is legible instead of
+    # instantaneous: idle spends 33% of the 7-day budget instead of 166%, and a
+    # clean constant run at capacity 13% instead of 67%. The CLASS THRESHOLDS are
+    # deliberately NOT relaxed -- they are achievable (fast p99 15.38 ms warm
+    # against 50 ms) and they are what the k6 VU sizing is derived from.
+    #
+    # THE TWO NUMBERS MOVE TOGETHER, and the tail is why. Burn thresholds are
+    # multiplier x (1 - objective), so at 95% the primary rule pages only above a
+    # 72% miss rate -- a very late page. Dropping the tail to 99.0 puts its fast
+    # burn at 14.4% and its slow burn at 6%, exactly where the primary rule sat
+    # before: the early warning MOVES to the tail rule rather than being lost.
+    # Lower the primary again without the tail and that warning goes with it.
+    #
+    # 93.06% IS THE FLOOR for the primary. Below it 14.4 x (1 - objective) exceeds
+    # 1, and the fast-burn rule asks for a miss rate over 100% -- a page that
+    # renders green forever. 85% was considered and rejected for exactly this.
+    objective: 95.0
+    tail_objective: 99.0
     tail_multiplier: 3
     classes:
       fast:     { threshold_ms: 50,  endpoints: [getItem, putItem] }

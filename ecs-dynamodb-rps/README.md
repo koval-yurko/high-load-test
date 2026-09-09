@@ -70,15 +70,25 @@ class threshold — fast < 50 ms, standard < 200 ms, heavy < 800 ms.
 - **The continuous line is informational.** Between runs the only traffic is a 1/min heartbeat, so
   one slow request moves the hourly figure by a point. **Authoritative attainment is run-scoped.**
 
-**Good during a run:** above 99%. **Good at idle:** 98–99%, and not a defect worth chasing — ~3% of
+**Good during a run:** above 95%. **Good at idle:** 98–99%, and not a defect worth chasing — ~3% of
 idle requests pay a fresh TLS handshake to DynamoDB after the connection is reaped, which cannot
 happen under sustained load. (Measured 2026-09-01, fast class: p95 31.9 ms / 96.67% idle against p95
 4.8 ms / 99.43% at 60 rps.)
 
-**Error budget:** [SLO app][slo] → **ecs-dynamodb-rps latency classes**. At 99%, up to 1% of requests
+**Error budget:** [SLO app][slo] → **ecs-dynamodb-rps latency classes**. At 95%, up to 5% of requests
 in the window may miss. The window is **7 days**, forced — Grafana's SLO API accepts 7–32 days and
 the free tier retains 14. Do not read a depressed 7-day figure as an incident; the burn-rate alerts
 below are what is worth acting on.
+
+**Why 95% and not 99%** (relaxed 2026-09-09, with the tail from 99.9% to 99% —
+`docs/superpowers/specs/2026-09-09-ecs-dynamodb-rps-slo-relaxation-design.md`): at 99% the budget was
+too small to watch anything burn. The idle heartbeat alone — 40,320 requests over 7 days, ~3.3% of
+the fast half missing on cold sockets — spent **166%** of the week's budget with no load running, and
+a clean constant run at capacity spent another 67%. Five times the budget puts those at **33%** and
+**13%**, so a run's burn is legible rather than instantaneous. The class thresholds did **not** move:
+they are achievable and they are what the k6 VU sizing is derived from. **The floor for the primary
+objective is 93.06%** — below it the 14.4× fast-burn rule needs a miss rate over 100% and can never
+fire. A test enforces that (`service/test/generate-slo.test.js`).
 
 ## 3. What is the bottleneck?
 
@@ -119,8 +129,15 @@ no traffic in the last 60 s — only traffic fixes it, not a wider time range.
 | **SLI absent** | no SLI sample for 10 min | the *measurement* stopped; nothing else here can be trusted |
 | **DynamoDB read / write throttling** | `Read`/`WriteThrottleEvents > 0` for 2m | the database, not the service |
 
-The three objectives are latency primary (99% meet their class threshold), latency tail (99.9% meet
-3×), and availability (99.9% not 5xx).
+The three objectives are latency primary (95% meet their class threshold), latency tail (99% meet
+3×), and availability (99.9% not 5xx). Their fast/slow burn thresholds are 72%/30%, 14.4%/6% and
+1.44%/0.6% respectively — each rule's own `computation` annotation shows the arithmetic.
+
+**The tail rule is the early warning, not the primary one.** A threshold is
+`multiplier × (1 − objective)`, so the primary rule at 95% pages only above a 72% miss rate, which is
+a service that is essentially down. The tail objective at 99% puts its fast burn at 14.4% — exactly
+where the primary rule sat before 2026-09-09. If you lower the primary again, lower the tail with it
+or that warning disappears.
 
 **Why SLI-absent exists:** every burn rule treats "no data" as OK — correctly, since no traffic is
 not a burn — so a dead heartbeat or a stopped collector leaves all six silent and the dashboard flat.
@@ -298,7 +315,7 @@ echo "exit=$?"                     # 0 = the gates held, 99 = one breached
 ```
 
 Capture that exit code on the k6 line itself — behind a pipe you get the pipe's status. Four
-thresholds decide it: `slo_met` (99% meet their class threshold), `slo_met_tail` (99.9% meet 3×),
+thresholds decide it: `slo_met` (95% meet their class threshold), `slo_met_tail` (99% meet 3×),
 `http_req_failed` (< 0.1%), and `dropped_iterations` (zero — a run that ran out of VUs delivered less
 than `RATE`). Per-class p99 lines are reported only. All runs go from Frankfurt, so network
 round-trip is not charged against the latency budget.

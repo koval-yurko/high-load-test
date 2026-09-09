@@ -92,7 +92,7 @@ resource "grafana_rule_group" "latency_classes_primary_fastburn" {
         refId      = "C"
         type       = "threshold"
         expression = "B"
-        conditions = [{ evaluator = { type = "gt", params = [0.144] } }]
+        conditions = [{ evaluator = { type = "gt", params = [0.72] } }]
       })
     }
 
@@ -116,8 +116,8 @@ resource "grafana_rule_group" "latency_classes_primary_fastburn" {
     // REFERENCE, not a string -- hardcoding the uid would silently point at a
     // dashboard that no longer exists after a recreate.
     annotations = {
-      summary          = "latency-classes primary (99% objective) burning error budget ~14.4x sustainable over 14m."
-      computation      = "window 7d; sustainable miss rate = 1 - 0.99 = 1.000%; fast-burn threshold = 14.4 * 1.000% = 14.400%; alert window 14m = 2% of budget"
+      summary          = "latency-classes primary (95% objective) burning error budget ~14.4x sustainable over 14m."
+      computation      = "window 7d; sustainable miss rate = 1 - 0.95 = 5.000%; fast-burn threshold = 14.4 * 5.000% = 72.000%; alert window 14m = 2% of budget"
       runbook_url      = "https://github.com/koval-yurko/high-load-test/blob/master/ecs-dynamodb-rps/README.md#6-is-it-about-to-break"
       __dashboardUid__ = grafana_dashboard.attribution.uid
       __panelId__      = "19"
@@ -209,7 +209,7 @@ resource "grafana_rule_group" "latency_classes_tail_fastburn" {
         refId      = "C"
         type       = "threshold"
         expression = "B"
-        conditions = [{ evaluator = { type = "gt", params = [0.0144] } }]
+        conditions = [{ evaluator = { type = "gt", params = [0.144] } }]
       })
     }
 
@@ -233,8 +233,8 @@ resource "grafana_rule_group" "latency_classes_tail_fastburn" {
     // REFERENCE, not a string -- hardcoding the uid would silently point at a
     // dashboard that no longer exists after a recreate.
     annotations = {
-      summary          = "latency-classes tail (99.9% objective) burning error budget ~14.4x sustainable over 14m."
-      computation      = "window 7d; sustainable miss rate = 1 - 0.9990000000000001 = 0.100%; fast-burn threshold = 14.4 * 0.100% = 1.440%; alert window 14m = 2% of budget"
+      summary          = "latency-classes tail (99% objective) burning error budget ~14.4x sustainable over 14m."
+      computation      = "window 7d; sustainable miss rate = 1 - 0.99 = 1.000%; fast-burn threshold = 14.4 * 1.000% = 14.400%; alert window 14m = 2% of budget"
       runbook_url      = "https://github.com/koval-yurko/high-load-test/blob/master/ecs-dynamodb-rps/README.md#6-is-it-about-to-break"
       __dashboardUid__ = grafana_dashboard.attribution.uid
       __panelId__      = "19"
@@ -437,7 +437,7 @@ resource "grafana_rule_group" "latency_classes_primary_slowburn" {
         refId      = "C"
         type       = "threshold"
         expression = "B"
-        conditions = [{ evaluator = { type = "gt", params = [0.06] } }]
+        conditions = [{ evaluator = { type = "gt", params = [0.3] } }]
       })
     }
 
@@ -461,8 +461,8 @@ resource "grafana_rule_group" "latency_classes_primary_slowburn" {
     // REFERENCE, not a string -- hardcoding the uid would silently point at a
     // dashboard that no longer exists after a recreate.
     annotations = {
-      summary          = "latency-classes primary (99% objective) burning error budget ~6x sustainable over 84m."
-      computation      = "window 7d; sustainable miss rate = 1 - 0.99 = 1.000%; slow-burn threshold = 6 * 1.000% = 6.000%; alert window 84m = 5% of budget"
+      summary          = "latency-classes primary (95% objective) burning error budget ~6x sustainable over 84m."
+      computation      = "window 7d; sustainable miss rate = 1 - 0.95 = 5.000%; slow-burn threshold = 6 * 5.000% = 30.000%; alert window 84m = 5% of budget"
       runbook_url      = "https://github.com/koval-yurko/high-load-test/blob/master/ecs-dynamodb-rps/README.md#6-is-it-about-to-break"
       __dashboardUid__ = grafana_dashboard.attribution.uid
       __panelId__      = "19"
@@ -554,7 +554,7 @@ resource "grafana_rule_group" "latency_classes_tail_slowburn" {
         refId      = "C"
         type       = "threshold"
         expression = "B"
-        conditions = [{ evaluator = { type = "gt", params = [0.006] } }]
+        conditions = [{ evaluator = { type = "gt", params = [0.06] } }]
       })
     }
 
@@ -578,8 +578,8 @@ resource "grafana_rule_group" "latency_classes_tail_slowburn" {
     // REFERENCE, not a string -- hardcoding the uid would silently point at a
     // dashboard that no longer exists after a recreate.
     annotations = {
-      summary          = "latency-classes tail (99.9% objective) burning error budget ~6x sustainable over 84m."
-      computation      = "window 7d; sustainable miss rate = 1 - 0.9990000000000001 = 0.100%; slow-burn threshold = 6 * 0.100% = 0.600%; alert window 84m = 5% of budget"
+      summary          = "latency-classes tail (99% objective) burning error budget ~6x sustainable over 84m."
+      computation      = "window 7d; sustainable miss rate = 1 - 0.99 = 1.000%; slow-burn threshold = 6 * 1.000% = 6.000%; alert window 84m = 5% of budget"
       runbook_url      = "https://github.com/koval-yurko/high-load-test/blob/master/ecs-dynamodb-rps/README.md#6-is-it-about-to-break"
       __dashboardUid__ = grafana_dashboard.attribution.uid
       __panelId__      = "19"

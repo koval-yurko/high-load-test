@@ -1,4 +1,4 @@
-import { thresholds as base } from './lib/slo.js';
+import { thresholds as base, SLO_MET_RATE } from './lib/slo.js';
 import { doRequest } from './lib/request.js';
 import { BASE_URL, USER_AGENT } from './lib/env.js';
 
@@ -8,10 +8,16 @@ export const STEP_RPS     = Number(__ENV.STEP_RPS     || 100);
 export const STEP_SECONDS = Number(__ENV.STEP_SECONDS || 60);
 
 // Steps, not a ramp. k6 evaluates a rate threshold over EVERY sample since the
-// test began, so on a continuous ramp the cumulative slo_met crosses 0.99 long
-// after the real knee -- ten good minutes dilute the misses -- and the old
-// "rate at abort time" formula overstated capacity by however long that took.
-// One scenario per step gives each rate its own population and its own verdict.
+// test began, so on a continuous ramp the cumulative slo_met crosses the
+// objective long after the real knee -- ten good minutes dilute the misses --
+// and the old "rate at abort time" formula overstated capacity by however long
+// that took. One scenario per step gives each rate its own population and its
+// own verdict.
+//
+// Every rate below comes from SLO_MET_RATE, which slo.yaml generates. It was
+// typed here as a literal 0.99 until 2026-09-09, which meant this profile kept
+// measuring the knee against 99% no matter what the SLO said -- the one drift
+// the generator existed to prevent, in the one file it did not write.
 //
 // Reading the result: in the summary export a threshold's boolean is BREACHED
 // (true = crossed). The knee is the lowest rps_N whose slo_met{scenario:rps_N}
@@ -24,7 +30,7 @@ const thresholds = {
   // The cumulative gate is kept only as a STOP, so a clearly broken service does
   // not run all twenty steps. It is not the measurement; the per-step
   // thresholds below are.
-  slo_met: [{ threshold: 'rate>0.99', abortOnFail: true, delayAbortEval: '60s' }],
+  slo_met: [{ threshold: `rate>${SLO_MET_RATE}`, abortOnFail: true, delayAbortEval: '60s' }],
 };
 
 let i = 0;
@@ -44,7 +50,7 @@ for (let rate = START_RATE; rate <= MAX_RATE; rate += STEP_RPS, i++) {
     preAllocatedVUs: Math.min(100, Math.ceil(rate * 0.125)),
     gracefulStop: '5s',
   };
-  thresholds[`slo_met{scenario:${name}}`] = ['rate>0.99'];
+  thresholds[`slo_met{scenario:${name}}`] = [`rate>${SLO_MET_RATE}`];
 }
 
 export const options = {

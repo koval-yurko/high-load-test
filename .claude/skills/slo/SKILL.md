@@ -156,6 +156,20 @@ p95 spike gets muted within a week and then protects nothing. Two windows is the
 For a 99.5% objective the sustainable error rate is 0.5%, so fast burn triggers at roughly 7.2% errors
 sustained for an hour. Write the computed number into the rule's annotation so the reader can check it.
 
+**A low objective silently disarms the alert.** The threshold is `multiplier × (1 − objective)`
+compared against a miss rate, which cannot exceed 1 — so once `14.4 × (1 − objective)` passes 100%
+the fast-burn rule is asking for something impossible and renders green forever, while the alert list
+still shows a healthy-looking rule. **The floor is 93.06% for a 14.4× multiplier and 83.33% for 6×.**
+This is why `ecs-dynamodb-rps` relaxed to 95% in 2026-09-09 rather than the 85% originally proposed
+(`docs/superpowers/specs/2026-09-09-ecs-dynamodb-rps-slo-relaxation-design.md`). A test in that
+project's `service/test/generate-slo.test.js` asserts it for every objective in the file; copy it
+into any project that lowers an objective.
+
+**Lower the tail objective alongside the primary.** A relaxed primary makes its own burn rule a very
+late page (72% miss rate at a 95% objective). The tail objective, judged at `tail_multiplier ×` the
+threshold, is where the early warning should then live — at 99% its fast burn sits at 14.4%, which is
+where a 99% primary's did. Moving one without the other loses the warning entirely.
+
 ## Generated output 3 — Terraform capacity variables
 
 Into `<project>/infra/main/capacity.auto.tfvars`, from the `capacity:` block. Terraform loads
