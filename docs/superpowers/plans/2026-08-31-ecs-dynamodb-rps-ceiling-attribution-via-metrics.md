@@ -178,6 +178,9 @@ The environment is up and the heartbeat keeps it warm. Ten samples is enough —
 
 ```bash
 B="$BASE_URL"   # from the root .env; never hard-code the ALB hostname in git
+                # 2026-09-10: BASE_URL was REMOVED from .env (per-project value in a global
+                # file, and the copy went stale across an ALB replacement). Today:
+                # B=$(terraform -chdir=ecs-dynamodb-rps/infra/main output -json | jq -r .base_url.value)
 for i in $(seq 1 10); do
   curl -s -D- -o /dev/null -m 15 -H 'content-type: application/json' \
     -d '{"pk":"feed-07"}' "$B/reports" | grep -i '^server-timing:'
@@ -1048,6 +1051,9 @@ Expected: `running == desired == 1`.
 
 ```bash
 B="$BASE_URL"   # from the root .env; never hard-code the ALB hostname in git
+                # 2026-09-10: BASE_URL was REMOVED from .env (per-project value in a global
+                # file, and the copy went stale across an ALB replacement). Today:
+                # B=$(terraform -chdir=ecs-dynamodb-rps/infra/main output -json | jq -r .base_url.value)
 curl -s -o /dev/null -w '%{http_code}\n' "$B/stats"      # expect 404
 curl -s -o /dev/null -w '%{http_code}\n' "$B/healthz"    # expect 200
 curl -s -D- -o /dev/null "$B/feeds/feed-00" | grep -ci '^server-timing:'  # expect 0

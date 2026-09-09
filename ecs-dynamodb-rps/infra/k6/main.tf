@@ -19,16 +19,17 @@
 # `k6 cloud run` would upload into nothing. The fix when it fires is to apply the
 # platform stack first:
 #
-#   env -u TF_WORKSPACE terraform -chdir=platform apply
+#   terraform -chdir=platform apply
 #
 # one() also errors if more than one project carries this name, which is the other
 # thing worth failing on.
 #
-# The three load profiles in tests/ are uploaded to the project BY HAND (the
-# provider's grafana_k6_load_test takes a single script string, and all three
-# import from tests/lib/, so managing them as code needs a bundler first). BASE_URL
-# and RATE are set once on the k6 settings page, which has no provider resource at
-# all -- once, not once per apply, because the id no longer changes.
+# The three load profiles in tests/ are NOT managed here (grafana_k6_load_test takes
+# a single script string, and all three import from tests/lib/, so managing them as
+# code needs a bundler first). They are uploaded by ../../scripts/upload-k6.sh,
+# which also bakes BASE_URL and RATE into each archive with -e -- the k6 app's own
+# settings page has no provider resource and no API at all, so that page is a
+# fallback that must merely not contradict the upload.
 #
 # Auth: GRAFANA_K6_ACCESS_TOKEN and GRAFANA_STACK_ID, both delivered by the
 # workspace variable set platform/ manages (remote execution means a local .env

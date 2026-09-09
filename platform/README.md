@@ -1,75 +1,65 @@
 # `platform/`
 
-The one Terraform root in this repo that is not a project. It owns the Terraform Cloud
-plumbing every project workspace depends on, plus the Grafana Cloud resources shared across
-projects:
+The one Terraform root in this repo that is not a project. It owns the Terraform Cloud plumbing
+every project workspace depends on, plus the Grafana Cloud resources shared across projects:
 
-- **`tfe_project.this`** — the `high-load-test` Terraform Cloud project.
-- **`tfe_workspace.project` / `tfe_workspace_settings.project`** — one workspace per repo
-  project directory (`local.projects` in `tfc.tf`), remote execution, working directory,
-  pinned `terraform_version`, `auto_apply = false`.
-- **`tfe_variable_set.shared`** — the AWS keys, region, account id, and the Grafana /
-  Grafana Cloud k6 / OTLP / Prometheus credentials every project workspace needs, attached to
-  the TFC project so every future workspace inherits them. Values come from the root `.env`
-  via `TF_VAR_*`; **this variable set is the only copy in HCP**, `.env` the only copy on disk.
-- **`grafana_folder.root`** — the shared parent folder (fixed uid `high-load-test`) that
-  every project nests its own subfolder under.
-- **`grafana_k6_project.project` / `grafana_k6_project_limits.project`** — one Grafana Cloud
-  k6 project per repo project, with its upload limits. Living here instead of in the project's
-  own state is what makes the k6 project id (and its run history) **survive `/env down`**.
+| resource | what it is |
+|---|---|
+| `tfe_project.this` | the `high-load-test` Terraform Cloud project |
+| `tfe_workspace.project` + `_settings` | one workspace per repo project (`local.projects` in `tfc.tf`) — remote execution, working directory, pinned `terraform_version`, `auto_apply = false` |
+| `tfe_variable_set.shared` | every credential a project workspace needs, attached to the TFC project so future workspaces inherit it. Fed from the root `.env` via `TF_VAR_*` — **the only copy in HCP**, `.env` the only copy on disk |
+| `grafana_folder.root` | the shared parent folder (fixed uid `high-load-test`) each project nests under |
+| `grafana_k6_project.project` + `_limits` | one k6 project per repo project. Living here rather than in the project's own state is what makes the k6 project id, and its run history, **survive `/env down`** |
 
-What it cannot do: **run remotely**. This is the stack that creates the credentials the other
-workspaces run with, so it has to run locally, with the developer's own `.env` in the shell and
-state kept in HCP (`tfe_workspace_settings.platform` pins `execution_mode = "local"`, so it
-cannot drift back to remote — HCP creates every *new* workspace in remote mode on `init`).
-
-## Why every command unsets `TF_WORKSPACE`
-
-The root `.env` exports `TF_WORKSPACE=<project workspace>` for the project roots (e.g.
-`ecs-dynamodb-rps`), but this stack's `cloud { workspaces { name = "platform" } }` block names
-its own workspace explicitly — and Terraform refuses to run when `TF_WORKSPACE` disagrees with
-that block — so every command below runs with `TF_WORKSPACE` unset for this one invocation:
-
-```bash
-env -u TF_WORKSPACE terraform -chdir=platform init
-env -u TF_WORKSPACE terraform -chdir=platform plan
-env -u TF_WORKSPACE terraform -chdir=platform apply
-```
+It **cannot run remotely**: this is the stack that creates the credentials the other workspaces run
+with, so it runs locally against state in HCP. `tfe_workspace_settings.platform` pins
+`execution_mode = "local"` so it cannot drift back — HCP creates every *new* workspace in remote
+mode on `init`.
 
 ## How to run
 
-With [direnv](https://direnv.net/) installed, entering the repo root loads `.env` and the
-`TFE_TOKEN` / `TF_VAR_*` aliases automatically (`.envrc`) — just run the commands above.
-
-Without direnv, load the same values into your shell first:
-
 ```bash
-set -a; source .env; set +a
-source <(grep '^export ' .envrc)
-env -u TF_WORKSPACE terraform -chdir=platform init
-env -u TF_WORKSPACE terraform -chdir=platform plan
+terraform -chdir=platform init
+terraform -chdir=platform plan
+terraform -chdir=platform apply
 ```
+
+From the repo root, in a direnv-loaded shell (root `README.md`, Step 2). Workspace identity comes
+from `cloud { workspaces { name = "platform" } }` in `versions.tf`, never the shell — no
+`TF_WORKSPACE`, no `env -u` prefix. Credentials *do* come from the shell, and this stack needs more
+of them than any other root module: `TFE_TOKEN` for the `tfe` provider (`.envrc` aliases it from
+`TF_TOKEN_app_terraform_io`), plus every `TF_VAR_*` it writes into the variable set.
+
+An unloaded shell fails here first:
+
+```
+Error: Invalid or missing required argument
+"organization" must be set in the cloud configuration or as an environment variable:
+TF_CLOUD_ORGANIZATION.
+```
+
+`versions.tf` takes the org from the environment on purpose, so it never lands in a committed file.
+Check for `direnv: loading …`, and `direnv allow` after any `.env` edit. Scripts and CI get no
+direnv: `direnv exec . terraform -chdir=platform …`.
+
+> A stale `TF_WORKSPACE=ecs-dynamodb-rps` in an older shell aborts the same way, by disagreeing with
+> the `cloud` block. It was removed from `.env` on 2026-09-09 — unset it.
 
 ## Bootstrap sequence
 
-Documented in full in Task 7 of the restructure plan
-(`docs/superpowers/plans/2026-09-03-ecs-dynamodb-rps-restructure.md`). In short:
+Full detail in Task 7 of `docs/superpowers/plans/2026-09-03-ecs-dynamodb-rps-restructure.md`:
 
-1. `env -u TF_WORKSPACE terraform -chdir=platform init` — HCP creates the `high-load-test`
-   project and the `platform` workspace (in remote mode) because neither exists yet.
-2. Switch the `platform` workspace to local execution — one API call, not a UI click:
-   `PATCH /api/v2/workspaces/<ws-id>` with `"execution-mode": "local"`. A workspace cannot
-   manage its own execution mode from a run *in* that mode, so this one change has to come
-   from outside Terraform.
-3. Import the five objects that already exist, against the hand-made project and workspace:
-   `tfe_project.this <prj-id>`, `tfe_workspace.platform <platform-ws-id>`,
-   `tfe_workspace_settings.platform <platform-ws-id>` (the settings resource imports by the
-   workspace id, not an id of its own), `tfe_workspace.project["ecs-dynamodb-rps"] <ws-id>`
-   and `tfe_workspace_settings.project["ecs-dynamodb-rps"] <ws-id>`.
-4. `env -u TF_WORKSPACE terraform -chdir=platform plan` — review the rename and
-   working-directory changes as in-place updates, then `apply`.
-5. Read `k6_project_ids` and `workspace_ids` from the output and update `K6_CLOUD_PROJECT_ID`
-   in `.env` once.
+1. `terraform -chdir=platform init` — HCP creates the project and the `platform` workspace, in
+   remote mode, because neither exists yet.
+2. Switch that workspace to local execution: `PATCH /api/v2/workspaces/<ws-id>` with
+   `"execution-mode": "local"`. A workspace cannot change its own execution mode from a run *inside*
+   it, so this step alone comes from outside Terraform.
+3. Import the five objects that now exist — `tfe_project.this`, `tfe_workspace.platform`,
+   `tfe_workspace_settings.platform`, `tfe_workspace.project["ecs-dynamodb-rps"]`,
+   `tfe_workspace_settings.project["ecs-dynamodb-rps"]`. The settings resources import by workspace
+   id, not an id of their own.
+4. `plan` — review the renames and working-directory changes as in-place updates — then `apply`.
+5. Copy `k6_project_ids` from the output into `K6_CLOUD_PROJECT_ID` in `.env`, once.
 
 ## Adding a project
 

@@ -18,12 +18,13 @@ Grafana folder `high-load-test` and the Grafana Cloud k6 projects — the things
 needs to exist *before* `/env up` can run. Bring it up by hand, once:
 
 ```bash
-env -u TF_WORKSPACE terraform -chdir=platform apply
+terraform -chdir=platform apply
 ```
 
-`TF_WORKSPACE` is unset for that one command because the root `.env` exports the *project*
-workspace name while `platform/`'s `cloud` block names its own workspace, and Terraform refuses to
-run when the two disagree. See `platform/README.md`.
+Every root module names its own Terraform Cloud workspace in its `cloud { workspaces { name = … } }`
+block, so nothing needs to be set or unset in the shell first. (Before 2026-09-09 the root `.env`
+exported one repo-wide `TF_WORKSPACE` and this command needed `env -u TF_WORKSPACE` to escape it.)
+See `platform/README.md`.
 
 ## `up`
 

@@ -38,6 +38,9 @@ stable: renaming later orphans tagged resources from the teardown sweep meant to
 | k6 | 1.4 | load generation |
 | Docker | 27.4 | container builds for ECS |
 | jq | 1.7 | used by tooling and the safety hook |
+| direnv | 2.37 | **required** — nothing here runs without a loaded `.env` |
+
+`./scripts/01-install-tools.sh` checks all seven and installs what is missing.
 
 Accounts needed: **AWS**, **Terraform Cloud**, **Grafana Cloud** (includes Grafana Cloud k6).
 
@@ -59,120 +62,85 @@ Two levels, by design. Secrets are global; everything else is per-project.
 **Nothing secret ever goes in a `<project>/` file.** `.gitignore` covers `.env` and `*.auto.tfvars`,
 but the rule is the habit, not the file.
 
-### Step 1 — global secrets
+## Setup
+
+Four scripts, in order, from the repo root:
 
 ```bash
-cp .env.example .env
-$EDITOR .env
+./scripts/01-install-tools.sh    # the 7 binaries above; installs what is missing
+./scripts/02-create-env.sh       # creates .env, then lists the keys you must fill in
+./scripts/03-wire-repo.sh        # direnv shell hook + direnv allow
+./scripts/04-verify-setup.sh     # read-only preflight: right AWS account, TFC reachable
 ```
 
-Then pick how it gets loaded:
+Each one ends by printing what it produced and which later script consumes it; if it cannot
+finish, it prints the exact command that unblocks it and exits non-zero. All four are idempotent —
+re-run any of them at any time.
 
-**Recommended — [direnv](https://direnv.net), loads automatically on `cd`:**
+Only **02** needs you: it creates `.env` from the committed template, then stops with a `✘` beside
+every key still empty. Fill them in (`$EDITOR .env` — `.env.example` documents each one inline) and
+run it again.
+
+**04 is also the "why is this broken" script.** It creates nothing and bills nothing; run it
+whenever something stops working. Pass a project to have it `terraform init` that project too:
 
 ```bash
-brew install direnv
-echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc && exec zsh
-direnv allow            # once here, and again after each .env edit
+./scripts/04-verify-setup.sh ecs-dynamodb-rps
 ```
 
-`.envrc` is committed: it loads `.env`, unsets `AWS_PROFILE` so it can never conflict with the keys,
-and exports the aliases the providers need under their own names (`TFE_TOKEN`, the `TF_VAR_*`
-values).
-
-**direnv is optional — without it, source both in each new shell:**
+Then bring up the shared stack, once, and deploy a project into it:
 
 ```bash
-set -a; source .env; set +a
-source <(grep '^export ' .envrc)
+terraform -chdir=platform apply                    # shared stack: TFC project, workspaces, Grafana folder, k6 projects
+terraform -chdir=<project>/infra/main apply -var-file=dev.tfvars
+cd <project> && ./scripts/deploy-service.sh        # build → push → roll the ECS service → seed → health
 ```
 
-The second line is what `platform/` needs: `.env` alone leaves `TFE_TOKEN` and the `TF_VAR_*`
-aliases unset.
+Both applies stay manual and separate from the scripts: the `guard-terraform.sh` hook matches on
+command text, so an apply hidden inside a script would never reach the approval gate that CLAUDE.md
+requires before anything billable is created. Deployment is per-project — each project owns a
+`scripts/deploy-service.sh`, because what "deploy" means differs by platform — and it starts where
+the apply ends, refusing to run when the project has no applied infrastructure.
 
-What each block needs, and where to get it:
+Re-run `./scripts/deploy-service.sh` after every change under `<project>/service/src/` — Terraform
+does not rebuild the image, and skipping it fails silently: the old code keeps serving, looking
+healthy.
 
-**AWS** — permanent IAM user keys, set once in `.env`:
+### What `.env` holds
 
-```
-AWS_ACCESS_KEY_ID=AKIA...
-AWS_SECRET_ACCESS_KEY=...
-AWS_REGION=eu-central-1
-AWS_ACCOUNT_ID=123456789012
-```
+`.env.example` is the annotated source of truth and `02` tells you which keys are still missing;
+these are the ones with a catch.
 
-No named profile is needed. Environment variables sit **first** in the AWS credential provider chain —
-ahead of `~/.aws/credentials` — so the CLI, the SDKs and the Terraform AWS provider all pick these up
-automatically, and any existing profile is ignored. Leave `AWS_PROFILE` unset; setting it alongside
-these keys makes the winner tool-dependent.
+| key | catch |
+|---|---|
+| `AWS_ACCOUNT_ID` | a guard rail, not a credential — `/env` and `04` refuse to proceed when the `sts` caller differs |
+| `TF_TOKEN_app_terraform_io` | exact spelling: `TF_TOKEN_<hostname, dots as underscores>` |
+| `TF_CLOUD_PROJECT` | must be `high-load-test`, or `init` puts the workspace in the org's default project |
+| `TF_WORKSPACE` | **must not exist.** Each root module names its own workspace in `cloud { workspaces { name = … } }`; one exported value could only ever be right for one of them, and Terraform aborts when it disagrees |
+| `K6_CLOUD_PROJECT_ID` | filled after the first apply, not at setup — `02` expects it empty. There is no `BASE_URL` key: the endpoint is per-project and Terraform owns it, so everything reads `terraform -chdir=<project>/infra/main output` instead of a copy here |
+| `K6_PROMETHEUS_RW_SERVER_URL` | ends in `/api/prom/push`; `_USERNAME` is the numeric instance ID, not a policy name |
 
-`AWS_ACCOUNT_ID` is a guard rail, not a credential. This machine has a `[default]` profile, so a shell
-where `.env` was never loaded **does not fail** — it silently authenticates as a different account.
-`/env` asserts the caller identity matches this value and refuses to provision otherwise.
+`AWS_PROFILE` must stay unset — environment variables outrank `~/.aws/credentials`, and setting
+both makes which one wins tool-dependent. `.envrc` unsets it for this directory.
 
-**Terraform Cloud** — a user API token from
-<https://app.terraform.io/app/settings/tokens>. The variable name is not free-form: Terraform reads
-`TF_TOKEN_<hostname with dots as underscores>`, so for `app.terraform.io` it must be spelled exactly
-**`TF_TOKEN_app_terraform_io`**. Also set `TF_CLOUD_ORGANIZATION`.
+> Project workspaces run **remote**, so their credentials live as TFC workspace variables — managed
+> by `platform/` from this `.env` via `TF_VAR_*`, never typed into the UI. The `platform` workspace
+> runs **local**, because it is the stack that creates them.
 
-Set `TF_WORKSPACE` to the project workspace you are working on, and `TF_CLOUD_PROJECT` to
-`high-load-test`. The `tfe` provider used by `platform/` reads `TFE_TOKEN` rather than the
-`TF_TOKEN_…` name, so `.envrc` exports it as an alias of the same token — never a second copy.
+### direnv, and the one case it does not cover
 
-> **Where AWS creds must live depends on the workspace execution mode, and this repo uses both.**
-> Each **project** workspace runs **remote** — on Terraform Cloud's runners, which never see your
-> shell — so its credentials are workspace variables. You do not type them into the TFC UI: the
-> `platform/` stack manages one variable set, scoped to the `high-load-test` TFC project, fed from
-> this `.env` through `TF_VAR_*`, so `.env` stays the only copy on disk and HCP holds the only other
-> one. The **`platform`** workspace itself runs **local** — it is the stack that creates those
-> credentials, so it has to run with your own shell loaded, which is also what keeps `/env`'s account
-> assertion meaningful there.
+`.env` has no `export` keywords, so it reaches nothing on its own. `03` installs the hook that makes
+direnv run the committed `.envrc`, which loads `.env`, unsets `AWS_PROFILE`, and adds `TFE_TOKEN`
+plus the `TF_VAR_*` aliases `platform/` needs. `cd` in and you should see `direnv: loading …`.
 
-**Grafana Cloud** — `GRAFANA_URL` is your stack URL (`https://<stack>.grafana.net`); `GRAFANA_AUTH` is
-a service-account token with Editor or Admin on that stack. These are what the Terraform `grafana`
-provider uses to manage dashboards, alert rules, and SLOs as code.
-
-**Grafana Cloud k6** — `K6_CLOUD_TOKEN` and `K6_CLOUD_PROJECT_ID` for `k6 cloud run`.
-
-`K6_CLOUD_PROJECT_ID` is the numeric id of the k6 project the run uploads into. The k6 projects are
-owned by the `platform/` stack (one per repo project, named after it), so the id is **stable** — it
-survives `/env down`, and so does the run history under it. Set it **once**, from the platform
-output:
+direnv fires in **interactive shells only** — scripts, CI, and tools that shell out get nothing:
 
 ```bash
-env -u TF_WORKSPACE terraform -chdir=platform output -json k6_project_ids
+direnv exec . terraform -chdir=platform plan
 ```
 
-A project's own root re-exposes the same id (`terraform -chdir=<project>/infra/main output -raw
-k6_project_id`), read back by name rather than created, if you would rather ask the project.
-
-**Streaming local runs to Grafana** — `K6_PROMETHEUS_RW_SERVER_URL` (ends in `/api/prom/push`),
-`K6_PROMETHEUS_RW_USERNAME` (the numeric Prometheus instance ID), and `K6_PROMETHEUS_RW_PASSWORD`
-(a Grafana Cloud access-policy token). Used as:
-
 ```bash
-k6 run -o experimental-prometheus-rw ecs-document-db/infra/k6/tests/constant.js
-```
-
-> The output name still carries the `experimental-` prefix in k6 1.4.0. Available outputs on this
-> version: `cloud, csv, experimental-opentelemetry, experimental-prometheus-rw, influxdb, json,
-> opentelemetry, statsd, web-dashboard`.
-
-### Step 2 — verify before provisioning anything
-
-```bash
-aws sts get-caller-identity          # correct account? this is the expensive mistake
-terraform -chdir=<project>/infra/main init
-k6 version
-```
-
-### Step 3 — repo-local git setup
-
-Git config is **not** cloned, so after a fresh clone run this once to get the Conventional Commits
-template:
-
-```bash
-git config commit.template .gitmessage
+k6 run -o experimental-prometheus-rw <project>/infra/k6/tests/constant.js   # still `experimental-` in k6 1.4
 ```
 
 ---
@@ -223,11 +191,13 @@ idle DocumentDB cluster costs considerably more.
     k6/          tests/ holds the load profiles + the generated lib/slo.js thresholds
   service/       the Node.js service: src/ test/ scripts/, package.json, Dockerfile
   heartbeat/     side pieces managed separately from the service (here: the idle-load Lambda)
+  scripts/       every script this project owns: deploy-service.sh, upload-k6.sh
   slo.yaml       SLO source of truth
   results.md     recorded before/after measurements
   README.md      what it provisions and what was measured
 
 platform/                 the shared stack (see below) — not a project
+scripts/                  repo-wide only: setup (01-04) and the shared logging in lib.sh
 docs/superpowers/specs/   specs   (brainstorming skill)
 docs/superpowers/plans/   plans   (writing-plans skill)
 .claude/                  skills, hooks, permissions
@@ -237,7 +207,7 @@ docs/superpowers/plans/   plans   (writing-plans skill)
 workspace per repo project, the shared variable set, the Grafana folder `high-load-test` and the
 Grafana Cloud k6 projects — everything a project workspace needs to already exist. It is long-lived,
 runs locally, and is applied by hand
-(`env -u TF_WORKSPACE terraform -chdir=platform apply`), never by `/env up`. See
+(`terraform -chdir=platform apply`), never by `/env up`. See
 `platform/README.md`.
 
 Projects are independent by design — they must not share Terraform modules or state, so each can be

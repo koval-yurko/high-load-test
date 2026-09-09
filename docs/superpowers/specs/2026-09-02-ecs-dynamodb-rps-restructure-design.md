@@ -136,6 +136,10 @@ one of the reasons the workspace is made code in section 6.
 - **Generated files** (`alerts.tf` rule-group names, `queries.json`, `locals.tf`) regenerate via
   `npm run slo:generate`; `npm run slo:check` proves them byte-identical.
 - **`.env` / `.env.example`:** `TF_WORKSPACE=ecs-dynamodb-rps`, plus `TFE_TOKEN` (6).
+  *Amended 2026-09-09: `TF_WORKSPACE` no longer exists in `.env` or `.env.example` at all. It is
+  per-project, so each root module names its workspace in its own `cloud { workspaces { name = … } }`
+  block instead; renaming a project now means editing that block, not an env file. See
+  `platform/README.md`, "Which workspace this runs in".*
 - **Skills:** `/env`, `/loadtest`, `/slo`, `/piib` paths. **`CLAUDE.md`**, root and project
   `README.md`, `docs/slo-burn-alerting.md` footer.
 - **The draft plan** `2026-09-02-…-scale-and-measure.md`: paths and name updated in place, file
@@ -254,6 +258,12 @@ every `platform/` command in this bootstrap runs with `env -u TF_WORKSPACE` beca
 `.env` exports the project workspace name, which the `platform` workspace's own `cloud {}` block
 must never pick up by accident.*
 
+*Amended again 2026-09-09 — the `env -u TF_WORKSPACE` half of that is reversed: `.env` no longer
+exports `TF_WORKSPACE`, because the workspace name is per-project and each root module names its
+own in its `cloud { workspaces { name = … } }` block. Read every `env -u TF_WORKSPACE terraform
+-chdir=platform …` in this document as plain `terraform -chdir=platform …`. See
+`platform/README.md`, "Which workspace this runs in".*
+
 ## 7. Grafana folder, k6 project, k6 tests
 
 ### 7.1 Folder — nested (Q3 = A)
@@ -283,6 +293,14 @@ long-lived state existed. The project module reads the id with
 The three scripts stay uploaded by hand, "for simplicity". The esbuild bundle and Terraform-injected
 `BASE_URL` were offered and declined. With the k6 project long-lived, the settings-page step
 (`BASE_URL`, `RATE`) is done once per project rather than once per apply.
+
+> **Amended 2026-09-10 — the settings page is not where these values live, and setting it there does
+> not work.** "Uploaded by hand" became `scripts/upload-k6.sh`, which asks Terraform for `base_url`
+> and bakes both values into the archive with `k6 archive -e`. A UI-started run executes that stored
+> archive, and its frozen env **beats** the settings page: measured that day, a run took the
+> archive's dead ALB hostname while the page held the correct newer one. The page's correct state is
+> therefore EMPTY, and the only fix for a wrong endpoint is to re-upload. The reasoning is in the
+> header of `ecs-dynamodb-rps/scripts/upload-k6.sh`.
 
 ## 8. Reference: metrics, SLO arithmetic, alert rules (as of 2026-09-03)
 

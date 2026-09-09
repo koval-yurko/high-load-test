@@ -9,16 +9,25 @@
 //             does not go in git. The fallback below is a dead local address: a
 //             run that reaches it fails immediately with connection errors,
 //             which is the correct behaviour for a misconfigured run.
-//             The real value comes from one of two places, neither in git:
-//               - local runs:  -e BASE_URL="$BASE_URL" out of the root .env
-//               - UI runs:     Performance Testing (k6) -> Settings ->
-//                              Environment variables
+//             The real value has ONE source, terraform output base_url, and
+//             reaches a run two ways, neither in git:
+//               - local runs:  -e BASE_URL="$(terraform -chdir=infra/main \
+//                              output -json | jq -r .base_url.value)"
+//               - UI runs:     baked into the uploaded archive by
+//                              scripts/upload-k6.sh, which asks Terraform the
+//                              same question and passes it as -e at upload time.
+//             It is NOT in the root .env -- that copy went stale across an ALB
+//             replacement on 2026-09-10 and a UI run measured a dead host. The
+//             k6 app's Settings -> Environment variables page is not a fallback
+//             either: the archive's env beats it, so a stale archive can only be
+//             fixed by re-uploading.
 //
 //   RATE      is the DISCOVERED knee, and discovery has not run yet. The default
 //             below is therefore the discovery START rate, not a guess at the
-//             ceiling: a rate the service is known to serve. Update it once
-//             discovery has measured the knee, then re-upload -- otherwise a
-//             UI-started constant/stress run measures the wrong thing.
+//             ceiling: a rate the service is known to serve. Once discovery has
+//             measured the knee, re-upload with
+//             `scripts/upload-k6.sh --rate <knee>` -- the archive freezes the
+//             executor's rate, so a stale upload measures the wrong thing.
 export const DEFAULT_BASE_URL = 'http://localhost:1';
 export const DEFAULT_RATE = 50;
 

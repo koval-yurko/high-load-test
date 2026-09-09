@@ -60,10 +60,25 @@ the tag therefore pointed at nothing — see
     k6/               tests/ holds the load profiles; a data source reads the k6 project id
   service/            the Node.js service: src/ test/ scripts/, package.json, Dockerfile
   heartbeat/          small side pieces managed separately from the service (ECS: the idle-load Lambda)
+  scripts/            every script this project owns: deploy-service.sh, upload-k6.sh
   slo.yaml            SLO source of truth; generates the k6 thresholds and the Grafana rules
   results.md          the run ledger (/loadtest appends here)
   README.md           what it provisions, how to run it, measured results
 ```
+
+**Scripts are split by what they act on: a script that touches one project lives in that project's
+`scripts/`, a repo-wide one in the root `scripts/`.** The root folder therefore holds only the
+numbered setup scripts and `lib.sh`; anything naming a project's infrastructure, service or load
+profiles belongs to the project.
+
+**Deployment is per-project, and stays per-project.** Each project owns a
+`scripts/deploy-service.sh`: what "deploy" means is a property of the platform under test — ECS
+builds and pushes an image then forces a new deployment, Lambda will publish a version, the next
+scenario something else again. Sharing one script across projects would mean a flag per platform,
+which is exactly the coupling the rest of this section forbids. Only the output helpers are shared,
+from the root `scripts/lib.sh` (sourced as `../../scripts/lib.sh`). No project script may run
+`terraform apply`: the guard hook matches on command text, so an apply buried in a script is an
+apply that never reaches the approval gate.
 
 This layout was chosen in
 `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md` (section 4); the working
@@ -255,16 +270,15 @@ environment before applying; existing data is not migrated.
 Claude-authored commits keep their attribution trailers (`Co-Authored-By:`, `Claude-Session:`) in the
 footer block, below any `BREAKING CHANGE:` footer.
 
-### Setup, and what enforces it
+### What enforces it
 
-`.gitmessage` is committed and wired up with `git config commit.template .gitmessage`. **Git config is
-not cloned**, so a fresh clone must run that command once to get the template — the file alone does
-nothing.
+**Nothing mechanical.** There is no commit template, no commit-msg hook and no CI lint, by
+deliberate choice — the format holds because this section is followed. (A `.gitmessage` template
+was configured once and dropped on 2026-09-09: git config is not cloned, so it only ever worked on
+the one machine that had run `git config commit.template`, while this file is read by everyone.)
 
-By deliberate choice there is **no commit-msg hook and no CI lint**, so nothing mechanically rejects a
-malformed message. The format holds only because the author follows this section. Before committing,
-re-read the subject line against the type table above; a wrong type is the common failure, not wrong
-syntax.
+Before committing, re-read the subject line against the type table above; a wrong type is the
+common failure, not wrong syntax.
 
 ## Project skills
 
@@ -275,7 +289,7 @@ gotchas that cost real money or produce wrong numbers:
   approval gate before apply/destroy and a billable-resource sweep after teardown. `terraform
   destroy` succeeding is not evidence the account is clean. The `platform/` stack is **not** part of
   `/env up|down` — it is long-lived and brought up by hand with
-  `env -u TF_WORKSPACE terraform -chdir=platform apply`.
+  `terraform -chdir=platform apply`.
 - **`/loadtest <project> <profile> [--compare]`** — runs k6, parses the summary, appends a result row
   with the infra change that distinguishes the run. Encodes two verified k6 quirks (below).
 - **`/slo <project> [--check]`** — one `slo.yaml` generates both the k6 thresholds and the Grafana
@@ -291,9 +305,12 @@ Verified against the installed k6 v1.4.0:
 - k6 exits **99** when a threshold is breached, **0** when all pass. Capture the code off the k6
   command itself — behind a pipe you get the pipe's status instead.
 
-`terraform apply` and `terraform destroy` are deliberately **absent** from the permission allowlist in
-`.claude/settings.json`, so they still prompt. That prompt is the one mechanical guard against
-unattended AWS spend — do not add them to the allowlist.
+`.claude/settings.json` allows Bash broadly (`"allow": ["Bash"]`), but `terraform apply` and
+`terraform destroy` are listed under `permissions.ask`, so they still prompt — `ask` outranks `allow`.
+The `guard-terraform.sh` PreToolUse hook is the guard that actually holds: it returns `ask` for
+apply/destroy in any spelling (`-chdir=`, env prefixes, after a `&&`) and `deny` for
+`-auto-approve`, and a hook decision overrides the allowlist. That prompt is the one mechanical guard
+against unattended AWS spend — do not move apply/destroy out of `ask`, and do not weaken the hook.
 
 ## Working commands
 
@@ -313,11 +330,14 @@ k6 run -e BASE_URL=<url> -e VUS=200 infra/k6/tests/<profile>.js
 The shared stack is separate and runs from the repo root, not from a project directory:
 
 ```bash
-env -u TF_WORKSPACE terraform -chdir=platform plan     # also init / apply
+terraform -chdir=platform plan     # also init / apply
 ```
 
-`TF_WORKSPACE` is unset for it because the root `.env` exports the *project* workspace name while
-`platform/`'s `cloud` block names its own, and Terraform refuses to run when the two disagree
+Nothing has to be set or unset in the shell for it: **each root module names its own Terraform
+Cloud workspace** in its `cloud { workspaces { name = … } }` block — `platform/versions.tf` names
+`platform`, `<project>/infra/main/versions.tf` names the project directory. The workspace name is
+per-project, so it lives in the project, never in the root `.env`; only `TF_CLOUD_ORGANIZATION` and
+`TF_CLOUD_PROJECT`, which are the same for every workspace here, come from the environment
 (`platform/README.md`).
 
 Node service (ECS project), from `<project>/service/`: `npm ci`, `npm test`, `npm start`. A single

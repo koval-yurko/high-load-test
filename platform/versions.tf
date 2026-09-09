@@ -1,9 +1,10 @@
 terraform {
   required_version = "~> 1.14.0"
 
-  # The exception to "workspace comes from TF_WORKSPACE" (CLAUDE.md, .env.example):
-  # this stack must never be run against a project workspace by accident, so
-  # project and workspace are named explicitly rather than left to the shell.
+  # Every root module in this repo names its own workspace here rather than taking
+  # it from TF_WORKSPACE (CLAUDE.md, .env.example) -- this one is no longer the
+  # exception it once was. It also pins the TFC project, because this is the stack
+  # that CREATES that project: it cannot depend on TF_CLOUD_PROJECT pointing at it.
   cloud {
     workspaces {
       project = "high-load-test"

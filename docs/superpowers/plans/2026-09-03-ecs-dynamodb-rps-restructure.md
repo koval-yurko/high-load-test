@@ -82,6 +82,14 @@ written at the sentence there too):
 - **Ruling P1** — every `platform/` command runs with `env -u TF_WORKSPACE`, because the root
   `.env` exports `TF_WORKSPACE` for the project workspace and `platform/`'s `cloud {}` block names
   its own workspace explicitly. Applied throughout Task 7 and Task 1's `.envrc`/README text.
+  **Reversed 2026-09-09 — do not copy `env -u TF_WORKSPACE` from this plan into new work.** The
+  premise was the root `.env` exporting one repo-wide `TF_WORKSPACE`; that line is gone. Every
+  root module now names its own workspace in its `cloud { workspaces { name = … } }` block —
+  `platform/versions.tf` names `platform`, `ecs-dynamodb-rps/infra/main/versions.tf` names
+  `ecs-dynamodb-rps` — so `platform/` commands are plain `terraform -chdir=platform …`. The
+  workspace name is per-project and belongs in the project; only `TF_CLOUD_ORGANIZATION` and
+  `TF_CLOUD_PROJECT`, identical for every workspace here, still come from `.env`. See
+  `platform/README.md`, "Which workspace this runs in".
 - **Ruling P3 / Task 1** — the `tfe` provider (0.80, resolved) deprecates `execution_mode` on
   `tfe_workspace`; local/remote mode for both workspaces lives in `tfe_workspace_settings`
   instead, one resource per workspace, imported by workspace id.
@@ -389,6 +397,9 @@ export TF_VAR_grafana_prom_password="${K6_PROMETHEUS_RW_PASSWORD:-}"
   `.env.example`: set `TF_WORKSPACE=ecs-dynamodb-rps` in the comment and value, and add a
   short block saying `platform/` reads the same file through the aliases in `.envrc`, so nothing
   new has to be filled in. `direnv allow` after editing.
+  *Reversed 2026-09-09 (see Ruling P1 above): the `TF_WORKSPACE` line was removed from both `.env`
+  and `.env.example`, and each root module now names its workspace in its own
+  `cloud { workspaces { name = … } }` block. The `platform/`-reads-the-same-file block stands.*
 
 - [x] **Step 8: `platform/README.md`** — what it owns, the bootstrap sequence (Task 7), how to
   add a project (one line in `local.projects`), and the one thing it cannot do (run remotely).

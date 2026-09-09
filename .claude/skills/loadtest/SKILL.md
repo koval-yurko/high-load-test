@@ -29,6 +29,11 @@ it happens.
    - **Started from the Grafana Cloud k6 UI** — there is no local file. Read the run from the k6
      Cloud API instead; see "Reading a UI-started run from the API" below. A UI run is still
      recordable, but you must fetch the test run id from the user or the project listing.
+     **A UI run executes the archive stored in the cloud, not the file on disk** — a profile edited
+     since its last upload measures the old script while the diff in front of you says otherwise.
+     Confirm freshness before recording: the project's upload script reports it
+     (`ecs-dynamodb-rps/scripts/upload-k6.sh --check` compares each archive's upload time against
+     the sources under `infra/k6/tests/`).
 
    Either way, load must originate from Grafana Cloud's Frankfurt zone, not a laptop, so plain
    `k6 run` never belongs in this step.
@@ -264,11 +269,20 @@ one of the four gating thresholds was breached (`slo_met`, `slo_met_tail`, `http
   exits 99 and the summary shows the breach. Such a run delivered less than `RATE` and **measured
   the generator, not the service**; record it as a failed run, never as a pass at a lower rate.
 
-- **`BASE_URL` never appears in a command line in git.** It comes from the root `.env` (this repo is
-  public and the ALB has no auth). Source it, pass it through.
+- **`BASE_URL` never appears in a command line in git, and never in `.env` either.** The endpoint is
+  per-project while `.env` is global, and it is a value Terraform already owns — a copy anywhere else
+  can only ever be the stale one. Ask Terraform at the moment of use. (Removed from `.env` on
+  2026-09-10, after a run measured a dead ALB: the copy still named the load balancer from two
+  applies and one project rename earlier.)
+
+  Use `output -json` piped through `jq`, never `output -raw`: against an empty state `-raw` prints a
+  multi-line warning **to stdout** and still exits 0, so `-e BASE_URL=` would carry that warning text
+  as the hostname and every request would fail for a reason that looks nothing like the cause.
 
 ```bash
-source .env
+BASE_URL=$(terraform -chdir=<project>/infra/main output -json | jq -r '.base_url.value // empty')
+[ -n "$BASE_URL" ] || { echo "no base_url — <project> is not applied"; exit 1; }
+
 k6 cloud run --summary-export=/tmp/k6-<project>-<profile>.json \
   -e BASE_URL="$BASE_URL" -e RATE=<measured knee> <project>/infra/k6/tests/<profile>.js
 echo "exit: $?"

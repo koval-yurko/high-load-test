@@ -3,8 +3,16 @@ terraform {
   # and the README's verified version -- local is 1.14.0, the remote runner 1.14.9.
   required_version = "~> 1.14.0"
 
-  # Organization and workspace come from TF_CLOUD_ORGANIZATION / TF_WORKSPACE,
-  # so no environment-specific value is committed here.
+  # The workspace is named HERE, in the project it belongs to -- not in the shell.
+  # There is exactly one workspace per project directory, named for it (CLAUDE.md),
+  # so the name is a fixed property of this root module and nothing is gained by
+  # deferring it to TF_WORKSPACE. A repo-global TF_WORKSPACE was worse than merely
+  # redundant: one exported value cannot be right for more than one root module, so
+  # it was silently wrong for every other one, and every platform/ command had to
+  # be written `env -u TF_WORKSPACE ...` to escape it.
+  #
+  # Only what is genuinely the same for every workspace in this repo still comes
+  # from the environment: TF_CLOUD_ORGANIZATION and TF_CLOUD_PROJECT.
   #
   # The workspace runs in REMOTE execution mode, so credentials live in HCP
   # rather than in a developer's shell (spec S11/S12). Two settings on the
@@ -25,7 +33,11 @@ terraform {
   # ./../grafana/..." -- a ../grafana module source fails the same way.
   # ecs-dynamodb-rps/.terraformignore, which sits at that upload root, keeps
   # node_modules and the service code out of the upload.
-  cloud {}
+  cloud {
+    workspaces {
+      name = "ecs-dynamodb-rps"
+    }
+  }
 
   required_providers {
     aws = {
