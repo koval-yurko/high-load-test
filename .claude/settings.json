@@ -2,6 +2,19 @@
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true
   },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "graffiti hook",
+            "type": "command"
+          }
+        ],
+        "matcher": "Grep|Glob"
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash"
