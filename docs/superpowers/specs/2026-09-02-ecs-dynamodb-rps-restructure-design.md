@@ -26,7 +26,8 @@
     "created, never imported, new id on every apply" is **reversed** by section 7.2 before it is
     ever applied. The standalone note that recorded it was deleted on 2026-09-04 instead of being
     given a forward-pointer — everything in it was duplicated in the README and the Terraform
-    comments — so the commit is the remaining record.
+    comments — so the commit is the remaining record. *(2026-09-14: section 7.2 was itself reversed,
+    returning to roughly `901b97d`'s position — see the amendment in 7.2.)*
   - `docs/superpowers/plans/2026-09-02-ecs-dynamodb-rps-ceiling-scale-and-measure.md` (draft,
     unexecuted): paths and name updated in place, file renamed.
   - `docs/superpowers/specs/2026-09-01-ecs-dynamodb-rps-ceiling-datasource-fidelity-design.md`,
@@ -288,11 +289,26 @@ long-lived state existed. The project module reads the id with
 `data "grafana_k6_projects" { name = var.project }`. All four limit values stay set explicitly
 (an unset one is sent as null and resets the live value).
 
+> **Amended 2026-09-14 — reversed; the k6 project is back in the project's own stack.** See
+> `docs/superpowers/specs/2026-09-14-ecs-dynamodb-rps-k6-project-ownership-design.md`. The stable-id
+> argument above was solving for a *copy* of the id — `K6_CLOUD_PROJECT_ID` in `.env` and README
+> links — that nothing updated; with the copy deleted and every reader asking `terraform output`, a
+> new id per apply costs nothing. Surviving run history turned out not to be load-bearing:
+> `/loadtest --compare` reads `results.md`, not the cloud. `ecs-dynamodb-rps/infra/k6` now creates
+> `grafana_k6_project` + `grafana_k6_project_limits` (the limits still explicit), `/env down` destroys
+> both, and the sweep checks for a survivor. This is the **second** reversal: it returns, deliberately,
+> to roughly the position commit `901b97d` held, but without the copied id that made it painful.
+
 ### 7.3 Load tests — uploaded by hand (Q5 = B)
 
 The three scripts stay uploaded by hand, "for simplicity". The esbuild bundle and Terraform-injected
 `BASE_URL` were offered and declined. With the k6 project long-lived, the settings-page step
 (`BASE_URL`, `RATE`) is done once per project rather than once per apply.
+
+> **Amended 2026-09-14 — "long-lived" no longer holds.** The k6 project is created and destroyed with
+> the environment (7.2's amendment above), so its uploaded tests go with every teardown and
+> `upload-k6.sh` runs after **every** `/env up`. Bundling the tests as Terraform resources was offered
+> again and declined again.
 
 > **Amended 2026-09-10 — the settings page is not where these values live, and setting it there does
 > not work.** "Uploaded by hand" became `scripts/upload-k6.sh`, which asks Terraform for `base_url`
@@ -425,7 +441,7 @@ Recorded on the review page on 2026-09-03 (`decisions/<slug>`), read back the sa
 | `layout` | which project layout | A: `infra/{aws,grafana,k6}` + `service/` | **B: `infra/{main,grafana,k6}` + `service/`**, note "and heartbeat lambda at the root" |
 | `tfc-management` | how Terraform Cloud is managed | A | **A**: `platform/` owns project, workspaces, variable set, shared folder |
 | `grafana-folder` | how projects sit under `high-load-test` | A | **A**: nested subfolder per project |
-| `k6-project-home` | where the k6 project lives | A | **A**: `platform/`, stable id |
+| `k6-project-home` | where the k6 project lives | A | **A**: `platform/`, stable id — *superseded 2026-09-14, see 7.2's amendment* |
 | `k6-tests-as-code` | load tests as Terraform resources | A | **B**: keep uploading by hand |
 | `scope` | what the first plan contains | A | **A** with note "Restructure plus Tier 1 plus Tier 2": all of it goes ahead; restructure + Tier 1 (+ 2.1, which the restructure needs) first, the remaining Tier 2 items as follow-up plans |
 
@@ -444,7 +460,9 @@ Correction made while drafting the (since withdrawn) plan: Tier 1.1 is a precond
 - `infra/aws` (recommended) and "service code stays at project root" — for the layout.
 - A platform stack without the variable set, or no platform stack with a one-off API rename.
 - A flat `high-load-test` folder with project-prefixed names.
-- The k6 project staying in the project workspace (new id every apply).
+- The k6 project staying in the project workspace (new id every apply). *Adopted after all on
+  2026-09-14 — `docs/superpowers/specs/2026-09-14-ecs-dynamodb-rps-k6-project-ownership-design.md`;
+  rejected here because the id was copied into `.env`, which that spec removes.*
 - esbuild-bundled load tests as `grafana_k6_load_test` with `BASE_URL` injected at apply time.
 - Keeping all six forwarded DynamoDB metric-statistics in Alloy (the 2026-09-01 D2 position).
 - Dropping the last forwarded metric too, which would delete the two derived panels and the

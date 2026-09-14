@@ -93,31 +93,6 @@ variable "grafana_prom_password" {
   description = "Grafana Cloud Prometheus remote-write password, forwarded as the grafana_prom_password Terraform variable."
 }
 
-# --- k6 project limits -------------------------------------------------------
-# The LIVE values read by importing the hand-made project on 2026-09-01; an
-# unset attribute is sent as null and resets the live value, so all four stay
-# explicit forever.
-
-variable "k6_vu_max_per_test" {
-  type        = number
-  description = "Max virtual users per k6 test."
-  default     = 25000
-}
-
-variable "k6_vu_browser_max_per_test" {
-  type        = number
-  description = "Max browser virtual users per k6 test."
-  default     = 1000
-}
-
-variable "k6_vuh_max_per_month" {
-  type        = number
-  description = "Max virtual-user-hours per month."
-  default     = 50000
-}
-
-variable "k6_duration_max_per_test" {
-  type        = number
-  description = "Max duration (seconds) per k6 test."
-  default     = 18000
-}
+# The k6 project limits that used to be declared here moved with the k6 project into
+# each project's own infra/k6 module on 2026-09-14 (see
+# docs/superpowers/specs/2026-09-14-ecs-dynamodb-rps-k6-project-ownership-design.md).

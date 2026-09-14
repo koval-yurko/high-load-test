@@ -57,7 +57,7 @@ the tag therefore pointed at nothing — see
   infra/
     main/             ROOT MODULE: the AWS infrastructure; calls ../grafana and ../k6 as modules
     grafana/          dashboards, SLO definitions, alert rules as code
-    k6/               tests/ holds the load profiles; a data source reads the k6 project id
+    k6/               the project's k6 project + limits (destroyed with the env); tests/ holds the load profiles
   service/            the Node.js service: src/ test/ scripts/, package.json, Dockerfile
   heartbeat/          small side pieces managed separately from the service (ECS: the idle-load Lambda)
   scripts/            every script this project owns: deploy-service.sh, upload-k6.sh
@@ -87,11 +87,14 @@ remote HCP run, so it is set on the workspace by `platform/`, not in HCL.
 
 Global (repo root) holds only shared credentials/config for AWS, Terraform Cloud, and Grafana Cloud —
 and `platform/`, the one Terraform root that is not a project: it owns the TFC project, the project
-workspaces, the shared variable set, the Grafana folder `high-load-test` and the k6 projects (the
-restructure spec, section 6). **Everything else is per-project.** Projects must not import each
-other's Terraform modules or state; duplication between projects is acceptable and preferred over
-coupling, because each must be creatable and destroyable in isolation. What `platform/` creates is
-found by a **fixed string** — the folder title `high-load-test`, the k6 project's own name — never by
+workspaces, the shared variable set and the Grafana folder `high-load-test` (the restructure spec,
+section 6). **Everything else is per-project** — including the Grafana Cloud k6 project, which each
+project's `infra/k6` creates and `/env down` destroys, so its id is read from `terraform output` and
+never copied into `.env` (moved out of `platform/` on 2026-09-14,
+`docs/superpowers/specs/2026-09-14-ecs-dynamodb-rps-k6-project-ownership-design.md`). Projects must
+not import each other's Terraform modules or state; duplication between projects is acceptable and
+preferred over coupling, because each must be creatable and destroyable in isolation. What
+`platform/` creates is found by a **fixed string** — the folder title `high-load-test` — never by
 reading its state, so that rule still holds.
 
 ## Hard constraints

@@ -34,7 +34,9 @@ provider "tfe" {
   organization = var.tfc_organization
 }
 
-# GRAFANA_URL / GRAFANA_AUTH, plus GRAFANA_K6_ACCESS_TOKEN and GRAFANA_STACK_ID for the
-# k6 resources -- all from the shell. Local execution is the point: this stack creates
-# the credentials the remote workspaces run with, so it cannot itself run remotely.
+# GRAFANA_URL / GRAFANA_AUTH from the shell, for the shared folder. This stack creates no
+# k6 resources any more; it only FORWARDS GRAFANA_K6_ACCESS_TOKEN and GRAFANA_STACK_ID into
+# the variable set, where each project's remote run uses them to create its own k6
+# project. Local execution is the point: this stack creates the credentials the remote
+# workspaces run with, so it cannot itself run remotely.
 provider "grafana" {}

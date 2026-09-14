@@ -1,7 +1,7 @@
 # `platform/`
 
 The one Terraform root in this repo that is not a project. It owns the Terraform Cloud plumbing
-every project workspace depends on, plus the Grafana Cloud resources shared across projects:
+every project workspace depends on, plus the one Grafana Cloud resource shared across projects:
 
 | resource | what it is |
 |---|---|
@@ -9,7 +9,13 @@ every project workspace depends on, plus the Grafana Cloud resources shared acro
 | `tfe_workspace.project` + `_settings` | one workspace per repo project (`local.projects` in `tfc.tf`) — remote execution, working directory, pinned `terraform_version`, `auto_apply = false` |
 | `tfe_variable_set.shared` | every credential a project workspace needs, attached to the TFC project so future workspaces inherit it. Fed from the root `.env` via `TF_VAR_*` — **the only copy in HCP**, `.env` the only copy on disk |
 | `grafana_folder.root` | the shared parent folder (fixed uid `high-load-test`) each project nests under |
-| `grafana_k6_project.project` + `_limits` | one k6 project per repo project. Living here rather than in the project's own state is what makes the k6 project id, and its run history, **survive `/env down`** |
+
+**Not here: the Grafana Cloud k6 projects.** They lived here from 2026-09-03 to 2026-09-14, so that
+the project id and run history survived `/env down`. They moved into each project's own
+`infra/k6` module, created and destroyed with the environment, once the id stopped being copied into
+`.env` — see `docs/superpowers/specs/2026-09-14-ecs-dynamodb-rps-k6-project-ownership-design.md`.
+This stack still **forwards** `GRAFANA_K6_ACCESS_TOKEN` and `GRAFANA_STACK_ID` into the variable set,
+because that is how each project's remote run authenticates to create its k6 project.
 
 It **cannot run remotely**: this is the stack that creates the credentials the other workspaces run
 with, so it runs locally against state in HCP. `tfe_workspace_settings.platform` pins
@@ -59,7 +65,9 @@ Full detail in Task 7 of `docs/superpowers/plans/2026-09-03-ecs-dynamodb-rps-res
    `tfe_workspace_settings.project["ecs-dynamodb-rps"]`. The settings resources import by workspace
    id, not an id of their own.
 4. `plan` — review the renames and working-directory changes as in-place updates — then `apply`.
-5. Copy `k6_project_ids` from the output into `K6_CLOUD_PROJECT_ID` in `.env`, once.
+
+(A fifth step, copying `k6_project_ids` into `K6_CLOUD_PROJECT_ID` in `.env`, was removed on
+2026-09-14: neither the output nor the key exists any more.)
 
 ## Adding a project
 
@@ -74,5 +82,7 @@ locals {
 }
 ```
 
-That single map drives the TFC workspace, its execution-mode settings, and the Grafana Cloud
-k6 project + limits for the new project — nothing else in this stack needs to change.
+That single map drives the TFC workspace and its execution-mode settings — nothing else in this
+stack needs to change. The new project's Grafana Cloud k6 project is **not** created here: give the
+project its own `infra/k6` module with `grafana_k6_project` + `grafana_k6_project_limits` (copy
+`ecs-dynamodb-rps/infra/k6/`, including the comment on the limits resource).

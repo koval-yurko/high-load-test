@@ -33,7 +33,9 @@ it happens.
      since its last upload measures the old script while the diff in front of you says otherwise.
      Confirm freshness before recording: the project's upload script reports it
      (`ecs-dynamodb-rps/scripts/upload-k6.sh --check` compares each archive's upload time against
-     the sources under `infra/k6/tests/`).
+     the sources under `infra/k6/tests/`). **After every `/env up` the project holds no tests at
+     all** — the k6 project is destroyed and recreated with the environment (since 2026-09-14), so
+     run `upload-k6.sh` before any UI run; `--check` reports an empty project rather than a stale one.
 
    Either way, load must originate from Grafana Cloud's Frankfurt zone, not a laptop, so plain
    `k6 run` never belongs in this step.
@@ -261,8 +263,9 @@ one of the four gating thresholds was breached (`slo_met`, `slo_met_tail`, `http
 
 - **The project caps virtual users, and the cap bites at upload time.** Verified 2026-09-01 against
   the hand-made k6 project `8474786`, and the cap is an organization/subscription one rather than a
-  property of the project object — so it applies unchanged to the k6 project `platform/` now owns
-  (`ecs-dynamodb-rps`), whose own `vu_max_per_test` reads 25000. Any test asking for more than
+  property of the project object — so it applies unchanged to every k6 project a project's
+  `infra/k6` creates, and survives the project being recreated on each `/env up` (the limits resource
+  sets `vu_max_per_test` to 25000, which is not the cap that bites). Any test asking for more than
   **100 VUs** is rejected with
   `(400/E2004) The Virtual User (VU) count for this test (400 VUs) exceeds the maximum allowed for
   your project (100 VUs)`. `preAllocatedVUs` is what the check reads. Since 2026-09-02 the scripts
@@ -284,11 +287,19 @@ one of the four gating thresholds was breached (`slo_met`, `slo_met_tail`, `http
   multi-line warning **to stdout** and still exits 0, so `-e BASE_URL=` would carry that warning text
   as the hostname and every request would fail for a reason that looks nothing like the cause.
 
-```bash
-BASE_URL=$(terraform -chdir=<project>/infra/main output -json | jq -r '.base_url.value // empty')
-[ -n "$BASE_URL" ] || { echo "no base_url — <project> is not applied"; exit 1; }
+- **The k6 project id is the same kind of value, since 2026-09-14.** Each project's `infra/k6` creates
+  its k6 project and `/env down` destroys it, so the id changes on every rebuild and there is no
+  `K6_CLOUD_PROJECT_ID` in `.env` any more. Read it the same way, and pass it to `k6 cloud run`
+  **explicitly**: no test script sets `options.cloud.projectID`, so without it the run lands in the
+  stack's default project.
 
-k6 cloud run --summary-export=/tmp/k6-<project>-<profile>.json \
+```bash
+OUT=$(terraform -chdir=<project>/infra/main output -json)
+BASE_URL=$(printf '%s' "$OUT" | jq -r '.base_url.value // empty')
+K6_CLOUD_PROJECT_ID=$(printf '%s' "$OUT" | jq -r '.k6_project_id.value // empty')
+[ -n "$BASE_URL" ] && [ -n "$K6_CLOUD_PROJECT_ID" ] || { echo "<project> is not applied"; exit 1; }
+
+K6_CLOUD_PROJECT_ID="$K6_CLOUD_PROJECT_ID" k6 cloud run --summary-export=/tmp/k6-<project>-<profile>.json \
   -e BASE_URL="$BASE_URL" -e RATE=<measured knee> <project>/infra/k6/tests/<profile>.js
 echo "exit: $?"
 ```
@@ -303,10 +314,12 @@ schema at `https://api.k6.io/cloud/v5/$metadata`, not guessed):
 
 ```bash
 source .env
+# The project id is not in .env — it is per environment. Ask Terraform (json, never -raw):
+PROJECT_ID=$(terraform -chdir=<project>/infra/main output -json | jq -r '.k6_project_id.value // empty')
 
 # 1. Find the run. Tests in the project:
 curl -sS -H "Authorization: Token $K6_CLOUD_TOKEN" \
-  "https://api.k6.io/cloud/v5/projects/$K6_CLOUD_PROJECT_ID/load_tests"
+  "https://api.k6.io/cloud/v5/projects/$PROJECT_ID/load_tests"
 
 # 2. That test's runs, newest last:
 curl -sS -H "Authorization: Token $K6_CLOUD_TOKEN" \
