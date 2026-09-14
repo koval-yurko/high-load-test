@@ -4,7 +4,7 @@ output "base_url" {
 }
 
 output "k6_project_id" {
-  description = "Grafana Cloud k6 project id, looked up by name. platform/ owns the project, so this id survives /env down: K6_CLOUD_PROJECT_ID in .env and the k6-app links in README.md are set from it once, not after every apply."
+  description = "Grafana Cloud k6 project id. The project is created and destroyed with this environment, so the id changes after every /env down + /env up: read it with `terraform output -json` (never -raw) when it is needed, never copy it into .env or a README."
   value       = module.k6.k6_project_id
 }
 

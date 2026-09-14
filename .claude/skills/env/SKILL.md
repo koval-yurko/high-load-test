@@ -12,10 +12,16 @@ Usage: `/env up <project>` · `/env down <project>` · `/env status [project]`
 `<project>/infra/main`, and it calls `<project>/infra/grafana` and `<project>/infra/k6` as modules.
 If the directory does not exist, stop and say so — do not scaffold one here; that belongs in a plan.
 
+`<project>/infra/k6` **creates the project's Grafana Cloud k6 project**, so `up` creates it with a
+new id and `down` destroys it — together with the load tests uploaded into it and its run history.
+After every `up`, the profiles have to be uploaded again before a cloud run can start
+(`<project>/scripts/upload-k6.sh`). This has been the case since 2026-09-14; before that the k6
+project lived in `platform/` and survived teardown.
+
 `platform/` is **not** a project and is not part of `/env up|down`. It is a long-lived root module
-that owns the Terraform Cloud project, the per-project workspaces, the shared variable set, the
-Grafana folder `high-load-test` and the Grafana Cloud k6 projects — the things a project workspace
-needs to exist *before* `/env up` can run. Bring it up by hand, once:
+that owns the Terraform Cloud project, the per-project workspaces, the shared variable set and the
+Grafana folder `high-load-test` — the things a project workspace needs to exist *before* `/env up`
+can run. Bring it up by hand, once:
 
 ```bash
 terraform -chdir=platform apply
@@ -83,10 +89,28 @@ aws logs describe-log-groups --query 'logGroups[].logGroupName' --output table
 aws ecr describe-repositories --query 'repositories[].repositoryName' --output table
 ```
 
-Report findings as a list with the reason each one costs money. Do **not** delete anything found in
-the sweep without asking — a survivor may belong to another project in this account.
+Then Grafana Cloud k6. The destroy deletes the project's k6 project, and the tag query above cannot see
+Grafana Cloud at all, so a k6 project that survived would be invisible without this. A leftover one
+does not bill — k6 meters virtual-user-hours per run — but it is an orphan outside Terraform, which is
+exactly what the sweep exists to find. Credentials come from the root `.env` (the sweep runs locally):
+
+```bash
+curl -sS -H "Authorization: Bearer $K6_CLOUD_TOKEN" -H "X-Stack-Id: $GRAFANA_STACK_ID" \
+  "https://api.k6.io/cloud/v6/projects" \
+  | jq -r --arg p "<project>" '.value[] | select(.name == $p) | "\(.id)  \(.name)  created \(.created)"'
+```
+
+Empty output is the pass. A curl error or a `jq` parse error means `K6_CLOUD_TOKEN` or
+`GRAFANA_STACK_ID` is not loaded — that is a failure of **the sweep**, not of the destroy; report it
+as "k6 not checked", never as clean.
+
+Report findings as a list with the reason each one costs money (or, for a k6 project, that it is an
+untracked orphan). Do **not** delete anything found in the sweep without asking — a survivor may
+belong to another project in this account.
 
 ## `status`
 
-Run the tag query and the NAT/EIP/RDS checks without touching Terraform. Use this to answer "is
-anything still running?" — and answer it with command output, never from memory of an earlier teardown.
+Run the tag query, the NAT/EIP/RDS checks and the k6 project query without touching Terraform. Use
+this to answer "is anything still running?" — and answer it with command output, never from memory
+of an earlier teardown. While an environment is up, its k6 project existing is expected; after a
+`down`, it is not.

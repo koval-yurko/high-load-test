@@ -4,7 +4,10 @@
 - **Status:** **in progress** — `slo.yaml` and every generated and hand-maintained output are
   changed and the test suite passes (98/98). **Not applied.** `terraform -chdir=infra/main apply`
   and `./scripts/upload-k6.sh` have not been run, so Grafana Cloud and the k6 project still carry
-  the 99% / 99.9% configuration.
+  the 99% / 99.9% configuration. *(2026-09-14: that holds only until the next `/env down`, which now
+  destroys the k6 project and its uploaded tests —
+  `docs/superpowers/specs/2026-09-14-ecs-dynamodb-rps-k6-project-ownership-design.md`. After the next
+  `/env up`, whatever `upload-k6.sh` uploads is what the project carries.)*
 - **Project directory:** `ecs-dynamodb-rps/`
 - **Amends:** `docs/superpowers/specs/2026-08-29-ecs-dynamodb-rps-ceiling-design.md` — replaces the
   99% / 99.9% objectives in *The objective*. And

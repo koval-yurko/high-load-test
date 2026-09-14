@@ -22,27 +22,23 @@ else
   note "it is gitignored; never commit it"
 fi
 
-# Filled in later, from a terraform output — legitimately empty at setup time.
-DEFERRED="K6_CLOUD_PROJECT_ID"
+# Every key the template declares is needed at setup time. There used to be one exception,
+# K6_CLOUD_PROJECT_ID, filled in after the first apply; it was removed on 2026-09-14 because the
+# k6 project is now created per environment and its id is read from `terraform output`.
 
 echo
 step "Keys the template declares"
-EMPTY=""; DEFER_EMPTY=""; SET_COUNT=0
+EMPTY=""; SET_COUNT=0
 for key in $(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$TEMPLATE" | tr -d '='); do
   val=$(env_value "$key" "$ENV_FILE" || true)
   if [ -n "$val" ]; then
     SET_COUNT=$((SET_COUNT + 1))
-  elif echo " $DEFERRED " | grep -q " $key "; then
-    DEFER_EMPTY="$DEFER_EMPTY $key"
   else
     EMPTY="$EMPTY $key"
   fi
 done
 
 ok "$SET_COUNT keys set"
-for key in $DEFER_EMPTY; do
-  info "$key — empty, but filled after the first apply, not now"
-done
 for key in $EMPTY; do
   bad "$key — empty"
 done

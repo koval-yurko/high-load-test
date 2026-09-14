@@ -17,7 +17,7 @@ database capacity), re-measure. Never both at once, or the comparison is worthle
 | `https://k0valchuk.grafana.net/dashboards` | folder `high-load-test / ecs-dynamodb-rps` → dashboard **ecs-dynamodb-rps — attribution**. Seven numbered rows; references below name the row and panel. |
 | `https://k0valchuk.grafana.net/alerting/list` | folder `high-load-test / ecs-dynamodb-rps` → this project's nine rules (the 13 under folder `grafana-slo` are the SLO app's recording rules, not alerts) |
 | `https://k0valchuk.grafana.net/a/grafana-slo-app/slos` | the SLO **ecs-dynamodb-rps latency classes** — error budget and 7-day attainment |
-| `https://k0valchuk.grafana.net/a/k6-app/projects` | the project named **ecs-dynamodb-rps** → its k6 tests and every run result |
+| `https://k0valchuk.grafana.net/a/k6-app/projects` | the project named **ecs-dynamodb-rps** → its k6 tests and the runs since the last `/env up` (the project is destroyed with the environment) |
 
 **The dashboard has no permanent URL by design** — its JSON pins no `uid`, so Grafana mints a new one
 every time the folder is recreated and any `/d/<uid>/…` link written here dies at the next teardown.
@@ -30,15 +30,16 @@ curl -s -H "Authorization: Bearer $GRAFANA_AUTH" \
 
 It opens at the last 1 hour. Set the range to the run's window when reading a load test.
 
-**The k6 project's id is not written down here either.** Pick the project by name, or jump straight
-to it:
+**The k6 project's id is not written down here either**, and not in `.env`: `infra/k6` creates the
+project and `/env down` destroys it, so the id is new after every rebuild. Pick the project by name,
+or jump straight to it:
 
 ```bash
-open "$GRAFANA_URL/a/k6-app/projects/$(terraform -chdir=infra/main output -raw k6_project_id)"
+open "$GRAFANA_URL/a/k6-app/projects/$(terraform -chdir=infra/main output -json | jq -r '.k6_project_id.value // empty')"
 ```
 
-The id is also `K6_CLOUD_PROJECT_ID` in the root `.env`; `terraform -chdir=platform output -json
-k6_project_ids` re-derives it if that is ever wrong.
+`-json` + `jq`, not `-raw`: against empty state — the normal condition between `/env down` and the
+next `/env up` — `-raw` prints a warning to stdout and exits 0, and `open` would be handed the warning.
 
 ---
 
@@ -175,13 +176,14 @@ Every number must come from a k6 run or Grafana query executed in the same sessi
 |---|---|
 | **Service URL** | `terraform -chdir=infra/main output -raw base_url` — **deliberately not in this repo, and not in `.env` either.** Terraform owns it; a copy elsewhere is just the stale one (which is exactly what happened on 2026-09-10) |
 | **Terraform Cloud** | https://app.terraform.io/app/failwin/workspaces/ecs-dynamodb-rps |
-| **Grafana Cloud k6** | https://k0valchuk.grafana.net/a/k6-app/projects → **ecs-dynamodb-rps**. The project is owned by `platform/` and survives `/env down`; its id comes from `terraform -chdir=infra/main output -raw k6_project_id` or `.env`'s `K6_CLOUD_PROJECT_ID` |
+| **Grafana Cloud k6** | https://k0valchuk.grafana.net/a/k6-app/projects → **ecs-dynamodb-rps**. Created by `infra/k6` and destroyed by `/env down`, with its uploaded tests and run history; its id comes only from `terraform -chdir=infra/main output -json` (`.k6_project_id.value`) |
 | **ECS service** | https://eu-central-1.console.aws.amazon.com/ecs/v2/clusters/ecs-dynamodb-rps/services?region=eu-central-1 |
 | **DynamoDB table** | https://eu-central-1.console.aws.amazon.com/dynamodbv2/home?region=eu-central-1#table?name=ecs-dynamodb-rps |
 | **CloudWatch logs** | log group `/ecs/ecs-dynamodb-rps`, 1-day retention |
 
 AWS account `042945885621`, region `eu-central-1`. The AWS and TFC links are built from fixed names,
-so they resolve while the environment is applied and 404 after a teardown.
+so they resolve while the environment is applied and 404 after a teardown; the k6 projects page
+simply lists no `ecs-dynamodb-rps` project.
 
 ## Service endpoints
 
@@ -236,7 +238,8 @@ When setup breaks, it is almost always one of these:
 | symptom | cause |
 |---|---|
 | `"organization" must be set … TF_CLOUD_ORGANIZATION` | direnv did not load — `direnv allow` at the repo root |
-| plan fails at the `k6_project_id` output | `terraform -chdir=platform apply` was skipped; it creates the workspace, variable set, Grafana folder and k6 project |
+| plan fails on `data.grafana_folder.root` | `terraform -chdir=platform apply` was skipped; it creates the workspace, variable set and the `high-load-test` Grafana folder this project nests under |
+| `upload-k6.sh`: "infra/main has no k6_project_id output" | the environment is not applied, so its k6 project does not exist — `/env up` first |
 | workspace lands in the org's *default* project | `.env` is missing `TF_CLOUD_PROJECT=high-load-test` |
 | Terraform aborts over the workspace name | something exports `TF_WORKSPACE`; it must not |
 | `Error: No configuration files` | bare `terraform apply` at the project root — use `-chdir=infra/main` |
@@ -397,9 +400,12 @@ finds without asking**; a survivor may belong to another project. One thing it c
 autoscaling has run, Application Auto Scaling leaves two `TargetTracking-…` CloudWatch alarms
 carrying no `Project` tag.
 
-**The k6 project survives**, with its uploaded tests, settings and run history — it is owned by
-`platform/`, and `infra/k6` only reads it back by name. The Grafana folder `high-load-test` survives
-too; this project's subfolder, with its dashboard, SLO and rules, goes with the destroy.
+**The k6 project goes with the destroy**, together with its uploaded tests, settings page and run
+history — `infra/k6` creates it. That is accepted: `results.md` is the record, and `/loadtest
+--compare` reads it, not the cloud. The next `/env up` creates a new project with a new id and **no
+tests in it**, so re-run `./scripts/upload-k6.sh` before any cloud run. (Until 2026-09-14 the
+project lived in `platform/` and survived.) The Grafana folder `high-load-test` does survive; this
+project's subfolder, with its dashboard, SLO and rules, goes with the destroy.
 
 ---
 
@@ -423,9 +429,12 @@ with the query that produced them, never typed from memory.
 
 - **Terraform does not rebuild the container image.** Any change under `service/src/` needs
   `./scripts/deploy-service.sh`. Fails silently — the service looks healthy while running old code.
-- **Uploading the k6 profiles is manual, and silent when skipped.** `grafana_k6_load_test` takes a
-  single script string and these import from `tests/lib/`, so there is no Terraform resource for it.
-  `./scripts/upload-k6.sh --check` names anything stale.
+- **Uploading the k6 profiles is manual, silent when skipped, and needed after every `/env up`.**
+  `grafana_k6_load_test` takes a single script string and these import from `tests/lib/`, so there is
+  no Terraform resource for it. The k6 project itself is destroyed and recreated with the
+  environment, so a fresh environment always starts with an empty project. `./scripts/upload-k6.sh
+  --check` names anything stale — while the environment is up; with it down there is no project to
+  check.
 - **The k6 environment-variables settings page cannot be automated** — no API (every
   environment-variable path under `/cloud/v6` is a 404, checked 2026-09-09), no Terraform resource.
   `upload-k6.sh` works around it by baking the values into the archive.

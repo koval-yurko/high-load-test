@@ -27,6 +27,13 @@ imported, new id on every apply" decision of commit `901b97d`
 (spec 7.2), and the "`ThrottledRequests` is not dropped" half of decision D2 in the 2026-09-01
 datasource-fidelity spec (spec Tier 1.8) — Task 6 writes both forward-pointers.
 
+> **2026-09-14 — the k6 half of this plan is superseded.** Every step below that puts
+> `grafana_k6_project` in `platform/`, reads it back with a data source, or sets
+> `K6_CLOUD_PROJECT_ID` in `.env` records what was executed then, not what is true now: the k6
+> project moved back into `ecs-dynamodb-rps/infra/k6` and the key was deleted. See
+> `docs/superpowers/specs/2026-09-14-ecs-dynamodb-rps-k6-project-ownership-design.md` and its plan.
+> Task numbers here are unchanged, since the ledger references them.
+
 **Ledger:** `.superpowers/sdd/2026-09-03-ecs-dynamodb-rps-restructure/` (gitignored, like the
 others).
 
@@ -904,6 +911,10 @@ curl -s -H "Authorization: Bearer $TF_TOKEN_app_terraform_io" "https://app.terra
 ```
 
 - [x] **Step 5: Set the stable k6 id once, delete the old project**
+
+  > *Superseded 2026-09-14:* there is no stable id and no `K6_CLOUD_PROJECT_ID` any more — the k6
+  > project is created per environment. See
+  > `docs/superpowers/specs/2026-09-14-ecs-dynamodb-rps-k6-project-ownership-design.md`.
 
 ```bash
 terraform -chdir=platform output -json k6_project_ids | jq -r '."ecs-dynamodb-rps"'

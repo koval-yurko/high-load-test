@@ -91,9 +91,10 @@ whenever something stops working. Pass a project to have it `terraform init` tha
 Then bring up the shared stack, once, and deploy a project into it:
 
 ```bash
-terraform -chdir=platform apply                    # shared stack: TFC project, workspaces, Grafana folder, k6 projects
-terraform -chdir=<project>/infra/main apply -var-file=dev.tfvars
+terraform -chdir=platform apply                    # shared stack: TFC project, workspaces, Grafana folder
+terraform -chdir=<project>/infra/main apply -var-file=dev.tfvars   # also creates the project's k6 project
 cd <project> && ./scripts/deploy-service.sh        # build → push → roll the ECS service → seed → health
+./scripts/upload-k6.sh                             # the k6 project is new on every apply: upload the profiles
 ```
 
 Both applies stay manual and separate from the scripts: the `guard-terraform.sh` hook matches on
@@ -117,7 +118,7 @@ these are the ones with a catch.
 | `TF_TOKEN_app_terraform_io` | exact spelling: `TF_TOKEN_<hostname, dots as underscores>` |
 | `TF_CLOUD_PROJECT` | must be `high-load-test`, or `init` puts the workspace in the org's default project |
 | `TF_WORKSPACE` | **must not exist.** Each root module names its own workspace in `cloud { workspaces { name = … } }`; one exported value could only ever be right for one of them, and Terraform aborts when it disagrees |
-| `K6_CLOUD_PROJECT_ID` | filled after the first apply, not at setup — `02` expects it empty. There is no `BASE_URL` key: the endpoint is per-project and Terraform owns it, so everything reads `terraform -chdir=<project>/infra/main output` instead of a copy here |
+| `K6_CLOUD_TOKEN` | there is **no** `K6_CLOUD_PROJECT_ID` and **no** `BASE_URL` key beside it. Both are per-project values Terraform owns — the k6 project is created and destroyed with the environment, so its id changes on every rebuild — and a copy here could only ever be the stale one. Everything reads `terraform -chdir=<project>/infra/main output -json` instead (never `-raw`, which prints a warning to stdout against empty state). If an old `.env` still has `K6_CLOUD_PROJECT_ID`, delete the line |
 | `K6_PROMETHEUS_RW_SERVER_URL` | ends in `/api/prom/push`; `_USERNAME` is the numeric instance ID, not a policy name |
 
 `AWS_PROFILE` must stay unset — environment variables outrank `~/.aws/credentials`, and setting
@@ -166,7 +167,8 @@ idle DocumentDB cluster costs considerably more.
 - Every resource carries a `Project = <project-dir>` tag (via provider `default_tags`), so the
   teardown sweep can find orphans with one query. Untagged resources are invisible to it.
 - `terraform destroy` reporting success is **not** evidence the account is clean. `/env down` runs a
-  sweep afterwards for NAT gateways, unattached EIPs, manual snapshots, log groups, and ECR repos.
+  sweep afterwards for NAT gateways, unattached EIPs, manual snapshots, log groups, ECR repos, and a
+  surviving Grafana Cloud k6 project (not billable, but an orphan the tag query cannot see).
 - A `PreToolUse` hook (`.claude/hooks/guard-terraform.sh`) intercepts `terraform apply`/`destroy` in
   Claude Code sessions: it prompts for confirmation, and **blocks `-auto-approve` outright** since that
   flag removes the human gate. It does not affect terraform run manually in your own terminal.
@@ -204,13 +206,13 @@ docs/superpowers/plans/   plans   (writing-plans skill)
 ```
 
 `platform/` is the one Terraform root that is not a project: it owns the Terraform Cloud project, one
-workspace per repo project, the shared variable set, the Grafana folder `high-load-test` and the
-Grafana Cloud k6 projects — everything a project workspace needs to already exist. It is long-lived,
+workspace per repo project, the shared variable set and the Grafana folder `high-load-test` —
+everything a project workspace needs to already exist. (Each project's Grafana Cloud k6 project is
+not here: it lives in that project's `infra/k6` and is destroyed with it.) It is long-lived,
 runs locally, and is applied by hand
 (`terraform -chdir=platform apply`), never by `/env up`. See
 `platform/README.md`.
 
 Projects are independent by design — they must not share Terraform modules or state, so each can be
 created and destroyed in isolation. Duplication between projects is preferred over coupling. What
-`platform/` creates they find by a fixed string (the folder title, the k6 project's name), not by
-reading its state.
+`platform/` creates they find by a fixed string (the folder title), not by reading its state.

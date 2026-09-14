@@ -120,11 +120,5 @@ resource "aws_ecs_service" "app" {
     rollback = true
   }
 
-  # Application Auto Scaling owns desired_count once enabled; without this,
-  # every plan would try to reset it and fight the scaling policy.
-  lifecycle {
-    ignore_changes = [desired_count]
-  }
-
   depends_on = [aws_lb_listener.http]
 }

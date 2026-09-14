@@ -11,7 +11,7 @@ resource "tfe_project" "this" {
 resource "tfe_workspace" "platform" {
   name        = "platform"
   project_id  = tfe_project.this.id
-  description = "Owns the TFC project, the project workspaces, the shared variable set, the shared Grafana folder and the k6 projects. See docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md section 6."
+  description = "Owns the TFC project, the project workspaces, the shared variable set, the shared Grafana folder. See docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md section 6; each project's k6 project lives in that project's own stack."
   tag_names   = ["high-load-test", "platform"]
 }
 
@@ -24,7 +24,9 @@ resource "tfe_workspace_settings" "platform" {
 }
 
 locals {
-  # One entry per repo project directory. Adding a project is adding a line here.
+  # One entry per repo project directory. Adding a project is adding a line here --
+  # which creates its TFC workspace. It no longer creates the k6 project: that is in
+  # the project's own infra/k6 module, created and destroyed with the environment.
   projects = {
     "ecs-dynamodb-rps" = { working_directory = "infra/main" }
   }

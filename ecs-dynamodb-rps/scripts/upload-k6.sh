@@ -78,21 +78,30 @@ have k6   || require_step "k6 is not installed"   "brew install k6      # then r
 have jq   || require_step "jq is not installed"   "brew install jq      # then re-run"
 have direnv || require_step "direnv is not installed" "brew install direnv  # the credentials live in the root .env"
 
-PROJECT_ID=$(d printenv K6_CLOUD_PROJECT_ID 2>/dev/null || true)
 TOKEN=$(d printenv K6_CLOUD_TOKEN 2>/dev/null || true)
 STACK=$(d printenv GRAFANA_STACK_ID 2>/dev/null || true)
-[ -n "$PROJECT_ID" ] && [ -n "$TOKEN" ] && [ -n "$STACK" ] || blocked "k6 upload" \
-  "K6_CLOUD_PROJECT_ID, K6_CLOUD_TOKEN or GRAFANA_STACK_ID is empty in the root .env" \
+[ -n "$TOKEN" ] && [ -n "$STACK" ] || blocked "k6 upload" \
+  "K6_CLOUD_TOKEN or GRAFANA_STACK_ID is empty in the root .env" \
   "fill them in (.env.example documents each), then: direnv allow" \
+  "./scripts/upload-k6.sh"
+
+# The k6 project is created by this project's own infra/main and destroyed by /env down, so its id
+# changes on every rebuild and is never copied anywhere -- ask Terraform now. `output -json` + jq, NOT
+# `output -raw`: against empty state (the normal condition between /env down and the next /env up)
+# -raw prints a multi-line warning to STDOUT and exits 0, which would land here as the "id".
+PROJECT_ID=$(d terraform -chdir="$PROJECT_DIR/infra/main" output -json 2>/dev/null | jq -r '.k6_project_id.value // empty' || true)
+[ -n "$PROJECT_ID" ] || blocked "k6 upload" \
+  "infra/main has no k6_project_id output — the environment is not applied, so there is no k6 project to upload into" \
+  "/env up $PROJECT     # creates the k6 project with everything else" \
   "./scripts/upload-k6.sh"
 ok "k6 project $PROJECT_ID on stack $STACK"
 
-# The project is owned by platform/, not by this project's state. If it is gone, uploading would
-# silently create nothing recognisable -- fail here instead.
+# The output can outlive the project it names -- state that was not refreshed, or a project deleted
+# by hand. Uploading into a missing project would silently create nothing recognisable, so fail here.
 PROJECT_NAME=$(api "projects/$PROJECT_ID" | jq -r '.name // empty')
 [ -n "$PROJECT_NAME" ] || blocked "k6 upload" \
   "k6 project $PROJECT_ID does not exist, or the token cannot see it" \
-  "terraform -chdir=platform apply     # platform/ owns the k6 project" \
+  "terraform -chdir=infra/main apply -var-file=dev.tfvars     # recreates the k6 project" \
   "./scripts/upload-k6.sh"
 ok "project name '$PROJECT_NAME'"
 
@@ -242,10 +251,15 @@ for t in "${TESTS[@]}"; do
   step "Uploading $t.js"
   [ -f "tests/$t.js" ] || { bad "tests/$t.js does not exist"; continue; }
 
+  # K6_CLOUD_PROJECT_ID is how `k6 cloud upload` picks the project -- no script under tests/ sets
+  # options.cloud.projectID. It used to arrive implicitly from the root .env through direnv; it is
+  # passed explicitly now, from the Terraform output resolved in section 1. Without it the upload
+  # lands in the stack's DEFAULT project, and the read-back below (by $PROJECT_ID) finds nothing.
+  # Explicit also beats a stale K6_CLOUD_PROJECT_ID still left in someone's .env.
   if [ "$DRY" -eq 1 ]; then
-    info "dry run: k6 cloud upload ${E_ARGS[*]} tests/$t.js"
+    info "dry run: K6_CLOUD_PROJECT_ID=$PROJECT_ID k6 cloud upload ${E_ARGS[*]} tests/$t.js"
   else
-    if ! d k6 cloud upload "${E_ARGS[@]}" "tests/$t.js"; then
+    if ! d env K6_CLOUD_PROJECT_ID="$PROJECT_ID" k6 cloud upload "${E_ARGS[@]}" "tests/$t.js"; then
       bad "$t.js was not uploaded"
       note "a 400 with E2004 means the archived preAllocatedVUs exceeds the project's 100-VU cap"
       continue

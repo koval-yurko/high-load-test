@@ -4,7 +4,7 @@
 # under the project rather than inline in the infrastructure root:
 #
 #   ../grafana  folder, dashboard, SLO, burn-rate rules, the throttle rule
-#   ../k6       looks up the Grafana Cloud k6 project platform/ owns
+#   ../k6       the Grafana Cloud k6 project and its limits
 #
 # Both resolve only because the workspace's working directory is infra/main, so
 # the run's upload root is ecs-dynamodb-rps/ -- see the comment in versions.tf.
@@ -25,8 +25,8 @@ module "grafana" {
   target_group_arn_suffix = aws_lb_target_group.app.arn_suffix
 }
 
-# Read-only: the k6 project is created by platform/ and outlives /env down, so
-# this module finds it by name and never manages it.
+# Creates this project's k6 project, so /env down destroys it -- along with the
+# load tests uploaded into it and its run history. Re-upload after every /env up.
 module "k6" {
   source = "../k6"
 
