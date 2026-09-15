@@ -300,6 +300,22 @@ test('a fast 5xx is a miss: the numerator excludes server errors, the denominato
   assert.doesNotMatch(expr, /http\.response\.status_code/);
 });
 
+test('a shed 429 counts as good in every generated status filter (spike-response spec §7)', () => {
+  // Admission control answers overload with 429 + Retry-After by design. On the
+  // Grafana side that must not burn budget -- the k6 side counts it as a miss,
+  // a divergence knowingly accepted in the 2026-09-15 spike-response spec §7.
+  // PromQL regex matchers are fully anchored, hence ^(?:...)$.
+  const doc = loadSlo(`${HERE}slo.yaml`);
+  const exprs = [ratioExpr(doc, { range: '5m' }), renderAlerts(doc), renderLocals(doc)].join('\n');
+  const patterns = [...exprs.matchAll(/http_response_status_code!~"([^"]*)"/g)].map((m) => m[1]);
+  assert.ok(patterns.length > 0, 'no status filter found -- the parse is stale, not the rule');
+  for (const p of patterns) {
+    const excluded = new RegExp(`^(?:${p})$`);
+    assert.equal(excluded.test('429'), false, `filter !~"${p}" would score a shed 429 as a miss`);
+    assert.equal(excluded.test('503'), true, `filter !~"${p}" no longer excludes a 5xx`);
+  }
+});
+
 test('the availability objective gets its own burn rules, on the same population', () => {
   const doc = loadSlo(`${HERE}slo.yaml`);
   const out = renderAlerts(doc);
