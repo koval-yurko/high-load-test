@@ -1,6 +1,8 @@
 // src/admission.js
-// Admission control (spike-response spec §6): above the shed threshold, reject
-// immediately with 429 + Retry-After instead of accepting into a queue. The one
+// Admission control (2026-09-15 spike-response spec §6 -- "spec" below means
+// docs/superpowers/specs/2026-09-15-ecs-dynamodb-rps-spike-response-design.md):
+// above the shed threshold, reject immediately with 429 + Retry-After instead
+// of accepting into a queue. The one
 // task that exists in the first minutes of a spike otherwise queues everything,
 // and a uniform ~130 ms of queueing pushed 71% of fast-class requests over their
 // threshold with zero errors (spec §1). A shed request costs ~1 ms; a queue slot
