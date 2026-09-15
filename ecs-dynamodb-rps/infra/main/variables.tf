@@ -78,6 +78,12 @@ variable "requests_scaling_enabled" {
   default     = false
 }
 
+variable "elu_scaling_enabled" {
+  description = "Gates the event-loop-utilization alarm and step-scaling policy (Change 2) on top of autoscaling_enabled. Default off: the baseline and Change 1 runs must not have it, and the Change 2 re-measure (spike-response plan Task 8) flips only this flag. The ELU publisher, its IAM statement and its env vars are NOT gated -- publishing changes no scaling behaviour."
+  type        = bool
+  default     = false
+}
+
 variable "autoscaling_rps_target" {
   description = <<-EOT
     ALBRequestCountPerTarget target value, in requests per target per MINUTE

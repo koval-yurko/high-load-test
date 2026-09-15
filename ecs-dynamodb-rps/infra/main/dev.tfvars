@@ -44,3 +44,9 @@ autoscaling_enabled = true
 # this to true and changes nothing else, so the before/after comparison
 # changes exactly one knob from the same commit.
 requests_scaling_enabled = false
+
+# Off for the baseline (Task 4) and Change 1 (Task 6) runs. The Change 2
+# re-measure (Task 8) flips this to true and changes nothing else. The service
+# publishes EventLoopUtilization regardless, so the earlier runs still record
+# the series the 0.70 / 0.85 thresholds are checked against.
+elu_scaling_enabled = false

@@ -33,10 +33,38 @@ resource "aws_iam_role" "task" {
   assume_role_policy = data.aws_iam_policy_document.assume_ecs_tasks.json
 }
 
+# What the service publishes its event-loop utilization under (src/cloudwatch.js).
+# One definition, read by the task's environment, the IAM condition below and the
+# alarm in autoscaling.tf: an alarm whose namespace or dimension differs by one
+# character from what the service sends matches no metric and sits in
+# INSUFFICIENT_DATA forever, without an error anywhere.
+locals {
+  metrics_namespace    = var.project
+  metrics_service_name = var.project
+}
+
 data "aws_iam_policy_document" "table_access" {
   statement {
     actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:BatchWriteItem"]
     resources = [aws_dynamodb_table.items.arn]
+  }
+
+  # Event-loop utilization for the ELU scaling alarm (spike-response spec §5).
+  # PutMetricData supports no resource-level permissions, so resources must be
+  # "*"; the cloudwatch:namespace condition is what keeps this task from writing
+  # into any other namespace. Not gated by elu_scaling_enabled: publishing
+  # changes no behaviour, and the baseline run needs the series to calibrate
+  # the thresholds against. (Lives in the policy still named "table-access" --
+  # renaming it would replace the policy for a cosmetic reason.)
+  statement {
+    actions   = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values   = [local.metrics_namespace]
+    }
   }
 }
 
@@ -78,6 +106,12 @@ resource "aws_ecs_task_definition" "app" {
       { name = "PBKDF2_ITERATIONS", value = tostring(var.pbkdf2_iterations) },
       { name = "FEED_PAGE_SIZE", value = tostring(var.feed_page_size) },
       { name = "OTLP_ENDPOINT", value = "http://collector.${aws_service_discovery_private_dns_namespace.internal.name}:4318" },
+      # Sets the publisher on (src/config.js: absent => no publisher). Set
+      # explicitly rather than relying on the service's defaults, because the
+      # alarm in autoscaling.tf must match these values exactly. OTEL_SERVICE_NAME
+      # is also the OTel service.name; its value equals the service's default.
+      { name = "METRICS_NAMESPACE", value = local.metrics_namespace },
+      { name = "OTEL_SERVICE_NAME", value = local.metrics_service_name },
     ]
 
     logConfiguration = {
