@@ -62,14 +62,9 @@ variable "autoscaling_enabled" {
   default = false
 }
 
-variable "autoscaling_min" {
-  type    = number
-  default = 1
-}
-
 variable "autoscaling_max" {
   type    = number
-  default = 4
+  default = 15
 }
 
 variable "autoscaling_cpu_target" {
