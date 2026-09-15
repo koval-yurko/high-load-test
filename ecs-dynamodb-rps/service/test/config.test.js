@@ -44,3 +44,21 @@ test('otel config has safe defaults and is disabled without an endpoint', () => 
   assert.equal(on.otlpEndpoint, 'http://collector.local:4318');
   assert.equal(on.exportIntervalMs, 5000);
 });
+
+test('cloudwatch metrics publisher is disabled without a namespace', () => {
+  const off = loadConfig({});
+  assert.equal(off.metricsNamespace, undefined);
+  assert.equal(off.metricsIntervalMs, 10000);
+
+  const on = loadConfig({ METRICS_NAMESPACE: 'ecs-dynamodb-rps', METRICS_INTERVAL_MS: '5000' });
+  assert.equal(on.metricsNamespace, 'ecs-dynamodb-rps');
+  assert.equal(on.metricsIntervalMs, 5000);
+});
+
+test('an empty namespace counts as absent', () => {
+  assert.equal(loadConfig({ METRICS_NAMESPACE: '' }).metricsNamespace, undefined);
+});
+
+test('rejects a non-numeric metrics interval', () => {
+  assert.throws(() => loadConfig({ METRICS_INTERVAL_MS: 'soon' }), /METRICS_INTERVAL_MS/);
+});

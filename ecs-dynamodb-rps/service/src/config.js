@@ -20,5 +20,12 @@ export function loadConfig(env = process.env) {
     // what lets every unit and integration test run with no collector present.
     otlpEndpoint: env.OTLP_ENDPOINT || undefined,
     exportIntervalMs: num(env, 'OTEL_EXPORT_INTERVAL_MS', 15_000),
+    // Same pattern as otlpEndpoint: absent => no CloudWatch publisher and no AWS
+    // client is created, so tests need no AWS. The metric's ServiceName dimension
+    // is serviceName above; the alarm in infra/main/autoscaling.tf must match both.
+    metricsNamespace: env.METRICS_NAMESPACE || undefined,
+    // 10s, not 1s: 1s publishing is ~$16/month in PutMetricData requests and the
+    // 20s alarm period only needs two datapoints per period (spec §5).
+    metricsIntervalMs: num(env, 'METRICS_INTERVAL_MS', 10_000),
   };
 }

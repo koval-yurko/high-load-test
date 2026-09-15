@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { loadConfig } from './config.js';
 import { createRepo } from './dynamo.js';
 import { createHandlers, matchRoute } from './handlers.js';
+import { startEluPublisher } from './cloudwatch.js';
 import { recordRequest, startOtel } from './otel.js';
 import { createTimer } from './timing.js';
 
@@ -73,6 +74,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const otel = config.otlpEndpoint
     ? await startOtel({ ...config, instanceIdFallback: `local-${process.pid}` })
     : null;
+  // Same gate as OTel: no METRICS_NAMESPACE, no publisher and no AWS client.
+  // Started before the listener so the first overload is already being sampled.
+  const metrics = config.metricsNamespace ? startEluPublisher(config) : null;
   const server = createServer({ handlers: createHandlers({ repo, config }) });
   // The ALB's idle_timeout is 60s (terraform/alb.tf). AWS requires the target's keep-alive to
   // exceed the load balancer's idle timeout, or the ALB can dispatch a request onto a connection
@@ -89,6 +93,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       // the window. Counters are cumulative, but only for a task still alive to
       // send them.
       if (otel) await otel.shutdown().catch(() => {});
+      // No final flush: a scaling alarm has no use for the last ELU sample of a
+      // task that is already leaving.
+      metrics?.stop();
       repo.destroy();
       process.exit(0);
     }));
