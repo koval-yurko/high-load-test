@@ -84,6 +84,24 @@ variable "elu_scaling_enabled" {
   default     = false
 }
 
+variable "shedding_enabled" {
+  description = "Gates admission control (Change 3): when true the task definition sets SHED_ELU_THRESHOLD and the service rejects with 429 + Retry-After above it (service/src/admission.js). Default off: the baseline, Change 1 and Change 2 runs must not shed, and the Change 3 re-measure (spike-response plan Task 10) flips only this flag."
+  type        = bool
+  default     = false
+}
+
+variable "shed_elu_threshold" {
+  description = "Event-loop utilization above which the service sheds load (SHED_ELU_THRESHOLD). Only passed when shedding_enabled is true."
+  type        = number
+  # INVARIANT (2026-09-15 spike-response spec, section 6.1): must stay STRICTLY
+  # ABOVE every ELU scale-out threshold in autoscaling.tf (alarm 0.70, steps
+  # 0.70 and 0.85). Shedding lowers ELU and clamps it near this value, so a
+  # scale-out step at or above it never fires and one task sheds forever while
+  # looking healthy. service/test/admission.test.js reads this default and those
+  # thresholds from the HCL and fails if the order is inverted.
+  default = 0.92
+}
+
 variable "autoscaling_rps_target" {
   description = <<-EOT
     ALBRequestCountPerTarget target value, in requests per target per MINUTE

@@ -99,7 +99,7 @@ resource "aws_ecs_task_definition" "app" {
     # deploy or a scale-in is most likely to land in. 120s is the Fargate maximum.
     stopTimeout = var.stop_timeout_seconds
 
-    environment = [
+    environment = concat([
       { name = "PORT", value = tostring(var.container_port) },
       { name = "TABLE_NAME", value = aws_dynamodb_table.items.name },
       { name = "AWS_REGION", value = data.aws_region.current.region },
@@ -112,7 +112,15 @@ resource "aws_ecs_task_definition" "app" {
       # is also the OTel service.name; its value equals the service's default.
       { name = "METRICS_NAMESPACE", value = local.metrics_namespace },
       { name = "OTEL_SERVICE_NAME", value = local.metrics_service_name },
-    ]
+      ],
+      # Admission control (Change 3, spike-response spec section 6). The service
+      # sheds only when this variable is present (src/config.js), so it is set
+      # only when shedding_enabled is true -- the flag is the whole switch, and
+      # the Change 3 re-measure flips nothing else.
+      var.shedding_enabled ? [
+        { name = "SHED_ELU_THRESHOLD", value = tostring(var.shed_elu_threshold) },
+      ] : [],
+    )
 
     logConfiguration = {
       logDriver = "awslogs"

@@ -50,3 +50,10 @@ requests_scaling_enabled = false
 # publishes EventLoopUtilization regardless, so the earlier runs still record
 # the series the 0.70 / 0.85 thresholds are checked against.
 elu_scaling_enabled = false
+
+# Off for the baseline (Task 4), Change 1 (Task 6) and Change 2 (Task 8) runs.
+# The Change 3 re-measure (Task 10) flips this to true and changes nothing else.
+# The shed threshold itself is var.shed_elu_threshold's default (0.92), which
+# must stay above the ELU scale-out thresholds -- do not override it here
+# without re-reading its invariant in variables.tf.
+shedding_enabled = false
