@@ -72,6 +72,26 @@ variable "autoscaling_cpu_target" {
   default = 60
 }
 
+variable "requests_scaling_enabled" {
+  description = "Gates the second (ALBRequestCountPerTarget) autoscaling policy on top of autoscaling_enabled. Default off: the baseline stress run (spike-response plan Task 4) must measure the CPU-only policy alone, and the Change 1 re-measure (Task 6) flips only this flag so the before/after comparison changes exactly one knob."
+  type        = bool
+  default     = false
+}
+
+variable "autoscaling_rps_target" {
+  description = <<-EOT
+    ALBRequestCountPerTarget target value, in requests per target per MINUTE
+    (not per second) -- 6,000 = 100 rps/task. Run 8554820 only brackets
+    per-task capacity between 100 and 200 rps/task; 6,000 is the conservative
+    (100 rps/task) end of that bracket, chosen because it is unmeasured.
+    Correction signal: the steady-state task count in the spike-response
+    plan's Task 6 run -- if the fleet settles well under the traffic it
+    should take, raise this value.
+  EOT
+  type        = number
+  default     = 6000
+}
+
 variable "image_tag" {
   type    = string
   default = "latest"

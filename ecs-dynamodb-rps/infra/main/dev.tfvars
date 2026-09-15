@@ -38,3 +38,9 @@ pbkdf2_iterations = 2662
 feed_page_size    = 20
 
 autoscaling_enabled = true
+
+# Off for the baseline stress run (spike-response plan Task 4), which must
+# measure the CPU-only policy alone. The Change 1 re-measure (Task 6) flips
+# this to true and changes nothing else, so the before/after comparison
+# changes exactly one knob from the same commit.
+requests_scaling_enabled = false
