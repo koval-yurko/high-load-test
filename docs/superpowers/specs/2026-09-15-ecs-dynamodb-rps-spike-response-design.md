@@ -7,6 +7,10 @@
   shed threshold to sit *below* the scale-out threshold. That is backwards and would have broken the
   design — see the invariant in §6.1. The thresholds in §5 changed with it (0.80/0.95 → 0.70/0.85).
   Nothing else moved; no decision in §10 is affected.
+- **Corrections, 2026-09-16, from the final branch review (wording only, no decision moved):** §4's
+  opening said "replace" the CPU policy — it is kept, and request count is a second policy; §5's step
+  labels contradicted its own 1 → 5 → 15 model; §11 gains risk 6 (an all-or-nothing shed gate can
+  average ELU below the alarm while shedding). Each is annotated in place.
 - **Project directory:** `ecs-dynamodb-rps/`
 - **Amends:** nothing is reversed here. §7 *clarifies* a claim made by the 4xx decision of
   2026-09-02 (`docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md` §392 and
@@ -94,6 +98,12 @@ fixes.
 
 Replace the predefined metric on the existing target-tracking policy:
 
+> **Correction, 2026-09-16:** "replace" is wrong. The CPU target-tracking policy is **kept**, and
+> request count is a **second** target-tracking policy alongside it — as this section's own
+> paragraph "The CPU policy is kept, not replaced" below says, and as built in
+> `ecs-dynamodb-rps/infra/main/autoscaling.tf` (`aws_appautoscaling_policy.requests`). The HCL block
+> is that second policy's metric specification.
+
 ```hcl
 predefined_metric_specification {
   predefined_metric_type = "ALBRequestCountPerTarget"
@@ -137,9 +147,14 @@ dimensioned by service (not task) so datapoints from multiple tasks aggregate. T
 **20-second period, 1 datapoint**, and drive a **step scaling** policy:
 
 ```
-ELU >= 0.70  ->  +200%    # 1 -> 3
-ELU >= 0.85  ->  +400%    # 3 -> 15 (capped at autoscaling_max)
+ELU >= 0.70  ->  +200%    # of current capacity: 1 -> 3, or 5 -> 15 (capped at autoscaling_max)
+ELU >= 0.85  ->  +400%    # of current capacity: 1 -> 5, or 3 -> 15 (capped at autoscaling_max)
 ```
+
+*(Step labels corrected 2026-09-16: they originally read `1 -> 3` and `3 -> 15`, which contradicted
+the model line below. A spike that cliffs — as run 8554820 did — crosses 0.85 inside the first
+20-second period, so the first decision is the +400% step, 1 → 5, and the next is 5 → 15. The
++200% step is the shallow case, where ELU crosses 0.70 without reaching 0.85.)*
 
 Expressed as Application Auto Scaling wants it: **one** alarm at threshold 0.70, and one step-scaling
 policy whose `step_adjustment` bounds are *relative to that threshold* — `metric_interval_lower_bound
@@ -333,6 +348,16 @@ Two pre-existing defects, both of which distort any measurement taken before the
 5. **Rebuilding the environment costs a fresh ALB endpoint and an image build** — the ECR
    repository was destroyed with everything else, so `scripts/deploy-service.sh` must run before
    the first load test.
+6. **Shedding can silence the scaler even with the invariant satisfied** (added 2026-09-16, from
+   the final branch review). The admission gate as built is all-or-nothing on a 250 ms ELU window
+   with no hysteresis: above 0.92 it rejects every request, ELU falls, it admits every request, ELU
+   rises again. The publisher sends a 10-second average to CloudWatch, and an on/off cycle can
+   average **below the 0.70 alarm threshold while the task is actively shedding** — so the ELU
+   alarm never fires although the ordering 0.70 < 0.85 < 0.92 holds. The request-count policy
+   (change 1) still scales, which is why it stays on during the change 3 run. Plan Task 10 checks
+   this: published ELU against the 429 rate, and whether alarm `ecs-dynamodb-rps-elu-high` actually
+   entered ALARM. If it oscillates, the fix is proportional shedding or hysteresis on the gate — a
+   new decision, recorded in a new spec.
 
 ## 12. Task outline for the plan
 

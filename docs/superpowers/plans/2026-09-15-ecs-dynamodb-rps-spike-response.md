@@ -1,8 +1,16 @@
 # ecs-dynamodb-rps — spike response from a floor of one task
 
-- **Status:** partially executed (on hold) — Tasks 1–2 done on branch
-  `spike-response/ecs-dynamodb-rps`. Blocked on Task 3, the first `terraform apply`, which stops for
-  the user's approval by repo rule. Tasks 3–11 not started.
+- **Status:** partially executed (on hold) — updated 2026-09-16. **Done** on branch
+  `spike-response/ecs-dynamodb-rps`: Tasks 1, 2, 5, 7 and 9 (all code, documentation and reviewed
+  `plan` output; nothing applied by them). **Attempted and failed:** Task 3 — the 2026-09-15 apply
+  created the AWS and Grafana resources but stopped on a 409 Conflict creating the k6 project,
+  because the old k6 project 8476029 was still owned by `platform/` state; the environment has since
+  been destroyed. **Not started:** Tasks 4, 6, 8, 10, 11 — every one needs the environment.
+  **Blocking the rest:** each remaining task contains a `terraform apply` or `destroy`, and the user
+  has not approved any further applies. The first step when they do is to clear the stale k6 project
+  8476029 out of `platform/` state (Task 3's new first step), otherwise `/env up` hits the same 409.
+  Changes 1–3 are each behind a Terraform flag defaulting off — see the gating ruling in the
+  execution record.
 - **Spec:** `docs/superpowers/specs/2026-09-15-ecs-dynamodb-rps-spike-response-design.md` (approved
   2026-09-15)
 - **Goal:** from a floor of **one** task, the service answers a **short** spike — measured as the
@@ -10,7 +18,9 @@
   without any change to the k6 load profiles.
 - **Starting state:** environment destroyed and swept clean (2026-09-15: no table, ALB, NAT, EIP, log
   group or ECR repository). `master`, working tree carries the uncommitted `dev.tfvars` / `ecs.tf` /
-  `variables.tf` / `env` skill edits described in Task 2.
+  `variables.tf` / `env` skill edits described in Task 2. *(As of 2026-09-16 those edits are
+  committed, and the environment is again fully destroyed after the failed Task 3 apply — see the
+  execution record.)*
 
 **Task ordering rule:** every `terraform apply` and `terraform destroy` is its own task and **stops
 for approval** (repo rule — `subagent-driven-development` is adapted this way in CLAUDE.md). A
@@ -61,8 +71,28 @@ Spec §9. Both distort any measurement taken before they land, so they precede t
 
 ## Task 3 — Apply, deploy, upload (STOPS FOR APPROVAL)
 
-- [ ] `/env up ecs-dynamodb-rps` — creates everything from nothing, including the ECR repository and
-  the k6 project (the latter moved into `infra/main` by the 2026-09-14 plan).
+> **Rewritten 2026-09-16, before re-execution.** The first attempt (2026-09-15, see the execution
+> record) failed on a k6 409 because `platform/` still owned k6 project 8476029, and the environment
+> was destroyed afterwards. The first step below is new; the rest is unchanged. Every flag from
+> Tasks 5, 7 and 9 stays **off** in `dev.tfvars` for this apply, so the environment built here is the
+> baseline configuration — but the image deployed here already carries all the service code (the
+> ELU publisher and the admission gate), so later tasks flip flags and never rebuild.
+
+- [ ] **Clear the stale k6 project from `platform/` state first.** The 2026-09-14 k6-ownership plan's
+  `terraform -chdir=platform apply` step never ran, so `platform/` state still lists
+  `grafana_k6_project` 8476029 (name `ecs-dynamodb-rps`) and its limits, although by 2026-09-16 the
+  project no longer exists in the k6 API. Run `terraform -chdir=platform plan` from the repo root —
+  on 2026-09-15 it showed 0 to add, 1 to change (the `platform` workspace description), 2 to destroy
+  (k6 project 8476029 and its limits); re-read it, since refresh may now drop the project on its own.
+  Then `terraform -chdir=platform apply` — **stops for approval**. Expect the destroy either to no-op
+  (refresh already removed the vanished project) or to fail with 404 on a resource that is already
+  gone; **record which happened**, and if it is a 404 that leaves the address in state, stop and ask
+  before reaching for `terraform state rm`.
+- [ ] `/env up ecs-dynamodb-rps` — **stops for approval**. The environment is fully destroyed
+  (2026-09-16: `infra/main` state empty, no table, ALB, NAT, EIP, log group or ECR repository), so
+  this is a full create, not a resume of the failed 2026-09-15 apply: expect the plan Task 2 recorded
+  (56 to add, 0 to change, 0 to destroy), including the ECR repository and the k6 project (the
+  latter moved into `infra/main` by the 2026-09-14 plan).
 - [ ] `ecs-dynamodb-rps/scripts/deploy-service.sh` — the repository is new and empty, so there is no
   image until this runs. The first `terraform apply` will have created a service that cannot pull;
   expect the deployment circuit breaker to matter here and record what it does.
@@ -119,9 +149,21 @@ Spec §4.
   ≈ 1,380/min at one task, well under target), and it is unsupported with blue/green deployments.
 - [ ] Verify: `fmt -check`, `validate`, reviewed `plan` — expect exactly one policy added, nothing
   destroyed.
+  > **Note 2026-09-16 (as built):** the policy is behind `requests_scaling_enabled` (default false,
+  > `dev.tfvars` false), so with the committed tfvars the plan adds nothing; "exactly one policy
+  > added" holds with the flag on (`-var requests_scaling_enabled=true`), which is how it was
+  > verified: `aws_appautoscaling_policy.requests[0]` and nothing else. Reason: the gating ruling in
+  > the execution record.
 
 ## Task 6 — Apply change 1 and re-measure (STOPS FOR APPROVAL)
 
+> **Rewritten 2026-09-16, before execution, for the flag gating:** the change is one tfvars line, not
+> new HCL.
+
+- [ ] `ecs-dynamodb-rps/infra/main/dev.tfvars` — set `requests_scaling_enabled = true`. Nothing else
+  changes. `plan -var-file=dev.tfvars` must show **exactly one resource added,
+  `aws_appautoscaling_policy.requests[0]`**, 0 to change, 0 to destroy; anything more means more
+  than one thing is changing. No image rebuild, no `deploy-service.sh`.
 - [ ] `terraform -chdir=ecs-dynamodb-rps/infra/main apply -var-file=dev.tfvars`
 - [ ] `/loadtest ecs-dynamodb-rps stress` — **identical profile, identical RATE**. The infrastructure
   changed; the test did not.
@@ -162,7 +204,16 @@ Spec §5. The service half is application code and takes the red-green loop; the
 
 ## Task 8 — Apply change 2 and re-measure (STOPS FOR APPROVAL)
 
-- [ ] Apply, then `deploy-service.sh` (the service image changed).
+> **Rewritten 2026-09-16, before execution, for the flag gating.** The original first step was
+> "Apply, then `deploy-service.sh` (the service image changed)". It no longer applies: the ELU
+> publisher, its IAM statement and its environment variables are not gated and were already in the
+> image and task definition deployed at Task 3, so only the alarm and the step policy are new here.
+
+- [ ] `ecs-dynamodb-rps/infra/main/dev.tfvars` — set `elu_scaling_enabled = true`.
+  `requests_scaling_enabled` **stays true** from Task 6; nothing else changes. `plan
+  -var-file=dev.tfvars` must show **exactly two resources added** —
+  `aws_cloudwatch_metric_alarm.elu_high[0]` and `aws_appautoscaling_policy.elu[0]` — 0 to change,
+  0 to destroy. Then apply. **No redeploy:** the service image is unchanged.
 - [ ] `/loadtest ecs-dynamodb-rps stress` — identical profile again.
 - [ ] The headline number: **seconds between the first over-threshold ELU sample and the scaling
   activity's `StartTime`.** Spec §5 predicts ~30 s against the baseline's ~180 s.
@@ -186,18 +237,70 @@ Spec §6. Application code: red-green loop applies.
 - [ ] `service/src/server.js` — the gate runs **before** routing and before body reading, so a shed
   request costs ~1 ms. `/healthz` is never shed: the ALB must not be told the task is unhealthy
   because it is busy.
+  > **Note 2026-09-16 (as built):** the gate runs **after** `matchRoute` (a pure regex over the path,
+  > no I/O) and after the response `finish` listener is attached, but still before body reading and
+  > before the handler. Reason: a shed 429 then keeps its route label in the SLO metrics instead of
+  > collapsing into `unmatched`; the spec's actual requirement for the rejection path (no database
+  > work, ~1 ms — spec §6.2) still holds, at the cost of one regex per shed request.
+- [ ] **Gating (added 2026-09-16, as built):** the HCL wiring lands here too, plan only —
+  `shedding_enabled` (default false, `dev.tfvars` false) and `shed_elu_threshold` (default 0.92) in
+  `variables.tf`; the task definition sets `SHED_ELU_THRESHOLD` only when the flag is on, and a
+  service with the variable absent never sheds. Plan with the flag on and off shows identical
+  resource lists — the difference is inside `container_definitions`, which is known only after apply.
 - [ ] Confirm the recorded metrics still classify a shed request correctly — `recordRequest` sees a
   429 and the Grafana `GOOD` selector (`!~"5.."`) must count it as good, per spec §7.
 - [ ] Verify: `npm test`.
 
 ## Task 10 — Apply change 3 and re-measure (STOPS FOR APPROVAL)
 
-- [ ] Apply / `deploy-service.sh`, then `/loadtest ecs-dynamodb-rps stress` — identical profile.
+> **Rewritten 2026-09-16, before execution, for the flag gating.** The original first step was
+> "Apply / `deploy-service.sh`". There is no image rebuild: the admission gate has been in the image
+> since Task 3 and is inert while `SHED_ELU_THRESHOLD` is unset.
+
+- [ ] `ecs-dynamodb-rps/infra/main/dev.tfvars` — set `shedding_enabled = true`. **Both earlier flags
+  stay on:** `requests_scaling_enabled = true` (Task 6) and `elu_scaling_enabled = true` (Task 8).
+  Keeping the request-count policy on is not incidental — it is the second line of defence if
+  shedding clamps ELU under the alarm (spec §6.1), because it counts arrivals at the load balancer,
+  including the requests the service rejects. Leave `shed_elu_threshold` at its default 0.92.
+- [ ] `plan -var-file=dev.tfvars` — expect a **new task-definition revision** (replacement of
+  `aws_ecs_task_definition.app`) and an **in-place update of `aws_ecs_service.app`** to point at it;
+  nothing else. Do not treat the plan as proof the variable is set: when Task 9 planned the flag on
+  and off against the empty state the two resource lists were identical, because
+  `container_definitions` was known only after apply, and against a live environment the change is
+  one line buried in a JSON string diff. Then apply, and let the rolling deployment finish
+  (`aws ecs wait services-stable --cluster ecs-dynamodb-rps --services ecs-dynamodb-rps`).
+- [ ] **Verify the running task definition actually carries the threshold**, because the plan could
+  not:
+  ```bash
+  TD=$(aws ecs describe-services --cluster ecs-dynamodb-rps --services ecs-dynamodb-rps \
+    --query 'services[0].taskDefinition' --output text)
+  aws ecs describe-task-definition --task-definition "$TD" \
+    | jq '.taskDefinition.containerDefinitions[] | select(.name=="app").environment[]
+          | select(.name=="SHED_ELU_THRESHOLD")'
+  ```
+  Expect `{"name": "SHED_ELU_THRESHOLD", "value": "0.92"}`. Absent means the service is not shedding
+  and the run would measure Change 2 again — stop.
+- [ ] `/loadtest ecs-dynamodb-rps stress` — identical profile.
 - [ ] **Expect k6 to report failure: exit 99, `slo_met` and `http_req_failed` both breached.** Spec §7
   decided this. It is not a regression, and Task 1 is what stops the next reader thinking it is.
 - [ ] The real verdict comes from Grafana: SLO attainment over the run window, plus `slo_met` among
   2xx responses only, plus the shape of p99. The prediction is a **flat** p99 with a visible rejection
   rate, instead of the baseline's rising p99 with none.
+- [ ] **Check that shedding did not silence the scaler** (added 2026-09-16, from the final branch
+  review). The admission gate is all-or-nothing on a 250 ms ELU window with no hysteresis: above
+  0.92 it rejects everything, which drops ELU, which re-admits everything, which raises ELU again.
+  The publisher sends a 10-second average, and an on/off cycle can average **below the 0.70 alarm
+  threshold even while the task is shedding** — the §6.1 invariant (0.70 and 0.85 < 0.92) holds on
+  paper and still fails in effect. Over the run window, plot the published `ecs-dynamodb-rps` /
+  `EventLoopUtilization` series against the 429 rate (ALB `HTTPCode_Target_4XX_Count`, or the
+  service's status-code series in Grafana), and confirm from
+  `aws cloudwatch describe-alarm-history --alarm-name ecs-dynamodb-rps-elu-high` that the alarm
+  actually entered `ALARM` while 429s were being returned, and from
+  `describe-scaling-activities` that the ELU step policy (not only the request-count policy) acted.
+  If ELU oscillates under 0.70 while shedding, record it as a finding: the request-count policy is
+  then the only thing scaling, and the follow-up is proportional shedding or hysteresis on the gate
+  — a **new decision**, recorded in a new spec, not a threshold tweak. Spec §11 carries this as a
+  risk.
 - [ ] Record in `results.md`, with both verdicts side by side and a sentence naming which one counts.
 
 ## Task 11 — Write up and tear down (STOPS FOR APPROVAL)
@@ -230,3 +333,48 @@ Spec §6. Application code: red-green loop applies.
   0 to destroy**; planned `read_capacity = 1025`, `write_capacity = 200`, `desired_count = 1`,
   `min_capacity = 1`, `max_capacity = 15`. No NAT gateway or EIP; the one VPC endpoint is the
   DynamoDB gateway endpoint.
+- **Task 3** — **attempted, failed, not complete.** Apply run 2026-09-15 20:24:43–20:28:20 UTC with
+  the user's approval. The AWS and Grafana resources were created; `module.k6.grafana_k6_project.this`
+  failed with **409 Conflict**: k6 project 8476029 (name `ecs-dynamodb-rps`) was still owned by
+  `platform/` state, because the 2026-09-14 k6-ownership plan's `terraform -chdir=platform apply`
+  step had never run. A `terraform -chdir=platform plan` then showed 0 to add, 1 to change (the
+  `platform` workspace description), 2 to destroy (k6 project 8476029 and its limits). The user
+  declined further applies and asked for all non-apply work to be finished first.
+  `deploy-service.sh` and `upload-k6.sh` never ran. **Later, by 2026-09-16 and outside this
+  session, the environment was destroyed:** `infra/main` state empty; no table, ALB, NAT gateway,
+  EIP, log group or ECR repository; only INACTIVE ECS cluster/service/task-definition records in the
+  tagging API. k6 project 8476029 is absent from the k6 API but **still listed in `platform/` state**
+  (stale). Task 3's text was rewritten on 2026-09-16 to clear that state first and to expect a full
+  create.
+- **Gating ruling (2026-09-15, applies to Tasks 5, 7, 9 and to 6, 8, 10).** Deviation from the task
+  text, which assumed each change's code lands right before its own apply. Because Tasks 5, 7 and 9
+  were executed before the baseline run (Task 4) exists, **each change sits behind its own Terraform
+  flag, defaulting false and false in `dev.tfvars`**: `requests_scaling_enabled` (Change 1),
+  `elu_scaling_enabled` (Change 2), `shedding_enabled` (Change 3). Reason: "change one thing,
+  identical profile" requires the baseline and every re-measure to run from the **same commit**; each
+  re-measure task then flips exactly one flag and leaves the earlier flags on. All service code — the
+  ELU publisher and the admission gate — ships in the image deployed at Task 3; the publisher, its
+  IAM statement and its environment variables are not gated (publishing changes no scaling behaviour
+  and gives the baseline an ELU series), and the gate is inert while `SHED_ELU_THRESHOLD` is unset.
+  Tasks 6, 8 and 10 were rewritten on 2026-09-16 to match.
+- **Task 5** — done, `46abda3`. Code and plan only. Deviation: the policy is gated by
+  `requests_scaling_enabled` (gating ruling above). `plan` with the flag on adds exactly
+  `aws_appautoscaling_policy.requests[0]`; with it off, nothing.
+- **Task 7** — done, `c0241b4` (service: ELU sampler and CloudWatch publisher) and `71549e4` (HCL:
+  alarm and step policy). Code and plan only. Deviation: the alarm and step policy are gated by
+  `elu_scaling_enabled`; the IAM statement, environment variables and publisher are always on.
+  `plan` with the flag on adds exactly `aws_appautoscaling_policy.elu[0]` and
+  `aws_cloudwatch_metric_alarm.elu_high[0]`. The alarm's 20-second period was checked against the
+  CloudWatch PutMetricAlarm API reference ("Valid values are 10, 20, 30, and any multiple of 60").
+- **Task 9** — done, `6172d0f` (HCL: `shedding_enabled` / `shed_elu_threshold` and the conditional
+  `SHED_ELU_THRESHOLD`) and `6b2baba` (service: admission gate, 429 + `Retry-After: 1`). Code and
+  plan only. Deviations: (1) gated by `shedding_enabled`, with the HCL wiring landing here because
+  Task 10 is apply-only; (2) the gate runs after `matchRoute` and the `finish` listener rather than
+  "before routing", so shed 429s keep their route label (dated note at the task line); (3) the
+  §6.1 invariant test reads the configured thresholds from `autoscaling.tf`, `variables.tf` and
+  `dev.tfvars` rather than literals, so a tuning pass must fail it. `npm test`: 128/128. `plan` with
+  the flag on and off: identical resource lists — the difference is inside `container_definitions`,
+  known only after apply, which is why Task 10 verifies the running task definition directly.
+- **Final branch review fix wave (2026-09-16)** — this plan's status, record and apply tasks
+  rewritten for the gating; README, spec and comment corrections; a validation block on
+  `shed_elu_threshold`. No resource change (`plan -var-file=dev.tfvars` still 56 / 0 / 0).
