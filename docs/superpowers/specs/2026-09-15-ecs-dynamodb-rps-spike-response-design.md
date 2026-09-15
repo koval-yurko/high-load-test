@@ -279,7 +279,7 @@ held, not when the fleet grew. The primary numbers, all of which were used to wr
 
 **A baseline run is required before any change lands.** Without one, "faster" has nothing to be
 faster than. One `stress.js` run against today's CPU-only configuration, with the scaling activity
-log captured, is Task 2.
+log captured, is plan Task 4.
 
 Accepted up front: with the floor at one, every run begins from a cold single task, so the first
 ~2 minutes of every spike run will look poor in the k6 summary even after all three changes. That
@@ -319,7 +319,7 @@ Two pre-existing defects, both of which distort any measurement taken before the
    near 100, it is correct. Resolving it needs a pinned-fleet discovery run, which D1 deferred.
    Mitigation: start conservative, and treat the first spike run's steady-state task count as the
    correction signal.
-2. **The ELU thresholds (0.80 / 0.95) are unmeasured.** They are chosen to sit below saturation,
+2. **The ELU thresholds (0.70 / 0.85) are unmeasured.** They are chosen to sit below saturation,
    but the relationship between ELU and this service's knee has never been plotted. The first run
    should record ELU alongside delivered rps so the thresholds can be set from data.
 3. **The shed threshold can silence the scaler.** Shedding reduces event-loop utilization, so a shed

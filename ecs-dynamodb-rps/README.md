@@ -340,6 +340,14 @@ Set the dashboard time range to the run's window.
 Both traps from [§3](#3-what-is-the-bottleneck) apply: while throttles are non-zero no service-side
 signal is evidence about the service, and falling DynamoDB latency is not a healthy database.
 
+Once admission control (shedding) is live, a shedding run is expected to exit k6 with code **99**,
+`slo_met` and `http_req_failed` both breached — that is k6 counting a shed 429 as a miss and as a
+failed request, which is correct for k6 but disagrees with the Grafana-side SLO, which does not
+charge a 4xx to the service. This is a known, accepted divergence, not a regression; see
+`docs/superpowers/specs/2026-09-15-ecs-dynamodb-rps-spike-response-design.md` §7, "The 4xx
+divergence — knowingly accepted." For those runs, read SLO attainment from Grafana, not from the k6
+exit code.
+
 ## Phase 4 — Improve: scale the service out (1 → 4 tasks)
 
 **One change only.** If Phase 3 showed non-zero throttles, skip to Phase 6 — scaling tasks would
