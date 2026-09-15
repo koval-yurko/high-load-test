@@ -1,8 +1,8 @@
 # ecs-dynamodb-rps — spike response from a floor of one task
 
-- **Status:** in progress — no task started yet. (Move to `partially executed (on hold)` with the
-  reason if this is left mid-flight; a plan sitting at `in progress` that nobody is working is a lie
-  the next reader will act on.)
+- **Status:** partially executed (on hold) — Tasks 1–2 done on branch
+  `spike-response/ecs-dynamodb-rps`. Blocked on Task 3, the first `terraform apply`, which stops for
+  the user's approval by repo rule. Tasks 3–11 not started.
 - **Spec:** `docs/superpowers/specs/2026-09-15-ecs-dynamodb-rps-spike-response-design.md` (approved
   2026-09-15)
 - **Goal:** from a floor of **one** task, the service answers a **short** spike — measured as the
@@ -220,4 +220,13 @@ Spec §6. Application code: red-green loop applies.
 
 ## Execution record
 
-_Nothing executed yet._
+- **Task 1** — done, `768e42c`. The `ignore_changes` comment Task 1 said to extend did not exist
+  in `ecs.tf`; a new comment now sits above `desired_count = var.desired_count` instead. Two stale
+  lines in the spec were also corrected: risk 2's ELU thresholds 0.80/0.95 became 0.70/0.85, and
+  "baseline is Task 2" became plan Task 4. `npm run slo:check`: "slo.yaml and its generated
+  outputs agree".
+- **Task 2** — done, `4a10da7`. `fmt -check` clean, `validate` ok (2 pre-existing warnings in
+  unrelated files). `plan -var-file=dev.tfvars` against the empty state: **56 to add, 0 to change,
+  0 to destroy**; planned `read_capacity = 1025`, `write_capacity = 200`, `desired_count = 1`,
+  `min_capacity = 1`, `max_capacity = 15`. No NAT gateway or EIP; the one VPC endpoint is the
+  DynamoDB gateway endpoint.
