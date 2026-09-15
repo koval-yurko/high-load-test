@@ -98,8 +98,18 @@ variable "shed_elu_threshold" {
   # 0.70 and 0.85). Shedding lowers ELU and clamps it near this value, so a
   # scale-out step at or above it never fires and one task sheds forever while
   # looking healthy. service/test/admission.test.js reads this default and those
-  # thresholds from the HCL and fails if the order is inverted.
+  # thresholds from the HCL and fails if the order is inverted -- but it sees
+  # only this default and any override in dev.tfvars, NOT a -var flag or a
+  # workspace variable, so an override made either of those ways is unchecked.
   default = 0.92
+
+  # ELU is a fraction: 0 or below would shed everything, above 1 would shed
+  # nothing while looking enabled. Caught here at plan time rather than by
+  # service/src/config.js at container start, after the deployment has rolled.
+  validation {
+    condition     = var.shed_elu_threshold > 0 && var.shed_elu_threshold <= 1
+    error_message = "shed_elu_threshold is an event-loop utilization fraction and must be in (0, 1]."
+  }
 }
 
 variable "autoscaling_rps_target" {

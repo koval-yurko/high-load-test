@@ -143,12 +143,11 @@ resource "aws_ecs_service" "app" {
   # and the next plan shows no diff. This happened on 2026-09-14: dev.tfvars
   # had desired_count = 5 while the floor was left at 1, four scale-in
   # activities walked the fleet down to 1 before run 8554820, and Terraform
-  # never noticed. The fix is for autoscaling.tf to derive min_capacity from
-  # var.desired_count instead of hardcoding it, so there is one number
-  # instead of two that can drift (spec
+  # never noticed. The fix is in place in autoscaling.tf: min_capacity derives
+  # from var.desired_count instead of the separate autoscaling_min variable it
+  # used to read, so there is one number instead of two that can drift (spec
   # docs/superpowers/specs/2026-09-15-ecs-dynamodb-rps-spike-response-design.md
-  # §9). That HCL change lands in plan Task 2; this comment only records the
-  # intended state.
+  # §9, landed by plan Task 2 in 4a10da7).
   desired_count = var.desired_count
   launch_type   = "FARGATE"
 

@@ -154,15 +154,20 @@ resource "aws_appautoscaling_policy" "elu" {
     cooldown = 60
 
     # Bounds are RELATIVE to the alarm threshold (0.70), not absolute ELU.
+    # Adjustments are percentages of CURRENT capacity, so the task counts in the
+    # comments below are examples, not fixed jumps. A spike that cliffs (run
+    # 8554820 did) is past 0.85 within the first 20 s period, so the first
+    # decision is usually the +400% step: 1 -> 5, then 5 -> 15 -- the model the
+    # cooldown comment above assumes.
     step_adjustment {
       metric_interval_lower_bound = 0 # ELU 0.70 .. 0.85
       metric_interval_upper_bound = 0.15
-      scaling_adjustment          = 200 # 1 -> 3
+      scaling_adjustment          = 200 # +200%: 1 -> 3, or 5 -> 15 (capped at autoscaling_max)
     }
 
     step_adjustment {
       metric_interval_lower_bound = 0.15 # ELU >= 0.85, no upper bound
-      scaling_adjustment          = 400  # 3 -> 15 (capped at autoscaling_max)
+      scaling_adjustment          = 400  # +400%: 1 -> 5, or 3 -> 15 (capped at autoscaling_max)
     }
   }
 }
