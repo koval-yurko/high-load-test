@@ -107,6 +107,13 @@ Spec §9. Both distort any measurement taken before they land, so they precede t
 
 Spec §8. Without this, "faster" has nothing to be faster than. The profile is **not** edited.
 
+> **Note 2026-09-16 (dev.tfvars ahead of the sequence):** `dev.tfvars` commits
+> `requests_scaling_enabled = true` and `shedding_enabled = true` (see the gating ruling below), so
+> Task 3's `/env up` already lands on the change-3 state, not the baseline. Before this task,
+> re-apply with both overridden off: `terraform -chdir=infra/main apply -var-file=dev.tfvars -var
+> requests_scaling_enabled=false -var shedding_enabled=false` — **stops for approval**, same as any
+> apply. `elu_scaling_enabled` needs no override; it still defaults `false` in the file.
+
 - [ ] `/loadtest ecs-dynamodb-rps stress` — 1 min at 100 rps, 30 s ramp to 300, 2 min hold, ramp down.
   No `abortOnFail` in this profile, so it runs to completion.
 - [ ] Capture from the AWS control plane, in the run's own window:
@@ -159,12 +166,16 @@ Spec §4.
 
 > **Rewritten 2026-09-16, before execution, for the flag gating:** the change is one tfvars line, not
 > new HCL.
+>
+> **Note 2026-09-16 (dev.tfvars ahead of the sequence):** `requests_scaling_enabled = true` is
+> already committed, so there is no tfvars edit here — the change from Task 4's baseline is dropping
+> its `-var requests_scaling_enabled=false` override and keeping the `shedding_enabled=false` one:
+> `terraform apply -var-file=dev.tfvars -var shedding_enabled=false`.
 
-- [ ] `ecs-dynamodb-rps/infra/main/dev.tfvars` — set `requests_scaling_enabled = true`. Nothing else
-  changes. `plan -var-file=dev.tfvars` must show **exactly one resource added,
+- [ ] `plan -var-file=dev.tfvars -var shedding_enabled=false` must show **exactly one resource added,
   `aws_appautoscaling_policy.requests[0]`**, 0 to change, 0 to destroy; anything more means more
   than one thing is changing. No image rebuild, no `deploy-service.sh`.
-- [ ] `terraform -chdir=ecs-dynamodb-rps/infra/main apply -var-file=dev.tfvars`
+- [ ] `terraform -chdir=ecs-dynamodb-rps/infra/main apply -var-file=dev.tfvars -var shedding_enabled=false`
 - [ ] `/loadtest ecs-dynamodb-rps stress` — **identical profile, identical RATE**. The infrastructure
   changed; the test did not.
 - [ ] Compare against Task 4 and record in `results.md`: first scaling action timestamp, the desired
@@ -208,12 +219,16 @@ Spec §5. The service half is application code and takes the red-green loop; the
 > "Apply, then `deploy-service.sh` (the service image changed)". It no longer applies: the ELU
 > publisher, its IAM statement and its environment variables are not gated and were already in the
 > image and task definition deployed at Task 3, so only the alarm and the step policy are new here.
+>
+> **Note 2026-09-16 (dev.tfvars ahead of the sequence):** `requests_scaling_enabled` needs no
+> override — Task 6 already dropped it. `shedding_enabled` stays overridden off until Task 10.
 
 - [ ] `ecs-dynamodb-rps/infra/main/dev.tfvars` — set `elu_scaling_enabled = true`.
   `requests_scaling_enabled` **stays true** from Task 6; nothing else changes. `plan
-  -var-file=dev.tfvars` must show **exactly two resources added** —
-  `aws_cloudwatch_metric_alarm.elu_high[0]` and `aws_appautoscaling_policy.elu[0]` — 0 to change,
-  0 to destroy. Then apply. **No redeploy:** the service image is unchanged.
+  -var-file=dev.tfvars -var shedding_enabled=false -var elu_scaling_enabled=true` must show
+  **exactly two resources added** — `aws_cloudwatch_metric_alarm.elu_high[0]` and
+  `aws_appautoscaling_policy.elu[0]` — 0 to change, 0 to destroy. Then apply with the same flags.
+  **No redeploy:** the service image is unchanged.
 - [ ] `/loadtest ecs-dynamodb-rps stress` — identical profile again.
 - [ ] The headline number: **seconds between the first over-threshold ELU sample and the scaling
   activity's `StartTime`.** Spec §5 predicts ~30 s against the baseline's ~180 s.
@@ -256,19 +271,27 @@ Spec §6. Application code: red-green loop applies.
 > **Rewritten 2026-09-16, before execution, for the flag gating.** The original first step was
 > "Apply / `deploy-service.sh`". There is no image rebuild: the admission gate has been in the image
 > since Task 3 and is inert while `SHED_ELU_THRESHOLD` is unset.
+>
+> **Note 2026-09-16 (dev.tfvars ahead of the sequence):** `shedding_enabled = true` is already
+> committed, so there is no tfvars edit here either — the change from Task 8 is dropping the
+> `-var shedding_enabled=false` override while keeping `-var elu_scaling_enabled=true`:
+> `terraform apply -var-file=dev.tfvars -var elu_scaling_enabled=true`. This lands exactly where a
+> plain `apply -var-file=dev.tfvars` would once `elu_scaling_enabled` is flipped `true` in the file
+> too — the one flag this sequence never commits, so the override stays needed even here.
 
-- [ ] `ecs-dynamodb-rps/infra/main/dev.tfvars` — set `shedding_enabled = true`. **Both earlier flags
-  stay on:** `requests_scaling_enabled = true` (Task 6) and `elu_scaling_enabled = true` (Task 8).
-  Keeping the request-count policy on is not incidental — it is the second line of defence if
-  shedding clamps ELU under the alarm (spec §6.1), because it counts arrivals at the load balancer,
-  including the requests the service rejects. Leave `shed_elu_threshold` at its default 0.92.
-- [ ] `plan -var-file=dev.tfvars` — expect a **new task-definition revision** (replacement of
+- [ ] **Both earlier flags stay on:** `requests_scaling_enabled = true` (committed) and
+  `elu_scaling_enabled = true` (`-var` override, Task 8). Keeping the request-count policy on is not
+  incidental — it is the second line of defence if shedding clamps ELU under the alarm (spec §6.1),
+  because it counts arrivals at the load balancer, including the requests the service rejects. Leave
+  `shed_elu_threshold` at its default 0.92.
+- [ ] `plan -var-file=dev.tfvars -var elu_scaling_enabled=true` — expect a **new task-definition revision** (replacement of
   `aws_ecs_task_definition.app`) and an **in-place update of `aws_ecs_service.app`** to point at it;
   nothing else. Do not treat the plan as proof the variable is set: when Task 9 planned the flag on
   and off against the empty state the two resource lists were identical, because
   `container_definitions` was known only after apply, and against a live environment the change is
-  one line buried in a JSON string diff. Then apply, and let the rolling deployment finish
-  (`aws ecs wait services-stable --cluster ecs-dynamodb-rps --services ecs-dynamodb-rps`).
+  one line buried in a JSON string diff. Then `apply -var-file=dev.tfvars -var
+  elu_scaling_enabled=true`, and let the rolling deployment finish (`aws ecs wait services-stable
+  --cluster ecs-dynamodb-rps --services ecs-dynamodb-rps`).
 - [ ] **Verify the running task definition actually carries the threshold**, because the plan could
   not:
   ```bash
@@ -349,13 +372,17 @@ Spec §6. Application code: red-green loop applies.
 - **Gating ruling (2026-09-15, applies to Tasks 5, 7, 9 and to 6, 8, 10).** Deviation from the task
   text, which assumed each change's code lands right before its own apply. Because Tasks 5, 7 and 9
   were executed before the baseline run (Task 4) exists, **each change sits behind its own Terraform
-  flag, defaulting false and false in `dev.tfvars`**: `requests_scaling_enabled` (Change 1),
+  flag, defaulting false in `dev.tfvars`**: `requests_scaling_enabled` (Change 1),
   `elu_scaling_enabled` (Change 2), `shedding_enabled` (Change 3). Reason: "change one thing,
   identical profile" requires the baseline and every re-measure to run from the **same commit**; each
   re-measure task then flips exactly one flag and leaves the earlier flags on. All service code — the
   ELU publisher and the admission gate — ships in the image deployed at Task 3; the publisher, its
   IAM statement and its environment variables are not gated (publishing changes no scaling behaviour
   and gives the baseline an ELU series), and the gate is inert while `SHED_ELU_THRESHOLD` is unset.
+  **Superseded in part, 2026-09-16:** `dev.tfvars` now commits `requests_scaling_enabled = true` and
+  `shedding_enabled = true` — only `elu_scaling_enabled` still defaults `false`. Tasks 4, 6, 8 and 10
+  carry `-var` overrides that reconstruct the original one-flag-per-run sequence on top of that file;
+  see the note at each.
   Tasks 6, 8 and 10 were rewritten on 2026-09-16 to match.
 - **Task 5** — done, `46abda3`. Code and plan only. Deviation: the policy is gated by
   `requests_scaling_enabled` (gating ruling above). `plan` with the flag on adds exactly

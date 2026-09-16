@@ -361,20 +361,24 @@ scaling tasks would change nothing, and recording why the order was swapped is i
 1` and the ceiling `autoscaling_max = 15`.)*
 
 The current sequence answers a short spike from one task. The code for all three changes is already
-in the image and the HCL; each is behind a flag that defaults to `false` in `infra/main/dev.tfvars`,
-and each run flips **one** flag and leaves the earlier ones on:
+in the image and the HCL, each behind its own flag — but as of 2026-09-16
+`infra/main/dev.tfvars` **commits `requests_scaling_enabled = true` and `shedding_enabled = true`
+already**; only `elu_scaling_enabled` still defaults `false`. A plain
+`apply -var-file=dev.tfvars` therefore lands on the change-3 state directly. To keep "one change
+per run" true, every run before change 3 needs a `-var` override on top of the file:
 
-| run | flag set to `true` in `dev.tfvars` | what changes | expected `plan` |
+| run | `apply` differs from plain `-var-file=dev.tfvars` by | what changes | expected `plan` |
 |---|---|---|---|
-| baseline | none | CPU target tracking only (60%, 3 × 60 s datapoints) | — |
-| change 1 | `requests_scaling_enabled` | adds an `ALBRequestCountPerTarget` policy, target 6,000 requests per task per **minute** (100 rps), alongside the CPU one | 1 added: `aws_appautoscaling_policy.requests[0]` |
-| change 2 | `elu_scaling_enabled` | adds a 20-second event-loop-utilization alarm (≥ 0.70) and a step policy (+200%, +400% at ≥ 0.85); no redeploy, the service already publishes ELU | 2 added: the alarm and the step policy |
-| change 3 | `shedding_enabled` | the task definition gains `SHED_ELU_THRESHOLD=0.92`, so the service answers 429 + `Retry-After: 1` above it | a new task-definition revision and a service update; confirm the variable on the running task definition, the plan cannot show it |
+| baseline | `-var requests_scaling_enabled=false -var shedding_enabled=false` | CPU target tracking only (60%, 3 × 60 s datapoints) | — |
+| change 1 | `-var shedding_enabled=false` | adds an `ALBRequestCountPerTarget` policy, target 6,000 requests per task per **minute** (100 rps), alongside the CPU one | 1 added: `aws_appautoscaling_policy.requests[0]` |
+| change 2 | `-var shedding_enabled=false -var elu_scaling_enabled=true` | adds a 20-second event-loop-utilization alarm (≥ 0.70) and a step policy (+200%, +400% at ≥ 0.85); no redeploy, the service already publishes ELU | 2 added: the alarm and the step policy |
+| change 3 | `-var elu_scaling_enabled=true` (the file alone already carries `requests_scaling_enabled` and `shedding_enabled`) | the task definition gains `SHED_ELU_THRESHOLD=0.92`, so the service answers 429 + `Retry-After: 1` above it | a new task-definition revision and a service update; confirm the variable on the running task definition, the plan cannot show it |
 
 Anything more in a plan than the row says means more than one thing is changing. Every apply is an
 **approval gate**. A change-3 run is expected to exit k6 with 99 — see Phase 3. The full procedure,
 the measurements each run must capture and the reasons are in
-`docs/superpowers/plans/2026-09-15-ecs-dynamodb-rps-spike-response.md` (Tasks 3–11).
+`docs/superpowers/plans/2026-09-15-ecs-dynamodb-rps-spike-response.md` (Tasks 3–11), whose Task
+4/6/8/10 apply steps carry the same `-var` overrides.
 
 ## Phase 5 — Re-measure identically
 
