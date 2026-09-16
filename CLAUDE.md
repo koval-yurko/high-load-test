@@ -209,7 +209,7 @@ on purpose.
 `PIIB` (any casing, anywhere in a prompt) means: leave the terminal and present the deliverable as
 a claude.ai Artifact page. `STC` means "Send to Claude". Both are defined, with the whole flow, by
 the global skills — `~/.claude/skills/piib` to present, `piib-check` to collect what the page
-recorded, `piib-save` to write it down. They are project-independent on purpose: a fix made in one
+recorded, `piib-store` to write it down. They are project-independent on purpose: a fix made in one
 repo reaches every other.
 
 Enter the flow **without being asked** when a report would run past about one screen, when it
