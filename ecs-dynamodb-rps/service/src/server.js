@@ -61,14 +61,13 @@ export function createServer({ handlers, admission }) {
 
     if (!route) return send(404, { error: 'no route' });
 
-    // Admission gate (spike-response spec §6). Placed AFTER matchRoute and the
-    // 'finish' listener, so a shed request is recorded with its real route label
-    // and status 429 -- not as 'unmatched' -- and Grafana's GOOD selector
-    // (!~"5..") scores it (spec §7). That ordering costs nothing §6.2 forbids:
-    // matchRoute is a handful of regexes with no I/O, and the requirement is no
-    // database work and ~1 ms. BEFORE body reading and the handler, which is
-    // where the database work is. An unmatched path is not gated: its 404 is
-    // already as cheap as a 429. /healthz is never shed (src/admission.js).
+    // Placed AFTER matchRoute and the 'finish' listener, so a shed request is
+    // recorded with its real route label and status 429 -- not as
+    // 'unmatched' -- and Grafana's GOOD selector (!~"5..") scores it.
+    // matchRoute is a handful of regexes with no I/O, so this costs nothing.
+    // BEFORE body reading and the handler, which is where the database work
+    // is. An unmatched path is not gated: its 404 is already as cheap as a
+    // 429. /healthz is never shed (src/admission.js).
     if (admission?.shouldShed(route)) {
       res.setHeader('Retry-After', String(RETRY_AFTER_SECONDS));
       return send(SHED_STATUS, { error: 'overloaded' });

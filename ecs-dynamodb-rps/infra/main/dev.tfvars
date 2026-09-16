@@ -2,20 +2,10 @@
 # the 1000 rps capacity model) supplies 1,025 RCU / 200 WCU on its own -- do not edit
 # that file, it is generated and byte-checked by `npm run slo:check`. Do NOT re-add
 # read_capacity / write_capacity lines to this file: a CLI -var-file outranks an
-# auto-loaded *.auto.tfvars, so two lines here would silently override the model
-# again, which is exactly what happened until 2026-09-15 (1,000/500 here beat the
-# model's 1,025/200, 25 RCU short and invisible until the service could push real rps).
-#
-# WCU sanity check: run 8554820 measured 33.5 WCU/s at ~175 rps, i.e. 0.19 WCU/rps, so
-# 1,000 rps predicts ~191 WCU -- the model's 200 is sized against that measurement, not
-# guessed.
+# auto-loaded *.auto.tfvars, so two lines here would silently override the model again.
 task_cpu    = 256
 task_memory = 512
 
-# Terraform owns this floor too -- see the comment above `desired_count =
-# var.desired_count` in ecs.tf: Application Auto Scaling's min_capacity (autoscaling.tf)
-# now derives from this same variable instead of a second, separate floor variable, so
-# the floor and the baseline cannot drift apart the way they did in run 8554820.
 desired_count = 1
 
 # Calibrated on a real 0.25 vCPU Fargate slice for ~1.4ms of pbkdf2 per report
@@ -39,21 +29,13 @@ feed_page_size    = 20
 
 autoscaling_enabled = true
 
-# Off for the baseline stress run (spike-response plan Task 4), which must
-# measure the CPU-only policy alone. The Change 1 re-measure (Task 6) flips
-# this to true and changes nothing else, so the before/after comparison
-# changes exactly one knob from the same commit.
-requests_scaling_enabled = false
+requests_scaling_enabled = true
 
-# Off for the baseline (Task 4) and Change 1 (Task 6) runs. The Change 2
-# re-measure (Task 8) flips this to true and changes nothing else. The service
-# publishes EventLoopUtilization regardless, so the earlier runs still record
-# the series the 0.70 / 0.85 thresholds are checked against.
+# The service publishes EventLoopUtilization regardless of this flag, so every
+# run records the series the 0.70 / 0.85 alarm thresholds are checked against.
 elu_scaling_enabled = false
 
-# Off for the baseline (Task 4), Change 1 (Task 6) and Change 2 (Task 8) runs.
-# The Change 3 re-measure (Task 10) flips this to true and changes nothing else.
-# The shed threshold itself is var.shed_elu_threshold's default (0.92), which
-# must stay above the ELU scale-out thresholds -- do not override it here
-# without re-reading its invariant in variables.tf.
-shedding_enabled = false
+# Shed threshold is var.shed_elu_threshold's default (0.92), which must stay
+# above the ELU scale-out thresholds -- see the invariant in variables.tf
+# before overriding it here.
+shedding_enabled = true

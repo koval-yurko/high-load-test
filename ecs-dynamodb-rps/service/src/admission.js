@@ -1,40 +1,27 @@
 // src/admission.js
-// Admission control (2026-09-15 spike-response spec §6 -- "spec" below means
-// docs/superpowers/specs/2026-09-15-ecs-dynamodb-rps-spike-response-design.md):
-// above the shed threshold, reject immediately with 429 + Retry-After instead
-// of accepting into a queue. The one
-// task that exists in the first minutes of a spike otherwise queues everything,
-// and a uniform ~130 ms of queueing pushed 71% of fast-class requests over their
-// threshold with zero errors (spec §1). A shed request costs ~1 ms; a queue slot
-// costs every request behind it.
+// Admission control: above the shed threshold, reject immediately with
+// 429 + Retry-After instead of queueing. Queueing on a single task pushed
+// most fast-class requests over their latency threshold with zero errors; a
+// shed request costs ~1 ms, a queue slot costs every request behind it.
 //
-// Same signal as the scaler (event-loop utilization): the scaler asks for more
-// tasks, the shedder protects the tasks that exist. The shed threshold MUST stay
-// strictly above every scale-out threshold (spec §6.1) -- shedding clamps ELU
-// near its own value, so a scale-out step above it would never fire. Asserted
-// against the Terraform in test/admission.test.js.
+// The shed threshold MUST stay strictly above every scale-out threshold --
+// shedding lowers ELU, and a scale-out step at or above the shed threshold
+// would never fire. Asserted against the Terraform in test/admission.test.js.
 import { createEluSampler } from './elu.js';
 
-/**
- * 250 ms. Short enough that the gate reacts within a fraction of a second of
- * overload -- the scaler cannot help for ~100 s, so this is the only fast
- * protection -- and long enough that each reading spans hundreds of requests at
- * this service's rates, so it is a utilization and not the on/off state of the
- * loop at one instant. Per-request sampling would measure microsecond windows,
- * which read 0 or 1 depending on where the request happened to land.
- */
+// 250 ms: short enough to react within a fraction of a second of overload,
+// long enough that each reading spans many requests instead of one instant.
 export const ADMISSION_INTERVAL_MS = 250;
 
 export const SHED_STATUS = 429;
-// Short (spec §6.2): the fleet is expected to grow within ~100 s, so a client
-// that backs off briefly and retries is the behaviour we want.
+// The fleet is expected to grow within roughly a minute, so a short retry is
+// the behaviour we want.
 export const RETRY_AFTER_SECONDS = 1;
 
 /**
- * The whole decision, pure so tests drive it without timers. Sheds only when ELU
- * EXCEEDS the threshold. /healthz is never shed: the ALB must not be told a task
- * is unhealthy because it is busy, or it deregisters capacity exactly when it is
- * needed.
+ * Pure so tests drive it without timers. Sheds only when ELU EXCEEDS the
+ * threshold. /healthz is never shed: the ALB must not be told a task is
+ * unhealthy because it is busy, or it deregisters capacity when it's needed.
  */
 export function shouldShed({ elu, threshold, route }) {
   if (route?.name === 'health') return false;
@@ -42,11 +29,9 @@ export function shouldShed({ elu, threshold, route }) {
 }
 
 /**
- * Owns a sampler and the cached reading the gate consults. The sampler is this
- * gate's OWN instance: sharing the CloudWatch publisher's would close the
- * publisher's window every 250 ms and steal its delta (src/elu.js).
- *
- * The cached ELU starts at 0 -- nothing measured yet, so admit.
+ * Owns a sampler and the cached reading the gate consults. Uses its OWN
+ * sampler instance: sharing the CloudWatch publisher's would steal its delta
+ * (src/elu.js). Starts at 0 -- nothing measured yet, so admit.
  */
 export function createAdmission({ threshold, sampler = createEluSampler(), intervalMs = ADMISSION_INTERVAL_MS }) {
   let elu = 0;

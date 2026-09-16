@@ -34,9 +34,8 @@ resource "aws_iam_role" "task" {
 }
 
 # What the service publishes its event-loop utilization under (src/cloudwatch.js).
-# One definition, read by the task's environment, the IAM condition below and the
-# alarm in autoscaling.tf: an alarm whose namespace or dimension differs by one
-# character from what the service sends matches no metric and sits in
+# Read by the task's environment, the IAM condition below and the alarm in
+# alerts.tf: a mismatched namespace or dimension matches no metric and sits in
 # INSUFFICIENT_DATA forever, without an error anywhere.
 locals {
   metrics_namespace    = var.project
@@ -49,13 +48,12 @@ data "aws_iam_policy_document" "table_access" {
     resources = [aws_dynamodb_table.items.arn]
   }
 
-  # Event-loop utilization for the ELU scaling alarm (spike-response spec §5).
   # PutMetricData supports no resource-level permissions, so resources must be
-  # "*"; the cloudwatch:namespace condition is what keeps this task from writing
-  # into any other namespace. Not gated by elu_scaling_enabled: publishing
-  # changes no behaviour, and the baseline run needs the series to calibrate
-  # the thresholds against. (Lives in the policy still named "table-access" --
-  # renaming it would replace the policy for a cosmetic reason.)
+  # "*"; the cloudwatch:namespace condition is what keeps this task from
+  # writing into any other namespace. Not gated by elu_scaling_enabled:
+  # publishing changes no behaviour. (Lives in the policy still named
+  # "table-access" -- renaming it would replace the policy for a cosmetic
+  # reason.)
   statement {
     actions   = ["cloudwatch:PutMetricData"]
     resources = ["*"]
@@ -108,15 +106,12 @@ resource "aws_ecs_task_definition" "app" {
       { name = "OTLP_ENDPOINT", value = "http://collector.${aws_service_discovery_private_dns_namespace.internal.name}:4318" },
       # Sets the publisher on (src/config.js: absent => no publisher). Set
       # explicitly rather than relying on the service's defaults, because the
-      # alarm in autoscaling.tf must match these values exactly. OTEL_SERVICE_NAME
+      # alarm in alerts.tf must match these values exactly. OTEL_SERVICE_NAME
       # is also the OTel service.name; its value equals the service's default.
       { name = "METRICS_NAMESPACE", value = local.metrics_namespace },
       { name = "OTEL_SERVICE_NAME", value = local.metrics_service_name },
       ],
-      # Admission control (Change 3, spike-response spec section 6). The service
-      # sheds only when this variable is present (src/config.js), so it is set
-      # only when shedding_enabled is true -- the flag is the whole switch, and
-      # the Change 3 re-measure flips nothing else.
+      # The service sheds only when this variable is present (src/config.js).
       var.shedding_enabled ? [
         { name = "SHED_ELU_THRESHOLD", value = tostring(var.shed_elu_threshold) },
       ] : [],
@@ -140,14 +135,9 @@ resource "aws_ecs_service" "app" {
   # Deliberately no ignore_changes on desired_count. When this value and the
   # Application Auto Scaling floor (autoscaling.tf min_capacity) disagree,
   # Auto Scaling wins silently -- it adjusts desired_count outside Terraform
-  # and the next plan shows no diff. This happened on 2026-09-14: dev.tfvars
-  # had desired_count = 5 while the floor was left at 1, four scale-in
-  # activities walked the fleet down to 1 before run 8554820, and Terraform
-  # never noticed. The fix is in place in autoscaling.tf: min_capacity derives
-  # from var.desired_count instead of the separate autoscaling_min variable it
-  # used to read, so there is one number instead of two that can drift (spec
-  # docs/superpowers/specs/2026-09-15-ecs-dynamodb-rps-spike-response-design.md
-  # §9, landed by plan Task 2 in 4a10da7).
+  # and the next plan shows no diff. min_capacity derives from
+  # var.desired_count instead of a separate variable so there is one number
+  # instead of two that can drift.
   desired_count = var.desired_count
   launch_type   = "FARGATE"
 

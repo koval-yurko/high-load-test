@@ -73,19 +73,19 @@ variable "autoscaling_cpu_target" {
 }
 
 variable "requests_scaling_enabled" {
-  description = "Gates the second (ALBRequestCountPerTarget) autoscaling policy on top of autoscaling_enabled. Default off: the baseline stress run (spike-response plan Task 4) must measure the CPU-only policy alone, and the Change 1 re-measure (Task 6) flips only this flag so the before/after comparison changes exactly one knob."
+  description = "Gates the second (ALBRequestCountPerTarget) autoscaling policy on top of autoscaling_enabled."
   type        = bool
   default     = false
 }
 
 variable "elu_scaling_enabled" {
-  description = "Gates the event-loop-utilization alarm and step-scaling policy (Change 2) on top of autoscaling_enabled. Default off: the baseline and Change 1 runs must not have it, and the Change 2 re-measure (spike-response plan Task 8) flips only this flag. The ELU publisher, its IAM statement and its env vars are NOT gated -- publishing changes no scaling behaviour."
+  description = "Gates the event-loop-utilization alarm and step-scaling policy on top of autoscaling_enabled. The ELU publisher, its IAM statement and its env vars are NOT gated -- publishing changes no scaling behaviour."
   type        = bool
   default     = false
 }
 
 variable "shedding_enabled" {
-  description = "Gates admission control (Change 3): when true the task definition sets SHED_ELU_THRESHOLD and the service rejects with 429 + Retry-After above it (service/src/admission.js). Default off: the baseline, Change 1 and Change 2 runs must not shed, and the Change 3 re-measure (spike-response plan Task 10) flips only this flag."
+  description = "Gates admission control: when true the task definition sets SHED_ELU_THRESHOLD and the service rejects with 429 + Retry-After above it (service/src/admission.js)."
   type        = bool
   default     = false
 }
@@ -93,14 +93,14 @@ variable "shedding_enabled" {
 variable "shed_elu_threshold" {
   description = "Event-loop utilization above which the service sheds load (SHED_ELU_THRESHOLD). Only passed when shedding_enabled is true."
   type        = number
-  # INVARIANT (2026-09-15 spike-response spec, section 6.1): must stay STRICTLY
-  # ABOVE every ELU scale-out threshold in autoscaling.tf (alarm 0.70, steps
-  # 0.70 and 0.85). Shedding lowers ELU and clamps it near this value, so a
-  # scale-out step at or above it never fires and one task sheds forever while
-  # looking healthy. service/test/admission.test.js reads this default and those
-  # thresholds from the HCL and fails if the order is inverted -- but it sees
-  # only this default and any override in dev.tfvars, NOT a -var flag or a
-  # workspace variable, so an override made either of those ways is unchecked.
+  # INVARIANT: must stay STRICTLY ABOVE every ELU scale-out threshold (the
+  # alarm in alerts.tf at 0.70, the steps in autoscaling.tf at 0.70 and 0.85).
+  # Shedding lowers ELU and clamps it near this value, so a scale-out step at
+  # or above it never fires and one task sheds forever while looking healthy.
+  # service/test/admission.test.js reads this default and those thresholds
+  # from the HCL and fails if the order is inverted -- but it sees only this
+  # default and any override in dev.tfvars, not a -var flag or a workspace
+  # variable, so an override made either of those ways is unchecked.
   default = 0.92
 
   # ELU is a fraction: 0 or below would shed everything, above 1 would shed
@@ -115,12 +115,9 @@ variable "shed_elu_threshold" {
 variable "autoscaling_rps_target" {
   description = <<-EOT
     ALBRequestCountPerTarget target value, in requests per target per MINUTE
-    (not per second) -- 6,000 = 100 rps/task. Run 8554820 only brackets
-    per-task capacity between 100 and 200 rps/task; 6,000 is the conservative
-    (100 rps/task) end of that bracket, chosen because it is unmeasured.
-    Correction signal: the steady-state task count in the spike-response
-    plan's Task 6 run -- if the fleet settles well under the traffic it
-    should take, raise this value.
+    (not per second) -- 6,000 = 100 rps/task, the conservative end of a
+    100-200 rps/task bracket. Raise it if the fleet settles well under the
+    traffic it should take.
   EOT
   type        = number
   default     = 6000

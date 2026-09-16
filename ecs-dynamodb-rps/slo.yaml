@@ -48,10 +48,8 @@ slos:
     # a request good, so a 4xx there IS a miss; k6's availability gate
     # (infra/k6/tests/lib/slo.js, http_req_failed) counts any status >= 400 as
     # failed too. The two verdicts diverge once client errors are produced by
-    # design (admission-control shedding). Divergence knowingly accepted,
-    # decision D4 -- see
-    # docs/superpowers/specs/2026-09-15-ecs-dynamodb-rps-spike-response-design.md
-    # §7, "The 4xx divergence -- knowingly accepted."
+    # design (admission-control shedding) -- knowingly accepted, see
+    # docs/superpowers/specs/2026-09-15-ecs-dynamodb-rps-spike-response-design.md.
     #
     # 95.0 / 99.0, relaxed from 99.0 / 99.9 on 2026-09-09 -- see
     # docs/superpowers/specs/2026-09-09-ecs-dynamodb-rps-slo-relaxation-design.md

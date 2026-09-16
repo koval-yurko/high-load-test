@@ -31,18 +31,14 @@ export function loadConfig(env = process.env) {
     exportIntervalMs: num(env, 'OTEL_EXPORT_INTERVAL_MS', 15_000),
     // Same pattern as otlpEndpoint: absent => no CloudWatch publisher and no AWS
     // client is created, so tests need no AWS. The metric's ServiceName dimension
-    // is serviceName above; the alarm in infra/main/autoscaling.tf must match both.
+    // is serviceName above; the alarm in infra/main/alerts.tf must match both.
     metricsNamespace: env.METRICS_NAMESPACE || undefined,
     // 10s, not 1s: 1s publishing is ~$16/month in PutMetricData requests and the
-    // 20s alarm period only needs two datapoints per period (spec §5 -- here and
-    // below, "spec" is the 2026-09-15 spike-response spec,
-    // docs/superpowers/specs/2026-09-15-ecs-dynamodb-rps-spike-response-design.md).
+    // 20s alarm period only needs two datapoints per period.
     metricsIntervalMs: num(env, 'METRICS_INTERVAL_MS', 10_000),
-    // Admission control (spec §6). Absent => no gate, no sampler and no timer,
-    // like the two exporters above. ELU is a fraction, so 0 would
-    // shed everything and >1 would shed nothing while looking enabled. The value
-    // comes from var.shed_elu_threshold in infra/main, which must stay strictly
-    // above the ELU scale-out thresholds (spec §6.1, test/admission.test.js).
+    // Absent => no gate, no sampler and no timer, like the two exporters above.
+    // Comes from var.shed_elu_threshold in infra/main, which must stay strictly
+    // above the ELU scale-out thresholds (test/admission.test.js).
     shedEluThreshold: fraction(env, 'SHED_ELU_THRESHOLD'),
   };
 }

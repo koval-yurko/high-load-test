@@ -144,7 +144,7 @@ test('without an admission gate nothing is shed (SHED_ELU_THRESHOLD absent)', as
   assert.deepEqual(calls, ['feed']);
 });
 
-test('a shed request is recorded with status 429 and its real route label (spec §7)', async (t) => {
+test('a shed request is recorded with status 429 and its real route label', async (t) => {
   class TestReader extends MetricReader {
     selectAggregationTemporality() { return AggregationTemporality.CUMULATIVE; }
     async onForceFlush() {}
@@ -178,7 +178,7 @@ test('a shed request is recorded with status 429 and its real route label (spec 
   assert.deepEqual(points, [['/items', 429]]);
 });
 
-// --- spec §6.1 invariant: shed ABOVE scale-out --------------------------------
+// --- invariant: shed threshold ABOVE every scale-out threshold ---------------
 
 const INFRA = new URL('../../infra/main/', import.meta.url).pathname;
 
@@ -198,14 +198,14 @@ function hclBlock(text, header) {
 const numbers = (block, key) =>
   [...block.matchAll(new RegExp(`^\\s*${key}\\s*=\\s*(-?[0-9.]+)`, 'gm'))].map((m) => Number(m[1]));
 
-test('every configured ELU scale-out threshold sits strictly below the shed threshold (spec §6.1)', () => {
-  // Shedding LOWERS event-loop utilization -- that is what it is for -- so it
-  // clamps ELU at roughly the shed threshold. A scale-out step at or above it
-  // would never fire, and the service would shed forever on one task while
-  // looking healthy. Read from the Terraform, never from literals here, so a
-  // tuning pass that inverts the order fails this test instead of a load run.
+test('every configured ELU scale-out threshold sits strictly below the shed threshold', () => {
+  // Shedding lowers event-loop utilization, clamping it near the shed
+  // threshold. A scale-out step at or above it would never fire. Read from
+  // the Terraform, never from literals here, so a tuning pass that inverts
+  // the order fails this test instead of a load run.
+  const alerts = readFileSync(`${INFRA}alerts.tf`, 'utf8');
   const autoscaling = readFileSync(`${INFRA}autoscaling.tf`, 'utf8');
-  const alarm = hclBlock(autoscaling, 'resource "aws_cloudwatch_metric_alarm" "elu_high"');
+  const alarm = hclBlock(alerts, 'resource "aws_cloudwatch_metric_alarm" "elu_high"');
   const policy = hclBlock(autoscaling, 'resource "aws_appautoscaling_policy" "elu"');
 
   const alarmThresholds = numbers(alarm, 'threshold');
@@ -227,6 +227,6 @@ test('every configured ELU scale-out threshold sits strictly below the shed thre
   const shed = overrides.length ? overrides.at(-1) : defaults[0];
 
   for (const t of scaleOut) {
-    assert.ok(t < shed, `scale-out threshold ${t} is not strictly below the shed threshold ${shed} (spec §6.1)`);
+    assert.ok(t < shed, `scale-out threshold ${t} is not strictly below the shed threshold ${shed}`);
   }
 });

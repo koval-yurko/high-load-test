@@ -300,10 +300,10 @@ test('a fast 5xx is a miss: the numerator excludes server errors, the denominato
   assert.doesNotMatch(expr, /http\.response\.status_code/);
 });
 
-test('a shed 429 counts as good in every generated status filter (spike-response spec §7)', () => {
-  // Admission control answers overload with 429 + Retry-After by design. On the
-  // Grafana side that must not burn budget -- the k6 side counts it as a miss,
-  // a divergence knowingly accepted in the 2026-09-15 spike-response spec §7.
+test('a shed 429 counts as good in every generated status filter', () => {
+  // Admission control answers overload with 429 + Retry-After by design. On
+  // the Grafana side that must not burn budget, though the k6 side counts it
+  // as a miss -- a knowingly accepted divergence (see slo.yaml).
   // PromQL regex matchers are fully anchored, hence ^(?:...)$.
   const doc = loadSlo(`${HERE}slo.yaml`);
   const exprs = [ratioExpr(doc, { range: '5m' }), renderAlerts(doc), renderLocals(doc)].join('\n');

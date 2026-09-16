@@ -1,13 +1,13 @@
 // src/cloudwatch.js
 // Publishes event-loop utilization to CloudWatch as a high-resolution custom
 // metric, which a 20-second alarm drives a step-scaling policy from
-// (infra/main/autoscaling.tf, spike-response spec §5).
+// (infra/main/alerts.tf).
 //
-// PutMetricData directly, NOT Embedded Metric Format through CloudWatch Logs.
-// EMF is tempting -- the awslogs driver already ships stdout and it needs no new
-// IAM -- but log ingestion adds delay to the exact number this change exists to
-// shrink: the time from overload to the first scaling decision. The price of the
-// direct call is one IAM statement on the task role (infra/main/ecs.tf).
+// PutMetricData directly, NOT Embedded Metric Format through CloudWatch Logs:
+// EMF is tempting -- the awslogs driver already ships stdout and needs no new
+// IAM -- but log ingestion adds delay to the time from overload to the first
+// scaling decision. The price is one IAM statement on the task role
+// (infra/main/ecs.tf).
 import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwatch';
 import { createEluSampler } from './elu.js';
 
