@@ -36,17 +36,17 @@ subagent may write and `plan` Terraform freely; it may not apply it.
 Spec §7 makes this mandatory and first: from Task 10 onward a correct run reports a **failed** k6
 verdict, and nothing else in the repo says so.
 
-- [ ] `ecs-dynamodb-rps/slo.yaml` — at the 4xx sentence in the `latency-classes` comment ("A 4xx is
+- [x] `ecs-dynamodb-rps/slo.yaml` — at the 4xx sentence in the `latency-classes` comment ("A 4xx is
   NOT a miss…"), a forward-pointer naming spec §7 and stating plainly that **k6's `slo_met` does not
   implement this** and records a 4xx as a miss. Put it at the decision, not in a header.
-- [ ] `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md` — same pointer at the
+- [x] `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md` — same pointer at the
   "A 4xx is not a miss" line (~§392).
-- [ ] `ecs-dynamodb-rps/README.md` — in **Phase 3 — Read the result**, a line: once admission control
+- [x] `ecs-dynamodb-rps/README.md` — in **Phase 3 — Read the result**, a line: once admission control
   is live, a shedding run exits **99** with `slo_met` and `http_req_failed` breached, and that is the
   expected result; read SLO attainment from Grafana for those runs.
-- [ ] `ecs-dynamodb-rps/infra/main/ecs.tf` — extend the existing `ignore_changes` comment with a
+- [x] `ecs-dynamodb-rps/infra/main/ecs.tf` — extend the existing `ignore_changes` comment with a
   pointer to the 2026-09-14 recurrence (floor 1 vs baseline 5) and to Task 2's fix.
-- [ ] Verify: `npm run slo:check` from `ecs-dynamodb-rps/service/` — the generated artifacts must stay
+- [x] Verify: `npm run slo:check` from `ecs-dynamodb-rps/service/` — the generated artifacts must stay
   byte-identical. A YAML comment must not move them; if it does, the generator reads more than it
   should and that is a finding.
 
@@ -54,18 +54,18 @@ verdict, and nothing else in the repo says so.
 
 Spec §9. Both distort any measurement taken before they land, so they precede the baseline.
 
-- [ ] `ecs-dynamodb-rps/infra/main/autoscaling.tf` — `min_capacity = var.desired_count` on
+- [x] `ecs-dynamodb-rps/infra/main/autoscaling.tf` — `min_capacity = var.desired_count` on
   `aws_appautoscaling_target.ecs`, so one number governs the floor and the Terraform baseline and
   they cannot drift apart again.
-- [ ] `ecs-dynamodb-rps/infra/main/variables.tf` — delete `variable "autoscaling_min"`. Keep
+- [x] `ecs-dynamodb-rps/infra/main/variables.tf` — delete `variable "autoscaling_min"`. Keep
   `autoscaling_max` (15). Deleting it is the point: a second number is what caused run 8554820.
-- [ ] `ecs-dynamodb-rps/infra/main/dev.tfvars` — `desired_count = 1` (the floor per spec §2), and
+- [x] `ecs-dynamodb-rps/infra/main/dev.tfvars` — `desired_count = 1` (the floor per spec §2), and
   **delete** `read_capacity` / `write_capacity` so the generated `capacity.auto.tfvars` (1,025 RCU /
   200 WCU) applies, exactly as that file's own comment instructs. Rewrite the stale comment block
   that still describes the free-tier pin.
-- [ ] Sanity-check the WCU drop 500 → 200 against measurement: run 8554820 consumed 33.5 WCU/s at
+- [x] Sanity-check the WCU drop 500 → 200 against measurement: run 8554820 consumed 33.5 WCU/s at
   ~175 rps = 0.19 WCU/rps, so 1,000 rps ≈ 191 WCU. 200 is sized, not guessed.
-- [ ] Verify: `fmt -check`, `validate`, `plan -var-file=dev.tfvars` against the empty state — expect a
+- [x] Verify: `fmt -check`, `validate`, `plan -var-file=dev.tfvars` against the empty state — expect a
   full create, with `read_capacity = 1025`, `write_capacity = 200`, `desired_count = 1`,
   `min_capacity = 1`, `max_capacity = 15`.
 
@@ -134,7 +134,7 @@ Spec §8. Without this, "faster" has nothing to be faster than. The profile is *
 
 Spec §4.
 
-- [ ] `ecs-dynamodb-rps/infra/main/autoscaling.tf` — add a **second**
+- [x] `ecs-dynamodb-rps/infra/main/autoscaling.tf` — add a **second**
   `aws_appautoscaling_policy` (`requests`) rather than editing the CPU one. Both stay; Application
   Auto Scaling takes the largest desired count any policy asks for, and the CPU policy covers
   requests that are individually expensive (a `/reports` burst is cheap in count, dear in CPU).
@@ -147,14 +147,14 @@ Spec §4.
   scale_out_cooldown = 30
   scale_in_cooldown  = 120
   ```
-- [ ] `variables.tf` — `autoscaling_rps_target`, default 6000, with a comment carrying the whole
+- [x] `variables.tf` — `autoscaling_rps_target`, default 6000, with a comment carrying the whole
   derivation: it is per **minute**, 6,000 = 100 rps/task, the per-task capacity is only bracketed
   between 100 and 200 rps by run 8554820, and 6,000 is the conservative end. Name the correction
   signal: the steady-state task count in Task 6's run.
-- [ ] Comment the two facts that will otherwise be re-learned: the metric is **not reported at all**
+- [x] Comment the two facts that will otherwise be re-learned: the metric is **not reported at all**
   when no requests flow (alarm → `INSUFFICIENT_DATA`; harmless because the canary sustains ~23 rps
   ≈ 1,380/min at one task, well under target), and it is unsupported with blue/green deployments.
-- [ ] Verify: `fmt -check`, `validate`, reviewed `plan` — expect exactly one policy added, nothing
+- [x] Verify: `fmt -check`, `validate`, reviewed `plan` — expect exactly one policy added, nothing
   destroyed.
   > **Note 2026-09-16 (as built):** the policy is behind `requests_scaling_enabled` (default false,
   > `dev.tfvars` false), so with the committed tfvars the plan adds nothing; "exactly one policy
@@ -188,30 +188,30 @@ Spec §4.
 
 Spec §5. The service half is application code and takes the red-green loop; the HCL half does not.
 
-- [ ] `service/src/elu.js` — sample `perf_hooks.performance.eventLoopUtilization()` as a delta between
+- [x] `service/src/elu.js` — sample `perf_hooks.performance.eventLoopUtilization()` as a delta between
   successive calls. **Test first**: the utilization of a deliberately blocked loop approaches 1, an
   idle loop approaches 0, and successive calls do not double-count. This is the number both this
   change and Task 9 depend on, so it is the one thing here that must be provably right.
-- [ ] `service/src/cloudwatch.js` — `PutMetricData` every 10 s: namespace `ecs-dynamodb-rps`, metric
+- [x] `service/src/cloudwatch.js` — `PutMetricData` every 10 s: namespace `ecs-dynamodb-rps`, metric
   `EventLoopUtilization`, `StorageResolution: 1`, dimensioned by **service, not task**, so datapoints
   from multiple tasks aggregate under one alarm. Failures must be swallowed and counted, never
   thrown — a metrics outage must not take the service down. Test with a stubbed client.
-- [ ] Not EMF-through-logs, and the comment must say why: the `awslogs` driver needs no new IAM, but
+- [x] Not EMF-through-logs, and the comment must say why: the `awslogs` driver needs no new IAM, but
   log ingestion delay lands on the exact number this change exists to shrink (spec §5).
-- [ ] `infra/main/ecs.tf` — the IAM statement (`cloudwatch:PutMetricData`, which has no resource-level
+- [x] `infra/main/ecs.tf` — the IAM statement (`cloudwatch:PutMetricData`, which has no resource-level
   permissions, so scope it with a `cloudwatch:namespace` condition) and the new environment
   variables.
-- [ ] `infra/main/autoscaling.tf` — **one** `aws_cloudwatch_metric_alarm`: period **20**,
+- [x] `infra/main/autoscaling.tf` — **one** `aws_cloudwatch_metric_alarm`: period **20**,
   `evaluation_periods = 1`, threshold **0.70**, statistic Average. Then **one**
   `aws_appautoscaling_policy` of `policy_type = "StepScaling"` with
   `adjustment_type = "PercentChangeInCapacity"`, `metric_aggregation_type = "Maximum"`, and two
   `step_adjustment` blocks whose bounds are **relative to the alarm threshold**:
   `metric_interval_lower_bound = 0` → `+200`, `metric_interval_lower_bound = 0.15` (0.85 absolute) →
   `+400`. `MinAdjustmentMagnitude` 1 so a percentage of 1 task still moves.
-- [ ] Comment the ceiling so nobody re-derives it: an alarm with an Auto Scaling action re-invokes at
+- [x] Comment the ceiling so nobody re-derives it: an alarm with an Auto Scaling action re-invokes at
   most **once per minute**, so 20-second detection buys a fast *first* decision, not a fast repeating
   one — which is why the steps are large.
-- [ ] Verify: `npm test` in `service/`, `fmt -check`, `validate`, reviewed `plan`.
+- [x] Verify: `npm test` in `service/`, `fmt -check`, `validate`, reviewed `plan`.
 
 ## Task 8 — Apply change 2 and re-measure (STOPS FOR APPROVAL)
 
@@ -241,15 +241,15 @@ Spec §5. The service half is application code and takes the red-green loop; the
 
 Spec §6. Application code: red-green loop applies.
 
-- [ ] `service/src/admission.js` — reject when ELU exceeds `SHED_ELU_THRESHOLD` (**0.92**), with
+- [x] `service/src/admission.js` — reject when ELU exceeds `SHED_ELU_THRESHOLD` (**0.92**), with
   **429** and `Retry-After: 1`. Tests first: above the threshold rejects, below admits, the rejection
   path touches no repository method, and the response carries the header.
-- [ ] **Assert spec §6.1's invariant in a unit test**: every configured scale-out threshold (0.70,
+- [x] **Assert spec §6.1's invariant in a unit test**: every configured scale-out threshold (0.70,
   0.85) is strictly less than the shed threshold (0.92). Shedding lowers ELU, so a shed threshold at
   or below the scale-out steps clamps the metric under the alarm and the service sheds forever on one
   task while looking healthy. A later tuning pass must fail this test rather than discover it in a
   run.
-- [ ] `service/src/server.js` — the gate runs **before** routing and before body reading, so a shed
+- [x] `service/src/server.js` — the gate runs **before** routing and before body reading, so a shed
   request costs ~1 ms. `/healthz` is never shed: the ALB must not be told the task is unhealthy
   because it is busy.
   > **Note 2026-09-16 (as built):** the gate runs **after** `matchRoute` (a pure regex over the path,
@@ -257,14 +257,14 @@ Spec §6. Application code: red-green loop applies.
   > before the handler. Reason: a shed 429 then keeps its route label in the SLO metrics instead of
   > collapsing into `unmatched`; the spec's actual requirement for the rejection path (no database
   > work, ~1 ms — spec §6.2) still holds, at the cost of one regex per shed request.
-- [ ] **Gating (added 2026-09-16, as built):** the HCL wiring lands here too, plan only —
+- [x] **Gating (added 2026-09-16, as built):** the HCL wiring lands here too, plan only —
   `shedding_enabled` (default false, `dev.tfvars` false) and `shed_elu_threshold` (default 0.92) in
   `variables.tf`; the task definition sets `SHED_ELU_THRESHOLD` only when the flag is on, and a
   service with the variable absent never sheds. Plan with the flag on and off shows identical
   resource lists — the difference is inside `container_definitions`, which is known only after apply.
-- [ ] Confirm the recorded metrics still classify a shed request correctly — `recordRequest` sees a
+- [x] Confirm the recorded metrics still classify a shed request correctly — `recordRequest` sees a
   429 and the Grafana `GOOD` selector (`!~"5.."`) must count it as good, per spec §7.
-- [ ] Verify: `npm test`.
+- [x] Verify: `npm test`.
 
 ## Task 10 — Apply change 3 and re-measure (STOPS FOR APPROVAL)
 
