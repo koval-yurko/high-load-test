@@ -25,10 +25,6 @@ resource "aws_service_discovery_service" "collector" {
 
     routing_policy = "MULTIVALUE"
   }
-
-  health_check_custom_config {
-    failure_threshold = 1
-  }
 }
 
 resource "aws_security_group" "collector" {

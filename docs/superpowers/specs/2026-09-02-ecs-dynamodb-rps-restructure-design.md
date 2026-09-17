@@ -391,6 +391,14 @@ class=~"fast|standard|heavy"`; the numerator adds `http_response_status_code!~"5
 selector is load-bearing: public-ALB scanner 404s carry no class and, before it, sat in the
 denominator as misses (measured miss rate 66%). A 4xx is not a miss.
 
+> **This holds for Grafana only.** k6's own SLI (`infra/k6/tests/lib/request.js`) requires status
+> 200-299 before it counts a request good, so a 4xx there IS a miss; k6's availability gate
+> (`infra/k6/tests/lib/slo.js`, `http_req_failed`) counts any status >= 400 as failed too. The two
+> verdicts diverge once client errors are produced by design (admission-control shedding).
+> Divergence knowingly accepted, decision D4 — see
+> `docs/superpowers/specs/2026-09-15-ecs-dynamodb-rps-spike-response-design.md` §7, "The 4xx
+> divergence — knowingly accepted."
+
 ```
 good_c = histogram_fraction(0, T_c, sum(rate(H{class="c", non-5xx}[w]))) × histogram_count(sum(rate(H{class="c", non-5xx}[w])))
 SLI    = (good_fast + good_standard + good_heavy) / histogram_count(sum(rate(H{all classes}[w])))

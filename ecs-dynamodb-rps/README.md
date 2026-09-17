@@ -8,7 +8,8 @@ side.
 The method: find the breaking point, release **one** constraint (service capacity first, then
 database capacity), re-measure. Never both at once, or the comparison is worthless.
 
-**Idle cost: ~$0.055/hour.** See [Cost](#cost).
+**Idle cost: ~$0.38/hour** — provisioned DynamoDB capacity bills whether or not traffic flows. See
+[Cost](#cost).
 
 ## Where to look
 
@@ -51,7 +52,8 @@ next `/env up` — `-raw` prints a warning to stdout and exits 0, and `open` wou
 | Is the load balancer routing to it? | [dashboard][dash] → row 5 *Edge (ALB)* → **ALB HealthyHostCount** |
 | Is traffic arriving, and answered? | [dashboard][dash] → row 5 → **ALB RequestCount**, **HTTP status codes** |
 
-**Good:** `HealthyHostCount` equals the task count (1, or 4 if autoscaling scaled out), almost all
+**Good:** `HealthyHostCount` equals the task count (1 at the floor, up to 15 if autoscaling scaled
+out), almost all
 2XX. Stray 4XX are internet scanners.
 
 **Bad:** `HealthyHostCount` at 0, or a run of 5XX — but check throttling first ([§3](#3-what-is-the-bottleneck)).
@@ -112,7 +114,7 @@ DynamoDB's own clock read 0.9–2.2 ms, event-loop utilization pinned at 1.000, 
 falling DynamoDB latency is not evidence of a healthy database.
 
 When throttles are zero and the service still looks slow: [dashboard][dash] → row 7 → **Event-loop
-delay p99 by task** (per-task, which is what makes a 1→4 scale-out decision visible), and row 3 →
+delay p99 by task** (per-task, which is what makes a scale-out decision visible), and row 3 →
 **Read/Write capacity: consumed vs provisioned**.
 
 Two reading quirks: CloudWatch publishes throttle metrics **sparsely**, so gaps in the line mean
@@ -279,11 +281,12 @@ UI-started run needs nothing set by hand. Without `--rate` it uploads discovery 
 `stress` archived without a knee freeze at 50 rps and tag every sample `rate_source=default`, which
 is not a capacity measurement.
 
-**2. Raise table capacity — `infra/main/dev.tfvars`.** Two lines at the top pin the table to 25/25,
-the DynamoDB free tier, where the binding constraint is the free tier and not the service (250 rps
+**2. Check table capacity — `infra/main/dev.tfvars`.** Since 2026-09-15 it carries **no**
+`read_capacity` / `write_capacity` lines, so the generated `capacity.auto.tfvars` (1,025 RCU /
+200 WCU) applies on its own. Keep it that way: a `-var-file` outranks an auto-loaded `*.auto.tfvars`,
+so re-adding those lines silently overrides the model. The table used to be pinned at 25/25, the
+DynamoDB free tier, where the binding constraint is the free tier and not the service (250 rps
 produced 5,588 rejected reads per minute). **A run at 25/25 must not be recorded as an RPS ceiling.**
-Delete those two lines so the generated `capacity.auto.tfvars` (1025 RCU / 200 WCU) takes over, then
-`plan` and apply — **approval gate**, and the bill goes from ~$0.055/hr to **$0.3212/hr**.
 
 **3. Clear the k6 app's [Settings → Environment variables](https://k0valchuk.grafana.net/a/k6-app/settings/environment-variables)
 — by hand, in a browser.** This is the one step in this file that no script and no `terraform apply`
@@ -340,19 +343,42 @@ Set the dashboard time range to the run's window.
 Both traps from [§3](#3-what-is-the-bottleneck) apply: while throttles are non-zero no service-side
 signal is evidence about the service, and falling DynamoDB latency is not a healthy database.
 
-## Phase 4 — Improve: scale the service out (1 → 4 tasks)
+Once admission control (shedding) is live, a shedding run is expected to exit k6 with code **99**,
+`slo_met` and `http_req_failed` both breached — that is k6 counting a shed 429 as a miss and as a
+failed request, which is correct for k6 but disagrees with the Grafana-side SLO, which does not
+charge a 4xx to the service. This is a known, accepted divergence, not a regression; see
+`docs/superpowers/specs/2026-09-15-ecs-dynamodb-rps-spike-response-design.md` §7, "The 4xx
+divergence — knowingly accepted." For those runs, read SLO attainment from Grafana, not from the k6
+exit code.
 
-**One change only.** If Phase 3 showed non-zero throttles, skip to Phase 6 — scaling tasks would
-change nothing, and recording why the order was swapped is itself a result.
+## Phase 4 — Improve: spike response from a floor of one task
 
-```hcl
-# infra/main/dev.tfvars
-autoscaling_enabled = true
-```
+**One change per run, from the same commit.** If Phase 3 showed non-zero throttles, skip to Phase 6 —
+scaling tasks would change nothing, and recording why the order was swapped is itself a result.
 
-`terraform -chdir=infra/main plan -var-file=dev.tfvars` must show **exactly two resources added** (the
-autoscaling target and its CPU policy). Anything more means more than one thing is changing. Then
-apply — **approval gate.** Cooldowns are 30 s out, 120 s in: out fast, in slow.
+*(Until 2026-09-16 this phase said to set `autoscaling_enabled = true` as the one change and expect
+1 → 4 tasks. That is already committed: `autoscaling_enabled = true`, the floor is `desired_count =
+1` and the ceiling `autoscaling_max = 15`.)*
+
+The current sequence answers a short spike from one task. The code for all three changes is already
+in the image and the HCL, each behind its own flag — but as of 2026-09-16
+`infra/main/dev.tfvars` **commits `requests_scaling_enabled = true` and `shedding_enabled = true`
+already**; only `elu_scaling_enabled` still defaults `false`. A plain
+`apply -var-file=dev.tfvars` therefore lands on the change-3 state directly. To keep "one change
+per run" true, every run before change 3 needs a `-var` override on top of the file:
+
+| run | `apply` differs from plain `-var-file=dev.tfvars` by | what changes | expected `plan` |
+|---|---|---|---|
+| baseline | `-var requests_scaling_enabled=false -var shedding_enabled=false` | CPU target tracking only (60%, 3 × 60 s datapoints) | — |
+| change 1 | `-var shedding_enabled=false` | adds an `ALBRequestCountPerTarget` policy, target 6,000 requests per task per **minute** (100 rps), alongside the CPU one | 1 added: `aws_appautoscaling_policy.requests[0]` |
+| change 2 | `-var shedding_enabled=false -var elu_scaling_enabled=true` | adds a 20-second event-loop-utilization alarm (≥ 0.70) and a step policy (+200%, +400% at ≥ 0.85); no redeploy, the service already publishes ELU | 2 added: the alarm and the step policy |
+| change 3 | `-var elu_scaling_enabled=true` (the file alone already carries `requests_scaling_enabled` and `shedding_enabled`) | the task definition gains `SHED_ELU_THRESHOLD=0.92`, so the service answers 429 + `Retry-After: 1` above it | a new task-definition revision and a service update; confirm the variable on the running task definition, the plan cannot show it |
+
+Anything more in a plan than the row says means more than one thing is changing. Every apply is an
+**approval gate**. A change-3 run is expected to exit k6 with 99 — see Phase 3. The full procedure,
+the measurements each run must capture and the reasons are in
+`docs/superpowers/plans/2026-09-15-ecs-dynamodb-rps-spike-response.md` (Tasks 3–11), whose Task
+4/6/8/10 apply steps carry the same `-var` overrides.
 
 ## Phase 5 — Re-measure identically
 
@@ -397,8 +423,10 @@ aws resourcegroupstaggingapi get-resources \
 
 **A clean destroy is not evidence of a clean account** — hence the sweep. **Do not delete what it
 finds without asking**; a survivor may belong to another project. One thing it cannot find: after
-autoscaling has run, Application Auto Scaling leaves two `TargetTracking-…` CloudWatch alarms
-carrying no `Project` tag.
+autoscaling has run, Application Auto Scaling leaves the `TargetTracking-…` CloudWatch alarms it
+created, carrying no `Project` tag — **two per target-tracking policy** (a high and a low alarm), so
+two with only the CPU policy and **four** once `requests_scaling_enabled` is on. The ELU alarm
+(`ecs-dynamodb-rps-elu-high`) is not one of them: Terraform manages it, tags it and destroys it.
 
 **The k6 project goes with the destroy**, together with its uploaded tests, settings page and run
 history — `infra/k6` creates it. That is accepted: `results.md` is the record, and `/loadtest
@@ -418,9 +446,14 @@ project's subfolder, with its dashboard, SLO and rules, goes with the destroy.
 | ALB LCU | $0.0080/LCU-hr |
 | DynamoDB RCU / WCU | $0.0001586 / $0.0007930 per unit-hr |
 
-- **Idle at 25/25:** ~**$0.055/hr**, ~$40/month. 25/25 is the DynamoDB free tier, so capacity is free;
-  Fargate and the ALB are billed regardless.
-- **At full capacity (1025/200):** **$0.3212/hr**, ~$234/month.
+- **DynamoDB at the model's 1,025 RCU / 200 WCU** (`capacity.auto.tfvars`, which `dev.tfvars` no
+  longer overrides): 1,025 × $0.0001586 + 200 × $0.0007930 = $0.1626 + $0.1586 = **$0.3212/hr**,
+  ~$234/month (× 730 h). Provisioned capacity bills the same idle or loaded. If the account's
+  DynamoDB free tier (25 RCU + 25 WCU) is otherwise unused it takes off 25 × $0.0001586 +
+  25 × $0.0007930 = $0.0238/hr, leaving $0.2974/hr.
+- **Idle total:** that plus the ~$0.055/hr of Fargate and ALB that the earlier 25/25 figure consisted
+  of (capacity was free then) — **~$0.38/hr**, ~$275/month. The old "idle at 25/25, ~$0.055/hr" no
+  longer describes any configuration in this repo.
 
 **The forgotten environment, not the load test, is the cost risk.** Prices live in `pricing.json`
 with the query that produced them, never typed from memory.

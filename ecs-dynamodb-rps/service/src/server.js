@@ -4,6 +4,8 @@ import { performance } from 'node:perf_hooks';
 import { loadConfig } from './config.js';
 import { createRepo } from './dynamo.js';
 import { createHandlers, matchRoute } from './handlers.js';
+import { RETRY_AFTER_SECONDS, SHED_STATUS, startAdmission } from './admission.js';
+import { startEluPublisher } from './cloudwatch.js';
 import { recordRequest, startOtel } from './otel.js';
 import { createTimer } from './timing.js';
 
@@ -22,7 +24,10 @@ async function readJson(req) {
   catch { throw new Error('invalid json'); }
 }
 
-export function createServer({ handlers }) {
+/**
+ * `admission` is optional: absent (SHED_ELU_THRESHOLD unset) means no gate at all.
+ */
+export function createServer({ handlers, admission }) {
   return http.createServer(async (req, res) => {
     // First line: as close to "the event loop reached this request" as Node
     // allows. Everything before it -- accept queue, header parse -- is
@@ -56,6 +61,18 @@ export function createServer({ handlers }) {
 
     if (!route) return send(404, { error: 'no route' });
 
+    // Placed AFTER matchRoute and the 'finish' listener, so a shed request is
+    // recorded with its real route label and status 429 -- not as
+    // 'unmatched' -- and Grafana's GOOD selector (!~"5..") scores it.
+    // matchRoute is a handful of regexes with no I/O, so this costs nothing.
+    // BEFORE body reading and the handler, which is where the database work
+    // is. An unmatched path is not gated: its 404 is already as cheap as a
+    // 429. /healthz is never shed (src/admission.js).
+    if (admission?.shouldShed(route)) {
+      res.setHeader('Retry-After', String(RETRY_AFTER_SECONDS));
+      return send(SHED_STATUS, { error: 'overloaded' });
+    }
+
     try {
       const body = req.method === 'POST' ? await readJson(req) : undefined;
       const result = await handlers[route.name]({ params: route.params, body, timer });
@@ -73,7 +90,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const otel = config.otlpEndpoint
     ? await startOtel({ ...config, instanceIdFallback: `local-${process.pid}` })
     : null;
-  const server = createServer({ handlers: createHandlers({ repo, config }) });
+  // Same gate as OTel: no METRICS_NAMESPACE, no publisher and no AWS client.
+  // Started before the listener so the first overload is already being sampled.
+  const metrics = config.metricsNamespace ? startEluPublisher(config) : null;
+  // Same gate again: no SHED_ELU_THRESHOLD, no admission gate, sampler or timer.
+  // Started before the listener so the first overload is already being measured.
+  const admission = config.shedEluThreshold !== undefined ? startAdmission(config) : null;
+  const server = createServer({ handlers: createHandlers({ repo, config }), admission });
   // The ALB's idle_timeout is 60s (terraform/alb.tf). AWS requires the target's keep-alive to
   // exceed the load balancer's idle timeout, or the ALB can dispatch a request onto a connection
   // Node is simultaneously closing, which surfaces as a 502 that burns error budget the service
@@ -89,6 +112,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       // the window. Counters are cumulative, but only for a task still alive to
       // send them.
       if (otel) await otel.shutdown().catch(() => {});
+      // No final flush: a scaling alarm has no use for the last ELU sample of a
+      // task that is already leaving.
+      metrics?.stop();
+      admission?.stop();
       repo.destroy();
       process.exit(0);
     }));

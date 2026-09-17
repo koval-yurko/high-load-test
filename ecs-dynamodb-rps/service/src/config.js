@@ -6,6 +6,15 @@ function num(env, key, dflt) {
   return n;
 }
 
+/** Absent => undefined (feature off). Present => a fraction in (0, 1]. */
+function fraction(env, key) {
+  const raw = env[key];
+  if (raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || n > 1) throw new Error(`${key} must be a number in (0, 1], got ${JSON.stringify(raw)}`);
+  return n;
+}
+
 export function loadConfig(env = process.env) {
   return {
     port: num(env, 'PORT', 8080),
@@ -20,5 +29,16 @@ export function loadConfig(env = process.env) {
     // what lets every unit and integration test run with no collector present.
     otlpEndpoint: env.OTLP_ENDPOINT || undefined,
     exportIntervalMs: num(env, 'OTEL_EXPORT_INTERVAL_MS', 15_000),
+    // Same pattern as otlpEndpoint: absent => no CloudWatch publisher and no AWS
+    // client is created, so tests need no AWS. The metric's ServiceName dimension
+    // is serviceName above; the alarm in infra/main/alerts.tf must match both.
+    metricsNamespace: env.METRICS_NAMESPACE || undefined,
+    // 10s, not 1s: 1s publishing is ~$16/month in PutMetricData requests and the
+    // 20s alarm period only needs two datapoints per period.
+    metricsIntervalMs: num(env, 'METRICS_INTERVAL_MS', 10_000),
+    // Absent => no gate, no sampler and no timer, like the two exporters above.
+    // Comes from var.shed_elu_threshold in infra/main, which must stay strictly
+    // above the ELU scale-out thresholds (test/admission.test.js).
+    shedEluThreshold: fraction(env, 'SHED_ELU_THRESHOLD'),
   };
 }
