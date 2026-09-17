@@ -44,3 +44,36 @@ test('otel config has safe defaults and is disabled without an endpoint', () => 
   assert.equal(on.otlpEndpoint, 'http://collector.local:4318');
   assert.equal(on.exportIntervalMs, 5000);
 });
+
+test('cloudwatch metrics publisher is disabled without a namespace', () => {
+  const off = loadConfig({});
+  assert.equal(off.metricsNamespace, undefined);
+  assert.equal(off.metricsIntervalMs, 10000);
+
+  const on = loadConfig({ METRICS_NAMESPACE: 'ecs-dynamodb-rps', METRICS_INTERVAL_MS: '5000' });
+  assert.equal(on.metricsNamespace, 'ecs-dynamodb-rps');
+  assert.equal(on.metricsIntervalMs, 5000);
+});
+
+test('an empty namespace counts as absent', () => {
+  assert.equal(loadConfig({ METRICS_NAMESPACE: '' }).metricsNamespace, undefined);
+});
+
+test('rejects a non-numeric metrics interval', () => {
+  assert.throws(() => loadConfig({ METRICS_INTERVAL_MS: 'soon' }), /METRICS_INTERVAL_MS/);
+});
+
+test('admission control is disabled without a shed threshold', () => {
+  assert.equal(loadConfig({}).shedEluThreshold, undefined);
+  assert.equal(loadConfig({ SHED_ELU_THRESHOLD: '' }).shedEluThreshold, undefined);
+  assert.equal(loadConfig({ SHED_ELU_THRESHOLD: '0.92' }).shedEluThreshold, 0.92);
+  assert.equal(loadConfig({ SHED_ELU_THRESHOLD: '1' }).shedEluThreshold, 1);
+});
+
+test('rejects a shed threshold outside (0, 1]', () => {
+  // ELU is a fraction. 0 would shed every request; above 1 would shed none
+  // while looking enabled.
+  for (const bad of ['0', '-0.5', '1.2', 'busy']) {
+    assert.throws(() => loadConfig({ SHED_ELU_THRESHOLD: bad }), /SHED_ELU_THRESHOLD/, `accepted ${bad}`);
+  }
+});

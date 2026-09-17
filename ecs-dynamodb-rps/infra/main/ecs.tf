@@ -33,10 +33,36 @@ resource "aws_iam_role" "task" {
   assume_role_policy = data.aws_iam_policy_document.assume_ecs_tasks.json
 }
 
+# What the service publishes its event-loop utilization under (src/cloudwatch.js).
+# Read by the task's environment, the IAM condition below and the alarm in
+# alerts.tf: a mismatched namespace or dimension matches no metric and sits in
+# INSUFFICIENT_DATA forever, without an error anywhere.
+locals {
+  metrics_namespace    = var.project
+  metrics_service_name = var.project
+}
+
 data "aws_iam_policy_document" "table_access" {
   statement {
     actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:BatchWriteItem"]
     resources = [aws_dynamodb_table.items.arn]
+  }
+
+  # PutMetricData supports no resource-level permissions, so resources must be
+  # "*"; the cloudwatch:namespace condition is what keeps this task from
+  # writing into any other namespace. Not gated by elu_scaling_enabled:
+  # publishing changes no behaviour. (Lives in the policy still named
+  # "table-access" -- renaming it would replace the policy for a cosmetic
+  # reason.)
+  statement {
+    actions   = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values   = [local.metrics_namespace]
+    }
   }
 }
 
@@ -71,14 +97,25 @@ resource "aws_ecs_task_definition" "app" {
     # deploy or a scale-in is most likely to land in. 120s is the Fargate maximum.
     stopTimeout = var.stop_timeout_seconds
 
-    environment = [
+    environment = concat([
       { name = "PORT", value = tostring(var.container_port) },
       { name = "TABLE_NAME", value = aws_dynamodb_table.items.name },
       { name = "AWS_REGION", value = data.aws_region.current.region },
       { name = "PBKDF2_ITERATIONS", value = tostring(var.pbkdf2_iterations) },
       { name = "FEED_PAGE_SIZE", value = tostring(var.feed_page_size) },
       { name = "OTLP_ENDPOINT", value = "http://collector.${aws_service_discovery_private_dns_namespace.internal.name}:4318" },
-    ]
+      # Sets the publisher on (src/config.js: absent => no publisher). Set
+      # explicitly rather than relying on the service's defaults, because the
+      # alarm in alerts.tf must match these values exactly. OTEL_SERVICE_NAME
+      # is also the OTel service.name; its value equals the service's default.
+      { name = "METRICS_NAMESPACE", value = local.metrics_namespace },
+      { name = "OTEL_SERVICE_NAME", value = local.metrics_service_name },
+      ],
+      # The service sheds only when this variable is present (src/config.js).
+      var.shedding_enabled ? [
+        { name = "SHED_ELU_THRESHOLD", value = tostring(var.shed_elu_threshold) },
+      ] : [],
+    )
 
     logConfiguration = {
       logDriver = "awslogs"
@@ -95,8 +132,14 @@ resource "aws_ecs_service" "app" {
   name            = var.project
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.app.arn
-  desired_count   = var.desired_count
-  launch_type     = "FARGATE"
+  # Deliberately no ignore_changes on desired_count. When this value and the
+  # Application Auto Scaling floor (autoscaling.tf min_capacity) disagree,
+  # Auto Scaling wins silently -- it adjusts desired_count outside Terraform
+  # and the next plan shows no diff. min_capacity derives from
+  # var.desired_count instead of a separate variable so there is one number
+  # instead of two that can drift.
+  desired_count = var.desired_count
+  launch_type   = "FARGATE"
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
