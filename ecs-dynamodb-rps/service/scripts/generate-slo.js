@@ -142,26 +142,61 @@ ${Object.entries(slo.classes).map(([n]) => `  'http_req_duration{class:${n}}': [
 `;
 }
 
-export function renderCapacityTfvars(doc) {
+/**
+ * What the capacity model in slo.yaml WOULD provision, per unit and in total.
+ *
+ * ADVISORY ONLY since 2026-09-18. Provisioned capacity is the single biggest
+ * line on the bill, so it is hand-set in infra/main/dev.tfvars where the other
+ * sizing knobs are, and this model only says what it thinks. It used to render
+ * infra/main/capacity.auto.tfvars, which was byte-checked and therefore
+ * unoverridable -- and which a -var-file on the CLI outranked anyway, so a
+ * number in dev.tfvars won silently. There is now one file, and it wins openly.
+ */
+export function capacityModel(doc) {
   const { mix, cost_per_request: cost, target_rps: rps } = doc.capacity;
   const per = (unit) => Object.entries(mix).reduce((sum, [k, share]) => sum + share * (cost[k][unit] ?? 0), 0);
-  const rcu = per('rcu'), wcu = per('wcu');
   const terms = (unit) => Object.entries(mix)
     .filter(([k]) => (cost[k][unit] ?? 0) > 0)
     .map(([k, share]) => `${share}*${cost[k][unit].toFixed(1)}`).join(' + ');
-  const rcuTerms = terms('rcu'), wcuTerms = terms('wcu');
-  // The committed capacity.auto.tfvars pads the shorter (WCU) sum so the two
-  // comment lines read as a column. Its padding runs one character past the
-  // longer line, and that file is the hand-checked fixed point this generator
-  // has to reproduce byte for byte -- so the offset is encoded here rather
-  // than "corrected", which would rewrite a reviewed file for cosmetics.
-  const column = Math.max(rcuTerms.length, wcuTerms.length);
-  return `# GENERATED from slo.yaml by /slo. Do not edit by hand.
-# ${rcuTerms.padEnd(column)} = ${rcu.toFixed(3)} RCU per rps
-# ${wcuTerms.padEnd(column + 1)} = ${wcu.toFixed(3)} WCU per rps
-read_capacity  = ${Math.round(rcu * rps)}
-write_capacity = ${Math.round(wcu * rps)}
-`;
+  const rcu = per('rcu'), wcu = per('wcu');
+  return {
+    rps,
+    rcuPerRps: rcu, wcuPerRps: wcu,
+    rcuTerms: terms('rcu'), wcuTerms: terms('wcu'),
+    read: Math.round(rcu * rps), write: Math.round(wcu * rps),
+  };
+}
+
+/**
+ * The two capacity numbers as dev.tfvars actually sets them, or null for a
+ * variable the file does not set. Null is a real answer, not an error: with no
+ * capacity.auto.tfvars behind it, an unset variable has no default in
+ * variables.tf and terraform will ask for it -- worth saying out loud.
+ */
+export function readCapacityTfvars(text) {
+  const value = (name) => {
+    // Anchored per line so a commented-out `# read_capacity = 25` is not read
+    // as the setting. HCL allows any spacing around `=`.
+    const m = new RegExp(`^\\s*${name}\\s*=\\s*(\\d+)`, 'm').exec(text);
+    return m ? Number(m[1]) : null;
+  };
+  return { read: value('read_capacity'), write: value('write_capacity') };
+}
+
+/** One line per unit: what is set, what the model says, and whether they agree. */
+export function capacityReport(doc, tfvars) {
+  const model = capacityModel(doc);
+  const set = readCapacityTfvars(tfvars);
+  const line = (unit, actual, wanted, terms, perRps) =>
+    `  ${unit} dev.tfvars ${String(actual === null ? 'UNSET' : actual).padStart(5)}` +
+    `  |  model ${String(wanted).padStart(5)}` +
+    `  (${terms} = ${perRps.toFixed(3)}/rps x ${model.rps} rps)` +
+    `${actual === wanted ? '' : '  <- differs'}`;
+  return [
+    'capacity (advisory -- dev.tfvars is authoritative):',
+    line('RCU', set.read, model.read, model.rcuTerms, model.rcuPerRps),
+    line('WCU', set.write, model.write, model.wcuTerms, model.wcuPerRps),
+  ].join('\n');
 }
 
 /**
@@ -610,9 +645,11 @@ export function renderQueries(doc) {
   return `${JSON.stringify(q, null, 2)}\n`;
 }
 
+// Capacity is deliberately NOT here. infra/main/dev.tfvars sets read_capacity /
+// write_capacity by hand and outranks anything this script could write; the
+// model only reports, via capacityReport below.
 const OUTPUTS = [
   ['infra/k6/tests/lib/slo.js', renderK6],
-  ['infra/main/capacity.auto.tfvars', renderCapacityTfvars],
   ['infra/grafana/classmap.json', renderClassMap],
   ['infra/grafana/alerts.tf', renderAlerts],
   ['infra/grafana/locals.tf', renderLocals],
@@ -636,6 +673,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (check) console.error(`DRIFT: ${rel} does not match slo.yaml`);
     else { writeFileSync(`${root}${rel}`, wanted); console.log(`wrote ${rel}`); }
   }
+  // Printed in BOTH modes and before the exit, so a run that is failing on
+  // drift still says what capacity is set to -- that is the number on the bill.
+  // It never touches `drifted`: a hand-set capacity that disagrees with the
+  // model is a choice, not drift.
+  console.log(capacityReport(doc, readFileSync(`${root}infra/main/dev.tfvars`, 'utf8')));
   if (check && drifted) process.exit(1);
   if (check) console.log('slo.yaml and its generated outputs agree');
 }

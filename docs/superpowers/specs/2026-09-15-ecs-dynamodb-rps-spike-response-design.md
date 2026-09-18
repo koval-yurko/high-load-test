@@ -310,7 +310,13 @@ Two pre-existing defects, both of which distort any measurement taken before the
   `min_capacity = var.desired_count` in `autoscaling.tf`, so there is one number instead of two
   that can drift. The `ignore_changes` comment in `ecs.tf` documents the previous incarnation of
   this same failure and should gain a pointer to this one.
-- **Read capacity is 25 RCU short of the model.** `capacity.auto.tfvars` (generated) says 1,000 rps
+- **Read capacity is 25 RCU short of the model.** **Superseded in its mechanism, not its number, by
+  `docs/superpowers/specs/2026-09-18-ecs-dynamodb-rps-capacity-authority-design.md`:** the fix below
+  was to delete the two lines from `dev.tfvars` so the generated file would apply. Since 2026-09-18
+  `capacity.auto.tfvars` no longer exists and `dev.tfvars` sets `read_capacity = 1025` /
+  `write_capacity = 200` itself — the same values, now where they can be seen. Do not re-delete
+  them; that leaves the variables unset, and they have no default. The rest of this bullet stands.
+  `capacity.auto.tfvars` (generated) says 1,000 rps
   of this mix needs **1,025 RCU / 200 WCU**; `dev.tfvars` overrides to **1,000 / 500**. Invisible
   at today's 171 RCU/s, guaranteed to throttle the moment the service can push 1,000 rps — which is
   the point of this entire spec. Run 8554820 incidentally validated the model: 171.5 RCU/s at

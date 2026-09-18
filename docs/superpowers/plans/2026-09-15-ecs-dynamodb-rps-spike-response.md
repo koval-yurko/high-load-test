@@ -8,7 +8,8 @@
   been destroyed. **Not started:** Tasks 4, 6, 8, 10, 11 — every one needs the environment.
   **Blocking the rest:** each remaining task contains a `terraform apply` or `destroy`, and the user
   has not approved any further applies. The first step when they do is to clear the stale k6 project
-  8476029 out of `platform/` state (Task 3's new first step), otherwise `/env up` hits the same 409.
+  8476029 out of `platform/` state (Task 3's new first step) — **that step is now done, 2026-09-18**:
+  the two orphan addresses were removed with `terraform state rm`, and `platform` plans cleanly again.
   Changes 1–3 are each behind a Terraform flag defaulting off — see the gating ruling in the
   execution record.
 - **Spec:** `docs/superpowers/specs/2026-09-15-ecs-dynamodb-rps-spike-response-design.md` (approved
@@ -63,6 +64,10 @@ Spec §9. Both distort any measurement taken before they land, so they precede t
   **delete** `read_capacity` / `write_capacity` so the generated `capacity.auto.tfvars` (1,025 RCU /
   200 WCU) applies, exactly as that file's own comment instructs. Rewrite the stale comment block
   that still describes the free-tier pin.
+  **Reversed on 2026-09-18** (`docs/superpowers/specs/2026-09-18-ecs-dynamodb-rps-capacity-authority-design.md`):
+  the two lines are back in `dev.tfvars` at those same 1,025 / 200 values and are now the
+  authoritative setting, `capacity.auto.tfvars` is deleted, and `slo.yaml`'s capacity model only
+  advises. The values this task was executed with did not change; where they live did.
 - [x] Sanity-check the WCU drop 500 → 200 against measurement: run 8554820 consumed 33.5 WCU/s at
   ~175 rps = 0.19 WCU/rps, so 1,000 rps ≈ 191 WCU. 200 is sized, not guessed.
 - [x] Verify: `fmt -check`, `validate`, `plan -var-file=dev.tfvars` against the empty state — expect a
@@ -78,7 +83,8 @@ Spec §9. Both distort any measurement taken before they land, so they precede t
 > baseline configuration — but the image deployed here already carries all the service code (the
 > ELU publisher and the admission gate), so later tasks flip flags and never rebuild.
 
-- [ ] **Clear the stale k6 project from `platform/` state first.** The 2026-09-14 k6-ownership plan's
+- [x] **Clear the stale k6 project from `platform/` state first — done 2026-09-18, see the
+  execution record.** The 2026-09-14 k6-ownership plan's
   `terraform -chdir=platform apply` step never ran, so `platform/` state still lists
   `grafana_k6_project` 8476029 (name `ecs-dynamodb-rps`) and its limits, although by 2026-09-16 the
   project no longer exists in the k6 API. Run `terraform -chdir=platform plan` from the repo root —
@@ -369,6 +375,22 @@ Spec §6. Application code: red-green loop applies.
   tagging API. k6 project 8476029 is absent from the k6 API but **still listed in `platform/` state**
   (stale). Task 3's text was rewritten on 2026-09-16 to clear that state first and to expect a full
   create.
+- **Task 3, first step — done 2026-09-18.** The user reported that both
+  `terraform -chdir=platform apply` and `destroy` failed at refresh with
+  `Error: Error reading k6 project limits ... Could not read k6 project limits for project with id
+  8476029: 404 Not Found`, having deleted the project by hand in Grafana. The 404 happens during
+  **refresh**, so it blocked the plan itself — apply could never reach the destroy that would have
+  removed the two addresses, which is the case this step's "stop and ask before reaching for
+  `terraform state rm`" was written for. With that approval given, `platform` state (serial 10,
+  backed up before the edit) had `grafana_k6_project_limits.project["ecs-dynamodb-rps"]` and
+  `grafana_k6_project.project["ecs-dynamodb-rps"]` removed with `terraform state rm`. Nothing
+  billable was touched: both objects were already gone from the k6 API. `terraform -chdir=platform
+  plan` now refreshes cleanly — **0 to add, 1 to change, 0 to destroy** (only the `platform`
+  workspace description), with the stale `k6_project_ids = { ecs-dynamodb-rps = "8476029" }` output
+  dropping to null. `platform` has **not** been applied. The cached `K6_CLOUD_PROJECT_ID=8476029`
+  was also removed from the root `.env`, replaced by the `.env.example` note that says the id comes
+  from `terraform output`. A fresh k6 project is created by `/env up ecs-dynamodb-rps`, which owns
+  it in `infra/k6`.
 - **Gating ruling (2026-09-15, applies to Tasks 5, 7, 9 and to 6, 8, 10).** Deviation from the task
   text, which assumed each change's code lands right before its own apply. Because Tasks 5, 7 and 9
   were executed before the baseline run (Task 4) exists, **each change sits behind its own Terraform

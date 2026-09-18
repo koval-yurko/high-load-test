@@ -94,13 +94,15 @@ capacity:
     report: { rcu: 2.5, wcu: 1 }
 ```
 
-Generates `<project>/infra/main/capacity.auto.tfvars`:
+Reports what it would provision, beside what `<project>/infra/main/dev.tfvars` actually sets:
 
-```hcl
-# GENERATED from slo.yaml by /slo. Do not edit by hand.
-read_capacity  = 1025   # 1.025 x 1000 rps
-write_capacity = 200    # 0.200 x 1000 rps
 ```
+capacity (advisory -- dev.tfvars is authoritative):
+  RCU dev.tfvars  1025  |  model  1025  (0.55*0.5 + 0.25*2.5 + 0.05*2.5 = 1.025/rps x 1000 rps)
+  WCU dev.tfvars   200  |  model   200  (0.15*1.0 + 0.05*1.0 = 0.200/rps x 1000 rps)
+```
+
+It does **not** write the capacity variables — see "Advisory output — capacity" below.
 
 The `mix` shares must sum to 1.0. Refuse to generate otherwise — a mix that does not sum to one
 produces capacity numbers that are quietly wrong rather than obviously wrong.
@@ -170,19 +172,35 @@ late page (72% miss rate at a 95% objective). The tail objective, judged at `tai
 threshold, is where the early warning should then live — at 99% its fast burn sits at 14.4%, which is
 where a 99% primary's did. Moving one without the other loses the warning entirely.
 
-## Generated output 3 — Terraform capacity variables
+## Advisory output — capacity
 
-Into `<project>/infra/main/capacity.auto.tfvars`, from the `capacity:` block. Terraform loads
-`*.auto.tfvars` automatically, so no `-var-file` flag changes. Note `.gitignore` covers
-`*.auto.tfvars` at the repo root — for a generated, non-secret file that is wrong; add a negation
-(`!<project>/infra/main/capacity.auto.tfvars`) so the derived capacity is committed alongside the
-`slo.yaml` it came from.
+`read_capacity` / `write_capacity` are **hand-set in `<project>/infra/main/dev.tfvars`** and the
+`capacity:` block only reports what it would have chosen. Changed on 2026-09-18 (see
+`docs/superpowers/specs/2026-09-18-ecs-dynamodb-rps-capacity-authority-design.md`); until then the
+generator wrote `capacity.auto.tfvars` and byte-checked it, which made provisioned capacity — the
+biggest line on the bill — the one knob that could not be turned where every other sizing knob
+lives.
+
+Two consequences worth keeping straight:
+
+- **Nothing outranks `dev.tfvars` now**, and that is the point. It never could be outranked by a
+  generated `*.auto.tfvars` (a CLI `-var-file` wins over an auto-loaded file), so the old split only
+  made an override *silent*. TFC **workspace** variables and variable-set entries still outrank both,
+  so a project pinning capacity that way must delete them — this is what made a 2026-09-02 run return
+  `No changes` while the files said 1025/200.
+- **A difference is not drift.** `--check` prints it with `<- differs` and still exits 0. The one
+  hard failure is a capacity variable going *missing*: `variables.tf` gives it no default and nothing
+  generates it any more, so an unset value stops the plan. A service test asserts `dev.tfvars` sets
+  both.
+
+Deviating deliberately (headroom to move the ceiling off the table, or a cheap run) is legitimate —
+write the reason in a comment beside the number, or the next reader reads it as stale.
 
 ## `--check`
 
-Compare `slo.yaml` against both generated files and report drift without writing anything. Run this
-before quoting an SLO figure in a result — if k6 and Grafana disagree, every attainment number from
-that project is suspect until it is resolved.
+Compare `slo.yaml` against the generated files and report drift without writing anything, then print
+the capacity advisory. Run this before quoting an SLO figure in a result — if k6 and Grafana
+disagree, every attainment number from that project is suspect until it is resolved.
 
 ## Interaction with load testing
 

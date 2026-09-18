@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { matchRoute } from '../src/handlers.js';
-import { burnWindows, loadSlo, renderCapacityTfvars, renderClassMap, renderK6, renderAlerts, renderQueries } from '../scripts/generate-slo.js';
+import { burnWindows, loadSlo, capacityModel, readCapacityTfvars, renderClassMap, renderK6, renderAlerts, renderQueries } from '../scripts/generate-slo.js';
 import { ratioExpr, renderLocals, classRatio, rate } from '../scripts/generate-slo.js';
 
 const HERE = new URL('../../', import.meta.url).pathname;
@@ -49,7 +49,27 @@ test('an endpoint in two classes is refused', () => {
 test('regenerating the committed slo.yaml reproduces the committed outputs byte for byte', () => {
   const model = loadSlo(`${HERE}slo.yaml`);
   assert.equal(renderK6(model), readFileSync(`${HERE}infra/k6/tests/lib/slo.js`, 'utf8'));
-  assert.equal(renderCapacityTfvars(model), readFileSync(`${HERE}infra/main/capacity.auto.tfvars`, 'utf8'));
+});
+
+test('dev.tfvars sets both capacity variables, and its values are read back', () => {
+  // Capacity is hand-set and advisory-checked, so the one thing that IS still a
+  // hard failure is it going MISSING: the variables have no default in
+  // variables.tf and nothing else supplies them since capacity.auto.tfvars was
+  // deleted, so an unset value stops a plan dead (or prompts, interactively).
+  const set = readCapacityTfvars(readFileSync(`${HERE}infra/main/dev.tfvars`, 'utf8'));
+  assert.equal(typeof set.read, 'number');
+  assert.equal(typeof set.write, 'number');
+
+  // The model is reported, not enforced -- this asserts the arithmetic, not the
+  // file. 1000 rps x (0.55*0.5 + 0.25*2.5 + 0.05*2.5) = 1025 RCU, x 0.200 = 200 WCU.
+  const model = capacityModel(loadSlo(`${HERE}slo.yaml`));
+  assert.deepEqual([model.read, model.write], [1025, 200]);
+});
+
+test('a commented-out capacity line is not read as the setting', () => {
+  const set = readCapacityTfvars('# read_capacity  = 25\nwrite_capacity = 200\n');
+  assert.equal(set.read, null);
+  assert.equal(set.write, 200);
 });
 
 test('the committed slo.yaml is a 7-day window with 14m/84m burn alerting', () => {
