@@ -20,28 +20,6 @@ database capacity), re-measure. Never both at once, or the comparison is worthle
 | `https://k0valchuk.grafana.net/a/grafana-slo-app/slos` | the SLO **ecs-dynamodb-rps latency classes** — error budget and 7-day attainment |
 | `https://k0valchuk.grafana.net/a/k6-app/projects` | the project named **ecs-dynamodb-rps** → its k6 tests and the runs since the last `/env up` (the project is destroyed with the environment) |
 
-**The dashboard has no permanent URL by design** — its JSON pins no `uid`, so Grafana mints a new one
-every time the folder is recreated and any `/d/<uid>/…` link written here dies at the next teardown.
-Open it by name, or print the current one:
-
-```bash
-curl -s -H "Authorization: Bearer $GRAFANA_AUTH" \
-  "$GRAFANA_URL/api/search?type=dash-db&query=attribution" | jq -r '.[] | .url'
-```
-
-It opens at the last 1 hour. Set the range to the run's window when reading a load test.
-
-**The k6 project's id is not written down here either**, and not in `.env`: `infra/k6` creates the
-project and `/env down` destroys it, so the id is new after every rebuild. Pick the project by name,
-or jump straight to it:
-
-```bash
-open "$GRAFANA_URL/a/k6-app/projects/$(terraform -chdir=infra/main output -json | jq -r '.k6_project_id.value // empty')"
-```
-
-`-json` + `jq`, not `-raw`: against empty state — the normal condition between `/env down` and the
-next `/env up` — `-raw` prints a warning to stdout and exits 0, and `open` would be handed the warning.
-
 ---
 
 ## 1. Is the service up?
@@ -75,16 +53,14 @@ class threshold — fast < 50 ms, standard < 200 ms, heavy < 800 ms.
 
 **Good during a run:** above 95%. **Good at idle:** 98–99%, and not a defect worth chasing — ~3% of
 idle requests pay a fresh TLS handshake to DynamoDB after the connection is reaped, which cannot
-happen under sustained load. (Measured 2026-09-01, fast class: p95 31.9 ms / 96.67% idle against p95
-4.8 ms / 99.43% at 60 rps.)
+happen under sustained load.
 
 **Error budget:** [SLO app][slo] → **ecs-dynamodb-rps latency classes**. At 95%, up to 5% of requests
 in the window may miss. The window is **7 days**, forced — Grafana's SLO API accepts 7–32 days and
 the free tier retains 14. Do not read a depressed 7-day figure as an incident; the burn-rate alerts
 below are what is worth acting on.
 
-**Why 95% and not 99%** (relaxed 2026-09-09, with the tail from 99.9% to 99% —
-`docs/superpowers/specs/2026-09-09-ecs-dynamodb-rps-slo-relaxation-design.md`): at 99% the budget was
+**Why 95% and not 99%**: at 99% the budget was
 too small to watch anything burn. The idle heartbeat alone — 40,320 requests over 7 days, ~3.3% of
 the fast half missing on cold sockets — spent **166%** of the week's budget with no load running, and
 a clean constant run at capacity spent another 67%. Five times the budget puts those at **33%** and
@@ -105,8 +81,7 @@ Two metrics, read side by side:
 - Latency up **and** throttles non-zero → the database was the constraint. The knob is capacity.
 - Latency up **and** throttles at zero → it wasn't. Look at the service.
 
-**Read the throttle panel first and judge nothing about the service while it is non-zero.** Measured
-2026-09-01 at 250 rps against 25 RCU: the service's own database timing read 642–938 ms while
+**Read the throttle panel first and judge nothing about the service while it is non-zero.** Measured at 250 rps against 25 RCU: the service's own database timing read 642–938 ms while
 DynamoDB's own clock read 0.9–2.2 ms, event-loop utilization pinned at 1.000, CPU at 3–16%.
 
 **The trap in the other direction:** DynamoDB's latency metric *falls* when the table throttles
@@ -138,9 +113,8 @@ The three objectives are latency primary (95% meet their class threshold), laten
 
 **The tail rule is the early warning, not the primary one.** A threshold is
 `multiplier × (1 − objective)`, so the primary rule at 95% pages only above a 72% miss rate, which is
-a service that is essentially down. The tail objective at 99% puts its fast burn at 14.4% — exactly
-where the primary rule sat before 2026-09-09. If you lower the primary again, lower the tail with it
-or that warning disappears.
+a service that is essentially down. The tail objective at 99% puts its fast burn at 14.4%.
+If you lower the primary again, lower the tail with it or that warning disappears.
 
 **Why SLI-absent exists:** every burn rule treats "no data" as OK — correctly, since no traffic is
 not a burn — so a dead heartbeat or a stopped collector leaves all six silent and the dashboard flat.
@@ -148,25 +122,8 @@ This rule separates *quiet* from *blind*.
 
 **Why the throttle rules are separate from everything else:** every other rule reads the same
 service-side signal, so a throttling table announces itself as latency and 5xx everywhere at once.
-They are also two rules rather than one summed rule, because read-only throttling (5,588 read
-events/min against 0 writes, 2026-09-01) would have silenced a combined rule exactly when it
-mattered (`infra/grafana/throttles.tf`).
-
-**Timing**, measured 2026-09-01 by overloading the service for six minutes:
-
-| | fast burn | slow burn |
-|---|---|---|
-| load starts → firing | 4m 01s | ~6m |
-| load stops → clear | 16m | ~84m |
-
-Recovery is measured from the last bad sample, not the last request. A slow-burn rule keeps firing
-for over an hour after a six-minute incident as its window rolls off — "still firing" is not evidence
-that anything is still wrong.
-
-## 5. What did the last load test show?
-
-**Nothing has been measured yet** — no run against this environment, and `results.md` does not exist.
-Every number must come from a k6 run or Grafana query executed in the same session that reports it.
+They are also two rules rather than one summed rule, because read-only throttling would have silenced
+a combined rule exactly when it mattered (`infra/grafana/throttles.tf`).
 
 ---
 
@@ -176,9 +133,9 @@ Every number must come from a k6 run or Grafana query executed in the same sessi
 
 | what | where |
 |---|---|
-| **Service URL** | `terraform -chdir=infra/main output -raw base_url` — **deliberately not in this repo, and not in `.env` either.** Terraform owns it; a copy elsewhere is just the stale one (which is exactly what happened on 2026-09-10) |
+| **Service URL** | `terraform -chdir=infra/main output -raw base_url` — **deliberately not in this repo, and not in `.env` either.** Terraform owns it |
 | **Terraform Cloud** | https://app.terraform.io/app/failwin/workspaces/ecs-dynamodb-rps |
-| **Grafana Cloud k6** | https://k0valchuk.grafana.net/a/k6-app/projects → **ecs-dynamodb-rps**. Created by `infra/k6` and destroyed by `/env down`, with its uploaded tests and run history; its id comes only from `terraform -chdir=infra/main output -json` (`.k6_project_id.value`) |
+| **Grafana Cloud k6** | https://k0valchuk.grafana.net/a/k6-app/projects → **ecs-dynamodb-rps**. |
 | **ECS service** | https://eu-central-1.console.aws.amazon.com/ecs/v2/clusters/ecs-dynamodb-rps/services?region=eu-central-1 |
 | **DynamoDB table** | https://eu-central-1.console.aws.amazon.com/dynamodbv2/home?region=eu-central-1#table?name=ecs-dynamodb-rps |
 | **CloudWatch logs** | log group `/ecs/ecs-dynamodb-rps`, 1-day retention |
@@ -215,7 +172,7 @@ terraform -chdir=infra/main init
 Provision, then deploy the service into it:
 
 ```bash
-terraform -chdir=infra/main apply -var-file=dev.tfvars   # approval gate; capacity.auto.tfvars loads itself
+terraform -chdir=infra/main apply -var-file=dev.tfvars   # approval gate; dev.tfvars carries table capacity
 ./scripts/deploy-service.sh                              # build → push → roll → seed → health
 ```
 
@@ -281,28 +238,11 @@ UI-started run needs nothing set by hand. Without `--rate` it uploads discovery 
 `stress` archived without a knee freeze at 50 rps and tag every sample `rate_source=default`, which
 is not a capacity measurement.
 
-**2. Check table capacity — `infra/main/dev.tfvars`.** Since 2026-09-15 it carries **no**
-`read_capacity` / `write_capacity` lines, so the generated `capacity.auto.tfvars` (1,025 RCU /
-200 WCU) applies on its own. Keep it that way: a `-var-file` outranks an auto-loaded `*.auto.tfvars`,
-so re-adding those lines silently overrides the model. The table used to be pinned at 25/25, the
-DynamoDB free tier, where the binding constraint is the free tier and not the service (250 rps
-produced 5,588 rejected reads per minute). **A run at 25/25 must not be recorded as an RPS ceiling.**
-
-**3. Clear the k6 app's [Settings → Environment variables](https://k0valchuk.grafana.net/a/k6-app/settings/environment-variables)
-— by hand, in a browser.** This is the one step in this file that no script and no `terraform apply`
-will ever do for you: the page has no API and no Terraform resource, so `upload-k6.sh` prints a
-reminder after every upload but cannot touch it.
-
-**The action is to delete `BASE_URL` and `RATE` there, not to update them.** Step 1 bakes both into
-the archive, so an empty page is the correct state; a leftover `BASE_URL` from an earlier apply can
-still point a run at a load balancer that no longer exists. If you keep values there, they must
-equal what `upload-k6.sh` last uploaded.
-
-**4. Wait 6 minutes before every run.** DynamoDB banks unused capacity for ~300 s, so a run starting
+**2. Wait 6 minutes before every run.** DynamoDB banks unused capacity for ~300 s, so a run starting
 from a partly-drained burst bucket is not comparable to one starting full. **A run without the drain
 must not be recorded.**
 
-**5. Start the run** from the [k6 projects page][k6] → **ecs-dynamodb-rps**. When discovery finishes, open its thresholds: each
+**3. Start the run** from the [k6 projects page][k6] → **ecs-dynamodb-rps**. When discovery finishes, open its thresholds: each
 step has one named `slo_met{scenario:rps_N}`, and **k6 reports a threshold as breached, not passed —
 the boolean is `true` when it was crossed.** The knee is the lowest `rps_N` that breached; `RATE` for
 B and C is the step before it. If nothing breached, the ceiling is above 2000 rps — raise `MAX_RATE`
@@ -356,29 +296,16 @@ exit code.
 **One change per run, from the same commit.** If Phase 3 showed non-zero throttles, skip to Phase 6 —
 scaling tasks would change nothing, and recording why the order was swapped is itself a result.
 
-*(Until 2026-09-16 this phase said to set `autoscaling_enabled = true` as the one change and expect
-1 → 4 tasks. That is already committed: `autoscaling_enabled = true`, the floor is `desired_count =
-1` and the ceiling `autoscaling_max = 15`.)*
+**Baseline is all three flags `false`** (their default in `variables.tf`), with
+`autoscaling_enabled = true` and `desired_count = 1`: one scalable target (min 1, max 15) and a
+single policy, CPU target-tracking at 60%. Its first decision needs three 60-second datapoints, so
+nothing moves for ~3 minutes — that is the number the three flags exist to beat.
 
-The current sequence answers a short spike from one task. The code for all three changes is already
-in the image and the HCL, each behind its own flag — but as of 2026-09-16
-`infra/main/dev.tfvars` **commits `requests_scaling_enabled = true` and `shedding_enabled = true`
-already**; only `elu_scaling_enabled` still defaults `false`. A plain
-`apply -var-file=dev.tfvars` therefore lands on the change-3 state directly. To keep "one change
-per run" true, every run before change 3 needs a `-var` override on top of the file:
-
-| run | `apply` differs from plain `-var-file=dev.tfvars` by | what changes | expected `plan` |
-|---|---|---|---|
-| baseline | `-var requests_scaling_enabled=false -var shedding_enabled=false` | CPU target tracking only (60%, 3 × 60 s datapoints) | — |
-| change 1 | `-var shedding_enabled=false` | adds an `ALBRequestCountPerTarget` policy, target 6,000 requests per task per **minute** (100 rps), alongside the CPU one | 1 added: `aws_appautoscaling_policy.requests[0]` |
-| change 2 | `-var shedding_enabled=false -var elu_scaling_enabled=true` | adds a 20-second event-loop-utilization alarm (≥ 0.70) and a step policy (+200%, +400% at ≥ 0.85); no redeploy, the service already publishes ELU | 2 added: the alarm and the step policy |
-| change 3 | `-var elu_scaling_enabled=true` (the file alone already carries `requests_scaling_enabled` and `shedding_enabled`) | the task definition gains `SHED_ELU_THRESHOLD=0.92`, so the service answers 429 + `Retry-After: 1` above it | a new task-definition revision and a service update; confirm the variable on the running task definition, the plan cannot show it |
-
-Anything more in a plan than the row says means more than one thing is changing. Every apply is an
-**approval gate**. A change-3 run is expected to exit k6 with 99 — see Phase 3. The full procedure,
-the measurements each run must capture and the reasons are in
-`docs/superpowers/plans/2026-09-15-ecs-dynamodb-rps-spike-response.md` (Tasks 3–11), whose Task
-4/6/8/10 apply steps carry the same `-var` overrides.
+| flag in `dev.tfvars` | goal | how |
+|---|---|---|
+| `requests_scaling_enabled` | reach the fleet size the traffic needs in **one** decision, instead of CPU's bounded `target / current` step | adds an `ALBRequestCountPerTarget` target-tracking policy at 6,000 req/target/**minute** (100 rps per task), *alongside* the CPU policy — the largest ask wins |
+| `elu_scaling_enabled` | cut time-to-first-decision from ~3 min to **~30 s** | adds a 20 s alarm on fleet-average `EventLoopUtilization` ≥ 0.70 and a **step** policy (+200%, then +400% above 0.85). No redeploy — the metric is published in every run already |
+| `shedding_enabled` | stop a saturated task pushing every queued request past its latency threshold | adds `SHED_ELU_THRESHOLD = 0.92` to the task definition; above it the service answers **429 + `Retry-After: 1`** instead of queueing. `/healthz` is never shed |
 
 ## Phase 5 — Re-measure identically
 
@@ -387,8 +314,10 @@ re-read Phase 3. Expect throttles to become non-zero: the database is now the co
 
 ## Phase 6 — Improve: raise database capacity
 
-Only if Phase 5 left throttles non-zero. Capacity comes from the model, never a hand-typed number:
-raise `target_rps` in `slo.yaml` and regenerate `capacity.auto.tfvars` with `/slo`. Confirm the plan
+Only if Phase 5 left throttles non-zero. Raise `read_capacity` / `write_capacity` in
+`infra/main/dev.tfvars`, and say in a comment what the new number is for. Keep the model honest
+alongside it: raising `target_rps` in `slo.yaml` and re-running `/slo` makes its advisory line agree
+with the value you set, so the difference the next reader sees is a real one. Confirm the plan
 is an **in-place** change — if it proposes to *replace* the table, stop, the seeded data is lost.
 Then apply — **approval gate.**
 
@@ -421,20 +350,6 @@ aws resourcegroupstaggingapi get-resources \
   --query 'ResourceTagMappingList[].ResourceARN' --output table
 ```
 
-**A clean destroy is not evidence of a clean account** — hence the sweep. **Do not delete what it
-finds without asking**; a survivor may belong to another project. One thing it cannot find: after
-autoscaling has run, Application Auto Scaling leaves the `TargetTracking-…` CloudWatch alarms it
-created, carrying no `Project` tag — **two per target-tracking policy** (a high and a low alarm), so
-two with only the CPU policy and **four** once `requests_scaling_enabled` is on. The ELU alarm
-(`ecs-dynamodb-rps-elu-high`) is not one of them: Terraform manages it, tags it and destroys it.
-
-**The k6 project goes with the destroy**, together with its uploaded tests, settings page and run
-history — `infra/k6` creates it. That is accepted: `results.md` is the record, and `/loadtest
---compare` reads it, not the cloud. The next `/env up` creates a new project with a new id and **no
-tests in it**, so re-run `./scripts/upload-k6.sh` before any cloud run. (Until 2026-09-14 the
-project lived in `platform/` and survived.) The Grafana folder `high-load-test` does survive; this
-project's subfolder, with its dashboard, SLO and rules, goes with the destroy.
-
 ---
 
 ## Cost
@@ -446,8 +361,8 @@ project's subfolder, with its dashboard, SLO and rules, goes with the destroy.
 | ALB LCU | $0.0080/LCU-hr |
 | DynamoDB RCU / WCU | $0.0001586 / $0.0007930 per unit-hr |
 
-- **DynamoDB at the model's 1,025 RCU / 200 WCU** (`capacity.auto.tfvars`, which `dev.tfvars` no
-  longer overrides): 1,025 × $0.0001586 + 200 × $0.0007930 = $0.1626 + $0.1586 = **$0.3212/hr**,
+- **DynamoDB at 1,025 RCU / 200 WCU** (`dev.tfvars`, which is where this is set and the model only
+  advises): 1,025 × $0.0001586 + 200 × $0.0007930 = $0.1626 + $0.1586 = **$0.3212/hr**,
   ~$234/month (× 730 h). Provisioned capacity bills the same idle or loaded. If the account's
   DynamoDB free tier (25 RCU + 25 WCU) is otherwise unused it takes off 25 × $0.0001586 +
   25 × $0.0007930 = $0.0238/hr, leaving $0.2974/hr.
@@ -468,8 +383,7 @@ with the query that produced them, never typed from memory.
   environment, so a fresh environment always starts with an empty project. `./scripts/upload-k6.sh
   --check` names anything stale — while the environment is up; with it down there is no project to
   check.
-- **The k6 environment-variables settings page cannot be automated** — no API (every
-  environment-variable path under `/cloud/v6` is a 404, checked 2026-09-09), no Terraform resource.
+- **The k6 environment-variables settings page cannot be automated** — no API, no Terraform resource.
   `upload-k6.sh` works around it by baking the values into the archive.
 - **The SLO window is 7 days and cannot be anything else** — the API refuses windows outside 7–32
   days and the free tier retains 14.

@@ -157,6 +157,14 @@ Miss the second and the plan returns `No changes` on the table while you wonder 
 `infra/main/capacity.auto.tfvars`** — it is generated from the capacity model in `slo.yaml` and
 byte-checked by `npm run slo:check` (from `service/`). With the pin gone, its 1025/200 applies on its own.
 
+> **Obsolete since 2026-09-18**
+> (`docs/superpowers/specs/2026-09-18-ecs-dynamodb-rps-capacity-authority-design.md`). There is no
+> `capacity.auto.tfvars` any more: `dev.tfvars` sets `read_capacity = 1025` / `write_capacity = 200`
+> and is authoritative, and `slo.yaml`'s capacity model only advises. Mechanism 1 above therefore
+> inverts — capacity is *set* in `dev.tfvars`, not deleted from it. **Mechanism 2 stands exactly as
+> written**: TFC workspace variables still outrank `dev.tfvars`, and a pin re-added there still wins
+> silently. (Both capacity workspace variables were verified absent on 2026-09-18.)
+
 - [ ] **Step 2: Plan and review**
 
 ```bash
