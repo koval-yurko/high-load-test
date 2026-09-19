@@ -5,13 +5,35 @@
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "Bash|Grep",
         "hooks": [
           {
-            "command": "graffiti hook",
-            "type": "command"
+            "type": "command",
+            "command": "graphify hook-guard search",
+            "timeout": 10
           }
-        ],
-        "matcher": "Grep|Glob"
+        ]
+      },
+      {
+        "matcher": "Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/graphify-read-guard.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/graphify-doc-stale.sh",
+            "timeout": 10
+          }
+        ]
       }
     ]
   },

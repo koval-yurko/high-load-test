@@ -77,8 +77,8 @@ builds and pushes an image then forces a new deployment, Lambda will publish a v
 scenario something else again. Sharing one script across projects would mean a flag per platform,
 which is exactly the coupling the rest of this section forbids. Only the output helpers are shared,
 from the root `scripts/lib.sh` (sourced as `../../scripts/lib.sh`). No project script may run
-`terraform apply`: the guard hook matches on command text, so an apply buried in a script is an
-apply that never reaches the approval gate.
+`terraform apply`: the `permissions.ask` rules match on command text, so an apply buried in a script
+is an apply that never reaches the approval gate.
 
 This layout was chosen in
 `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md` (section 4); the working
@@ -309,11 +309,23 @@ Verified against the installed k6 v1.4.0:
   command itself — behind a pipe you get the pipe's status instead.
 
 `.claude/settings.json` allows Bash broadly (`"allow": ["Bash"]`), but `terraform apply` and
-`terraform destroy` are listed under `permissions.ask`, so they still prompt — `ask` outranks `allow`.
-The `guard-terraform.sh` PreToolUse hook is the guard that actually holds: it returns `ask` for
-apply/destroy in any spelling (`-chdir=`, env prefixes, after a `&&`) and `deny` for
-`-auto-approve`, and a hook decision overrides the allowlist. That prompt is the one mechanical guard
-against unattended AWS spend — do not move apply/destroy out of `ask`, and do not weaken the hook.
+`terraform destroy` are listed under `permissions.ask`, so they prompt — `ask` outranks `allow`.
+**This is the only protection that is actually wired.** Do not move apply/destroy out of `ask`.
+
+`.claude/hooks/guard-terraform.sh` is a stronger guard — it matches apply/destroy in any spelling
+(`-chdir=`, env prefixes, after a `&&`) and returns `deny` for `-auto-approve`, and a hook decision
+overrides the allowlist — but **it is not registered in any settings file, so nothing invokes it.**
+Claude Code does not auto-discover scripts in `.claude/hooks/`; activating it means adding a
+`PreToolUse` entry pointing at it. Treat the script as available and unused, not as a guard in
+force.
+
+Two things therefore weaken the gate, and both are easy to miss. A local
+`.claude/settings.local.json` setting `permissions.defaultMode` to `bypassPermissions` turns off the
+`ask` prompts entirely — that file is gitignored and per-machine, so a session can be running
+without any terraform gate while this file says otherwise. And the sole remaining protection is a
+permission prompt, which means **an unattended or auto-approving session has no mechanical guard
+against AWS spend at all.** Check `/hooks` and your permission mode before a session that will
+touch infrastructure.
 
 ## Working commands
 
@@ -372,12 +384,33 @@ promptly.
 `rtk` (Rust Token Killer) is installed and a hook transparently rewrites common shell commands
 through it. Use commands normally.
 
-<!-- graffiti:start -->
-## graffiti code map
+## graphify code map
 
-If `.graffiti/map.json` exists, this repo has a graffiti code map. For questions about the
-codebase's structure (where something lives, how parts connect, the architecture), run
-`graffiti query "<question>"` instead of grep/read — it returns a scoped subgraph. After
-editing code, run `graffiti update` to refresh the map. If no map exists yet, run
-`graffiti build .` first.
-<!-- graffiti:end -->
+This repo is indexed as a queryable graph at `graphify-out/`. For questions about structure —
+where something lives, how parts connect, what a change would affect — run
+`graphify query "<question>"`, `graphify explain`, `graphify path`, `graphify affected` or
+`graphify god-nodes` instead of grepping blind. Build queries from the graph's own vocabulary:
+matching is case-folded substring with no stemming and no synonyms, so an empty result usually
+means the wrong word, not a missing node.
+
+**Two halves, refreshed differently.** Code (`.tf`, `.js`, `.sh`, `package.json`) comes from a
+free offline AST pass: `graphify update .`, run automatically by the `post-commit` and
+`post-checkout` git hooks — which exit early inside linked worktrees, so run it by hand there.
+Docs, specs and `slo.yaml` come from semantic extraction, which costs LLM calls:
+`graphify extract . --backend claude-cli --max-workers 2`. A `SessionStart` hook says when that
+half is stale. `update` merges with existing semantic results rather than replacing them, so a
+code rebuild never drops the doc half.
+
+**The `graphifyy[terraform]` extra is mandatory.** Without it, 30 `.tf`, 2 `.hcl` and 1 `.tfvars`
+file index as nothing — 33 of 81 code files, in a repo about Terraform — and it warns rather than
+failing, so an incomplete map looks exactly like a complete one.
+
+**`graphify-out/` is ignored except `cache/semantic/`, which is committed.** That directory holds
+the LLM-extracted entries, keyed by source content hash, so the paid work is shared rather than
+repeated per clone: a warm cache rebuilt this repo's full graph in 0.95s against 10m43s cold, with
+zero LLM calls. The ignore block's nesting is load-bearing and must not be collapsed to a simple
+negation — the reason is written above it in `.gitignore`. CI regenerates the cache on master, so
+`git pull` is usually enough; regenerating by hand and committing `graphify-out/cache/semantic/`
+is equally valid and makes the CI run a no-op.
+
+Full reasoning: `docs/superpowers/specs/2026-09-19-graffiti-to-graphify-design.md`.

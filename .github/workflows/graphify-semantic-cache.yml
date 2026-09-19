@@ -1,0 +1,58 @@
+name: graphify semantic cache
+
+# Master only, on purpose. Content-hash filenames make cache entries
+# conflict-free between files; single-branch ownership makes them
+# conflict-free within one. Feature branches never carry cache entries.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'docs/**'
+      - '**/*.md'
+      - '**/*.yaml'
+      - '**/*.yml'
+
+jobs:
+  extract:
+    # Same guard claude-code-review.yml already uses: this job pushes, and
+    # without it that push would re-trigger the job.
+    if: github.actor != 'claude[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # graphify's claude-cli backend shells out to `claude`, and detects it with
+      # a bare which() — so a missing binary fails before CLAUDE_CODE_OAUTH_TOKEN
+      # is ever consulted. The runner image does not ship it.
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Install graphify
+        run: pipx install "graphifyy[terraform]"
+
+      # --max-workers 2 is not decoration: an unconstrained full pass exhausted
+      # memory on a developer workstation during the first run of this design.
+      # A cold pass is ~11 minutes here because claude-cli is forced serial
+      # (llm.py:2658); warm passes finish in about a second.
+      - name: Semantic extraction
+        run: graphify extract . --backend claude-cli --max-workers 2
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+      - name: Commit the cache, only if it changed
+        run: |
+          git config user.name  "claude[bot]"
+          git config user.email "noreply@anthropic.com"
+          git add graphify-out/cache/semantic/
+          if git diff --cached --quiet; then
+            echo "semantic cache unchanged — nothing to commit"
+            exit 0
+          fi
+          git commit -m "chore(repo): refresh graphify semantic cache"
+          git push

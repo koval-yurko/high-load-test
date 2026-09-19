@@ -39,10 +39,78 @@ stable: renaming later orphans tagged resources from the teardown sweep meant to
 | Docker | 27.4 | container builds for ECS |
 | jq | 1.7 | used by tooling and the safety hook |
 | direnv | 2.37 | **required** — nothing here runs without a loaded `.env` |
+| graphify | 0.9.64 | the code map; needs the `[terraform]` extra — see below |
 
-`./scripts/01-install-tools.sh` checks all seven and installs what is missing.
+`./scripts/01-install-tools.sh` checks the first seven and installs what is missing. graphify is
+separate — see the next section.
 
 Accounts needed: **AWS**, **Terraform Cloud**, **Grafana Cloud** (includes Grafana Cloud k6).
+
+---
+
+## The code map (graphify)
+
+The repo is indexed as a queryable graph, so questions about structure are answered from the graph
+rather than by grepping.
+
+### Install
+
+```bash
+uv tool install "graphifyy[terraform]"
+```
+
+**The `[terraform]` extra is not optional here.** Without it graphify has no HCL extractor, and 30
+`.tf`, 2 `.hcl` and 1 `.tfvars` file contribute nothing to the graph — 33 of 81 code files, in a
+repo whose entire subject is Terraform. It fails as a warning, not an error, so an incomplete map
+looks exactly like a complete one. With the extra, a capacity question returns the
+`aws_dynamodb_table.items` resource and its `read_capacity`; without it, nothing.
+
+### Ask it things
+
+```bash
+graphify query "dynamodb provisioned capacity"   # scoped subgraph for a question
+graphify explain "slo.yaml"                      # one node and its neighbours
+graphify affected "slo.yaml"                     # what a change here would touch
+graphify god-nodes                               # the most connected nodes
+```
+
+Matching is case-folded substring with no stemming and no synonyms, so build queries from the names
+the code actually uses — `graphify god-nodes` is a good way to see them.
+
+### Keep it current
+
+```bash
+graphify update .                                              # code only: free, offline, seconds
+graphify extract . --backend claude-cli --max-workers 2        # also docs, specs, slo.yaml
+```
+
+`post-commit` and `post-checkout` git hooks run the first one for you, detached, so commits do not
+block. **They do not fire in linked worktrees** — they exit when `git rev-parse --git-dir` differs
+from `--git-common-dir` — so run it by hand when working in one.
+
+Pass `--max-workers 2` to the second: an unconstrained full pass exhausted memory on a workstation.
+A cold pass takes about 11 minutes here because the `claude-cli` backend is deliberately serial.
+
+### The committed cache
+
+`graphify-out/` is gitignored **except** `graphify-out/cache/semantic/`, which is committed. Those
+entries are the output of LLM extraction over markdown and YAML — `slo.yaml` has no structural
+extractor at all, so it reaches the graph only this way. Keying them by source content hash means
+the work is paid for once and reused by every clone, worktree and CI run: rebuilding the full graph
+from a warm cache took **0.95s against 10m43s cold, with zero LLM calls**.
+
+CI regenerates it on every push to master, so `git pull` is normally all you need. To do it
+yourself:
+
+```bash
+graphify extract . --backend claude-cli --max-workers 2
+git add graphify-out/cache/semantic/
+git commit -m "chore(repo): refresh graphify semantic cache"
+```
+
+Both routes converge — refresh by hand and the CI job finds every hash already present, calls no
+LLM and commits nothing. Entries are named by content hash, so they cannot conflict; if two ever
+collide, either side is correct.
 
 ---
 
@@ -97,7 +165,7 @@ cd <project> && ./scripts/deploy-service.sh        # build → push → roll the
 ./scripts/upload-k6.sh                             # the k6 project is new on every apply: upload the profiles
 ```
 
-Both applies stay manual and separate from the scripts: the `guard-terraform.sh` hook matches on
+Both applies stay manual and separate from the scripts: the `permissions.ask` rules match on
 command text, so an apply hidden inside a script would never reach the approval gate that CLAUDE.md
 requires before anything billable is created. Deployment is per-project — each project owns a
 `scripts/deploy-service.sh`, because what "deploy" means differs by platform — and it starts where
@@ -169,17 +237,19 @@ idle DocumentDB cluster costs considerably more.
 - `terraform destroy` reporting success is **not** evidence the account is clean. `/env down` runs a
   sweep afterwards for NAT gateways, unattached EIPs, manual snapshots, log groups, ECR repos, and a
   surviving Grafana Cloud k6 project (not billable, but an orphan the tag query cannot see).
-- A `PreToolUse` hook (`.claude/hooks/guard-terraform.sh`) intercepts `terraform apply`/`destroy` in
-  Claude Code sessions: it prompts for confirmation, and **blocks `-auto-approve` outright** since that
-  flag removes the human gate. It does not affect terraform run manually in your own terminal.
-  It matches on the command text, so a *mention* of the phrase (e.g. `git commit -m "docs: terraform
-  apply gate"`) also prompts. That is deliberate: a spurious prompt costs one keystroke, a missed
-  apply costs money, so the pattern stays conservative rather than clever about shell quoting.
-- `terraform apply`/`destroy` are deliberately absent from the permission allowlist in
-  `.claude/settings.json`. Do not add them.
+- `terraform apply`/`destroy` are listed under `permissions.ask` in `.claude/settings.json`, so
+  Claude Code prompts before either runs. **This is the only gate that is actually wired**, and it
+  is a permission prompt — nothing more. Do not move these entries to the allowlist.
+- `.claude/hooks/guard-terraform.sh` is a stronger guard that is **present but not active**. It
+  matches apply/destroy in any spelling and blocks `-auto-approve` outright, but no settings file
+  registers it, and Claude Code does not auto-discover scripts in `.claude/hooks/`. Wiring it means
+  adding a `PreToolUse` entry that points at it.
 
-> **After a fresh clone, open `/hooks` once (or restart Claude Code)** so the guard hook is loaded.
-> Claude Code only watches settings directories that existed when the session started.
+> **The gate depends on your permission mode.** A gitignored `.claude/settings.local.json` setting
+> `permissions.defaultMode` to `bypassPermissions` disables the `ask` prompts, leaving no terraform
+> protection at all — and because that file is per-machine, nothing in the repo will tell you. Check
+> your mode, and `/hooks`, before a session that will touch infrastructure. An unattended session
+> has no mechanical guard against AWS spend.
 
 ---
 
