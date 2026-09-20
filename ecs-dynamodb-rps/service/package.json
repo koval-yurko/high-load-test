@@ -11,6 +11,7 @@
     "test": "node --test",
     "test:integration": "node --test test/integration.test.js",
     "seed": "node scripts/seed.js",
+    "table:local": "node scripts/create-local-table.js",
     "calibrate": "node scripts/calibrate.js",
     "slo:generate": "node scripts/generate-slo.js",
     "slo:check": "node scripts/generate-slo.js --check"
