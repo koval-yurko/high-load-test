@@ -218,29 +218,6 @@ Duration comes from `-e DURATION`, not k6's own `--duration`: `--duration` repla
 `constant-arrival-rate` scenario with a VU loop, and the run silently stops being the profile you
 meant to run.
 
-**What a local run cannot tell you.** It is a correctness loop, not a measurement:
-
-- The local table is `PAY_PER_REQUEST` and DynamoDB Local neither meters nor throttles. No local run
-  says anything about provisioned capacity, throttling or the knee — that is the entire subject of
-  Phase 2 onward.
-- `PBKDF2_ITERATIONS` defaults to `0`, so `POST /reports` returns an empty `digest` and does none of
-  the CPU work that makes it the heavy class. Export `PBKDF2_ITERATIONS=2662` (the calibrated
-  `dev.tfvars` value) if you are touching that path.
-- Latencies are localhost against an in-memory store — single-digit milliseconds, against SLO
-  thresholds written for Fargate over real DynamoDB. Never record a local number in `results.md`.
-
-When the local loop breaks, it is usually one of these:
-
-| symptom | cause |
-|---|---|
-| `CredentialsProviderError: Could not load credentials` | the two dummy `AWS_*` exports are missing from this shell |
-| `DYNAMO_ENDPOINT is not set` from `table:local` | same shell problem — the script refuses rather than create a real table in AWS |
-| `ResourceNotFoundException` on seed or a request | `npm run table:local` was skipped, or the container was restarted and `-inMemory` dropped the table |
-| `ECONNREFUSED localhost:8000` | the container is not up — `docker compose -f docker-compose.test.yml up -d` |
-| the seed crawls for ~40 s | expected without `SEED_BATCH_DELAY_MS=0`; the default paces writes against *provisioned* capacity that DynamoDB Local does not have |
-| integration tests report 0 tests | they skipped — `DYNAMO_ENDPOINT` is unset |
-| `/reports` returns `"digest":""` | expected locally; see `PBKDF2_ITERATIONS` above |
-
 Teardown is `docker compose -f docker-compose.test.yml down`. The store is in-memory, so stopping the
 container discards the table and the next run starts from `npm run table:local` again.
 

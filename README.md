@@ -46,12 +46,6 @@ separate — see the next section.
 
 Accounts needed: **AWS**, **Terraform Cloud**, **Grafana Cloud** (includes Grafana Cloud k6).
 
-**None of them are needed to run a service locally.** With Node.js and Docker alone you can start
-`ecs-dynamodb-rps` against DynamoDB Local, seed it, exercise every endpoint and run both the unit and
-integration suites — no credentials, no `.env`, no Terraform, no cost. Start at
-[Run it locally](ecs-dynamodb-rps/README.md#run-it-locally); the accounts and the tools below are for
-deploying and measuring, which is where the numbers this repo exists for actually come from.
-
 ---
 
 ## The code map (graphify)
