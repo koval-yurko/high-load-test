@@ -200,7 +200,7 @@ Tests, also from `service/`. Integration tests **skip silently** without `DYNAMO
 
 ```bash
 npm test                        # unit; no container and no endpoint needed
-npm run test:integration        # needs DYNAMO_ENDPOINT; builds and drops its own `items-test` table
+npm run test:integration        # needs DYNAMO_ENDPOINT; creates and seeds its own `items-test` table
 ```
 
 `npm test -- <pattern>` does **not** filter by name — `node --test` reads the argument as a path, so
