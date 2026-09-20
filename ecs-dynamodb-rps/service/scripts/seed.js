@@ -119,6 +119,11 @@ async function main() {
   const doc = DynamoDBDocumentClient.from(base);
 
   const written = await writeAll(doc, config.tableName, items, {
+    // writeAll's 1000 ms default paces batches against PROVISIONED capacity (25 WCU/s == one
+    // 25-item batch/s). DynamoDB Local is PAY_PER_REQUEST and does not meter, so that pacing buys
+    // nothing there and costs ~40 s of sleep in a dev loop: SEED_BATCH_DELAY_MS=0 locally. Left
+    // unset the AWS seed is unchanged, which is the only case where the pacing matters.
+    ...(process.env.SEED_BATCH_DELAY_MS ? { batchDelayMs: Number(process.env.SEED_BATCH_DELAY_MS) } : {}),
     onProgress: (n, total) => process.stdout.write(`\rseeded ${n}/${total}`),
   });
   console.log(`\nseeded ${written} items into ${config.tableName}`);

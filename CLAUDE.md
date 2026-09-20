@@ -355,8 +355,13 @@ per-project, so it lives in the project, never in the root `.env`; only `TF_CLOU
 `TF_CLOUD_PROJECT`, which are the same for every workspace here, come from the environment
 (`platform/README.md`).
 
-Node service (ECS project), from `<project>/service/`: `npm ci`, `npm test`, `npm start`. A single
-test is `npm test -- <pattern>` — pin the exact runner in the project README once chosen.
+Node service (ECS project), from `<project>/service/`: `npm ci`, `npm test`, `npm start`. The runner
+is `node --test`, so a single test is `node --test test/<file>.test.js` — a **path**, not a name.
+`npm test -- <pattern>` was the placeholder here until it was tried: the argument reaches
+`node --test` as a path and a bare name fails with `Could not find '<pattern>'`.
+
+The full local loop (DynamoDB Local, seeding, load profile) needs no AWS account and no `.env` —
+`ecs-dynamodb-rps/README.md`, "Run it locally".
 
 Verified locally: Node 22.13, npm 10.9, Terraform 1.14, AWS CLI 2.23, k6 1.4, Docker 27.4.
 

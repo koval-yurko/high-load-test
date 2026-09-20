@@ -158,7 +158,96 @@ Traffic runs at a **frozen 55/15/25/5** mix (read/write/feed/report). Every figu
 mix*; change it and every recorded number is void. The table is seeded with 1,000 items across 50
 feed partitions.
 
+## Run it locally
+
+The whole service runs on a laptop against DynamoDB Local — **no AWS account, no credentials, no
+Terraform, no cost**. This is the loop for changing `service/src/` and seeing the result in seconds.
+Everything below was run end to end; the AWS path starts at Phase 0.
+
+Needs Node.js 22+ and Docker. From `service/`:
+
+```bash
+docker compose -f docker-compose.test.yml up -d   # DynamoDB Local on :8000, in-memory
+
+# One export per shell. The SDK needs *some* credentials to sign with, even though
+# DynamoDB Local ignores them — without these every command below dies with
+# "CredentialsProviderError: Could not load credentials from any providers".
+export DYNAMO_ENDPOINT=http://localhost:8000
+export AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local
+
+npm ci
+npm run table:local                     # creates the `items` table; re-running is a no-op
+SEED_BATCH_DELAY_MS=0 npm run seed      # 1,000 items across 50 feed partitions, ~1s
+npm start                               # listening on :8080
+```
+
+`DYNAMO_ENDPOINT` is the switch for the whole local mode: `src/dynamo.js` points the SDK at the
+container, and the three cloud-only subsystems — OTLP export, CloudWatch metrics and the ELU
+admission gate — each stay off while their own variable is unset. The startup log line shows exactly
+what is on.
+
+In another shell:
+
+```bash
+curl -fsS localhost:8080/healthz                  # {"ok":true}
+curl -fsS localhost:8080/items/feed-00/item-00    # a seeded item
+curl -fsS localhost:8080/feeds/feed-00            # {"count":20,...}
+curl -fsS -XPOST localhost:8080/reports -H 'content-type: application/json' -d '{"pk":"feed-00"}'
+```
+
+Tests, also from `service/`. Integration tests **skip silently** without `DYNAMO_ENDPOINT`, so a bare
+`npm test` is green with or without the container:
+
+```bash
+npm test                        # unit; no container and no endpoint needed
+npm run test:integration        # needs DYNAMO_ENDPOINT; builds and drops its own `items-test` table
+```
+
+`npm test -- <pattern>` does **not** filter by name — `node --test` reads the argument as a path, so
+a name gives `Could not find`. Run one file with `node --test test/handlers.test.js`.
+
+A load profile runs against the local server too, which is the cheapest way to check a k6 change
+before spending an environment on it:
+
+```bash
+# from the project root, with the server still up
+k6 run infra/k6/tests/constant.js -e BASE_URL=http://localhost:8080 -e RATE=20 -e DURATION=20s
+```
+
+Duration comes from `-e DURATION`, not k6's own `--duration`: `--duration` replaces the
+`constant-arrival-rate` scenario with a VU loop, and the run silently stops being the profile you
+meant to run.
+
+**What a local run cannot tell you.** It is a correctness loop, not a measurement:
+
+- The local table is `PAY_PER_REQUEST` and DynamoDB Local neither meters nor throttles. No local run
+  says anything about provisioned capacity, throttling or the knee — that is the entire subject of
+  Phase 2 onward.
+- `PBKDF2_ITERATIONS` defaults to `0`, so `POST /reports` returns an empty `digest` and does none of
+  the CPU work that makes it the heavy class. Export `PBKDF2_ITERATIONS=2662` (the calibrated
+  `dev.tfvars` value) if you are touching that path.
+- Latencies are localhost against an in-memory store — single-digit milliseconds, against SLO
+  thresholds written for Fargate over real DynamoDB. Never record a local number in `results.md`.
+
+When the local loop breaks, it is usually one of these:
+
+| symptom | cause |
+|---|---|
+| `CredentialsProviderError: Could not load credentials` | the two dummy `AWS_*` exports are missing from this shell |
+| `DYNAMO_ENDPOINT is not set` from `table:local` | same shell problem — the script refuses rather than create a real table in AWS |
+| `ResourceNotFoundException` on seed or a request | `npm run table:local` was skipped, or the container was restarted and `-inMemory` dropped the table |
+| `ECONNREFUSED localhost:8000` | the container is not up — `docker compose -f docker-compose.test.yml up -d` |
+| the seed crawls for ~40 s | expected without `SEED_BATCH_DELAY_MS=0`; the default paces writes against *provisioned* capacity that DynamoDB Local does not have |
+| integration tests report 0 tests | they skipped — `DYNAMO_ENDPOINT` is unset |
+| `/reports` returns `"digest":""` | expected locally; see `PBKDF2_ITERATIONS` above |
+
+Teardown is `docker compose -f docker-compose.test.yml down`. The store is in-memory, so stopping the
+container discards the table and the next run starts from `npm run table:local` again.
+
 ## Phase 0 — Setup (already done once)
+
+Everything from here needs a real AWS account and costs money. For the local loop, see
+[Run it locally](#run-it-locally) above.
 
 ```bash
 cp .env.example .env              # AWS, Terraform Cloud, Grafana, k6 tokens
@@ -181,16 +270,7 @@ rebuild the image, and skipping it fails silently. `--skip-seed` when the table 
 `--skip-build` to only roll the service. No script runs `terraform apply`: the `guard-terraform.sh`
 hook matches command text, so an apply buried in a script would never reach the approval gate.
 
-Tests, from `service/` — integration tests **skip silently** without a local DynamoDB, so a bare
-`npm test` is green either way:
-
-```bash
-cd service
-npm test                                    # unit
-docker compose -f docker-compose.test.yml up -d
-DYNAMO_ENDPOINT=http://localhost:8000 npm run test:integration
-docker compose -f docker-compose.test.yml down
-```
+Tests need neither an environment nor AWS credentials — see [Run it locally](#run-it-locally).
 
 When setup breaks, it is almost always one of these:
 
