@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { matchRoute } from '../src/handlers.js';
-import { burnWindows, loadSlo, capacityModel, readCapacityTfvars, renderClassMap, renderK6, renderAlerts, renderQueries } from '../scripts/generate-slo.js';
+import { burnWindows, loadSlo, validateSlo, capacityModel, readCapacityTfvars, renderClassMap, renderK6, renderAlerts, renderQueries } from '../scripts/generate-slo.js';
 import { ratioExpr, renderLocals, classRatio, rate } from '../scripts/generate-slo.js';
 
 const HERE = new URL('../../', import.meta.url).pathname;
@@ -32,6 +34,38 @@ test('a mix that does not sum to 1.0 is refused', () => {
     } }),
     /mix must sum to 1\.0/,
   );
+});
+
+test('a capacity block with no mix is refused when the document came off disk', () => {
+  // loadSlo used to read doc.capacity.mix unconditionally and die with a bare
+  // "Cannot convert undefined or null to object" TypeError on a capacity block
+  // that has no mix -- no mention of slo.yaml, no mention of capacity.mix. A
+  // sibling project's fork hit this immediately because its slo.yaml has a
+  // capacity.pool section and no mix. capacity.mix is where the load profile's
+  // request distribution comes from, so a document that lost it is a real
+  // misconfiguration and gets a named error -- but only when it came off disk:
+  // the committed slo.yaml is the source of truth and must be complete.
+  const dir = mkdtempSync(join(tmpdir(), 'slo-'));
+  const file = join(dir, 'slo.yaml');
+  try {
+    writeFileSync(file, 'service: s\nwindow: 7d\nslos: []\ncapacity:\n  target_rps: 1000\n  pool: { baseline_size: 5 }\n');
+    assert.throws(() => loadSlo(file), /capacity\.mix/);
+    writeFileSync(file, 'service: s\nwindow: 7d\nslos: []\ncapacity:\n  target_rps: 1000\n  mix: { read: 1.0 }\n');
+    assert.doesNotThrow(() => loadSlo(file));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an in-memory document without capacity.mix is accepted by default, but a caller can still demand it', () => {
+  // A document handed over pre-parsed is a fixture and is partial by nature,
+  // so requireCapacityMix defaults to false for it. A caller that knows it is
+  // holding a document that ought to be whole can still ask for the strict
+  // rule via validateSlo directly.
+  const doc = { service: 's', window: '30d', slos: [], capacity: { target_rps: 1000, pool: { baseline_size: 5 } } };
+  assert.doesNotThrow(() => loadSlo(null, doc));
+  assert.doesNotThrow(() => validateSlo(doc));
+  assert.throws(() => validateSlo(doc, { requireCapacityMix: true }), /capacity\.mix/);
 });
 
 test('an endpoint in two classes is refused', () => {

@@ -28,7 +28,8 @@ locals {
   # which creates its TFC workspace. It no longer creates the k6 project: that is in
   # the project's own infra/k6 module, created and destroyed with the environment.
   projects = {
-    "ecs-dynamodb-rps" = { working_directory = "infra/main" }
+    "ecs-dynamodb-rps"      = { working_directory = "infra/main" }
+    "ecs-rds-postgres-pool" = { working_directory = "infra/main" }
   }
 }
 
@@ -82,6 +83,9 @@ locals {
     grafana_prom_url      = { value = var.grafana_prom_url, sensitive = false }
     grafana_prom_username = { value = var.grafana_prom_username, sensitive = false }
     grafana_prom_password = { value = var.grafana_prom_password, sensitive = true }
+    # ecs-rds-postgres-pool's database password (its plan, decision D7). In the
+    # shared set, so ecs-dynamodb-rps receives it too and ignores it.
+    db_password = { value = var.db_password, sensitive = true }
   }
 }
 

@@ -96,3 +96,9 @@ variable "grafana_prom_password" {
 # The k6 project limits that used to be declared here moved with the k6 project into
 # each project's own infra/k6 module on 2026-09-14 (see
 # docs/superpowers/specs/2026-09-14-ecs-dynamodb-rps-k6-project-ownership-design.md).
+
+variable "db_password" {
+  type        = string
+  sensitive   = true
+  description = "Database master password for ecs-rds-postgres-pool, from DB_PASSWORD in the root .env, forwarded as the db_password Terraform variable."
+}

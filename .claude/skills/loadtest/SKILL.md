@@ -141,7 +141,7 @@ Verified live against this repo's stack (2026-09-01, idle service — expect `0`
 number): `sli_ratio` → `"1"`, `cpu_saturation_ratio` → `"0"`. Each returns a **value**, not an empty
 result — the collector emits the zero rather than omitting the series.
 
-## Read the throttle counts from CloudWatch
+## Read the throttle counts from CloudWatch (`ecs-dynamodb-rps`)
 
 The two throttle readings no longer come from Grafana. Alloy's DynamoDB block was trimmed to
 `SuccessfulRequestLatency`, so `read_throttle_events` / `write_throttle_events` are gone from
@@ -181,14 +181,67 @@ these two metrics were chosen over `ThrottledRequests` (which is published only 
 `TableName`+`Operation` and reads 0 at instants during sustained throttling). Then let whoever reads
 the row draw the conclusion from that plus the latency columns.
 
+## Read the pool and instance metrics from CloudWatch (`ecs-rds-postgres-pool`)
+
+This project has no `table_name` output and no throttle metrics — it reads `AWS/RDS` instead, over
+the run's own window, with `DBInstanceIdentifier=ecs-rds-postgres-pool`:
+
+```bash
+for m in DatabaseConnections:Maximum DBLoadCPU:Average CPUCreditBalance:Minimum CPUSurplusCreditBalance:Maximum; do
+  METRIC="${m%%:*}"; STAT="${m##*:}"
+  printf '%-24s ' "$METRIC"
+  aws cloudwatch get-metric-statistics --namespace AWS/RDS --metric-name "$METRIC" \
+    --dimensions Name=DBInstanceIdentifier,Value=ecs-rds-postgres-pool --statistics "$STAT" \
+    --period 60 --start-time "$RUN_START" --end-time "$RUN_END" \
+    --query "$STAT(Datapoints[].$STAT)" --output text
+done
+```
+
+- `connections` = `DatabaseConnections`, **Maximum** over the window.
+- `DBLoadCPU/vCPU` = `DBLoadCPU`, **Average** over the window, divided by the instance class's vCPU
+  count — record the division, not the raw `DBLoadCPU` value, since `DBLoadCPU` is a count of active
+  sessions, not a percentage.
+- `credit balance` = `CPUCreditBalance`, **Minimum** over the window — the low point, because that is
+  the point closest to running out.
+- `CPUSurplusCreditBalance`, **Maximum** over the window, is not its own column — it is a run
+  validity check. **Any value above zero disqualifies the run**: the instance spent past its burst
+  budget, so its CPU during that run does not represent the CPU of the next one. Note the
+  disqualification in `infra change` or skip recording the row rather than let a burst-inflated
+  number stand as a measurement.
+
+**Same sparseness as the DynamoDB metrics: a quiet minute produces no datapoint, not a zero.**
+`DatabaseConnections`, `DBLoadCPU`, `CPUCreditBalance` and `CPUSurplusCreditBalance` are all
+published on this cadence — an empty `Datapoints` list means "no sample", never "zero load". Unlike
+the throttle counts, do not default a missing datapoint to 0 here: a missing `CPUCreditBalance` or
+`DatabaseConnections` sample means the window needs widening, not that credits or connections were
+zero.
+
+`pool wait p95` and `waiting peak` come from the service's own pool metrics (client-side, not
+CloudWatch) — read them the same way as the other k6/service-observed columns, from whatever the
+service exposes over the run window; they are not part of this CloudWatch read.
+
+`posts rows` is `SELECT count(*) FROM posts`, taken immediately **before** the run starts, not
+computed from CloudWatch at all — see "Recording" below for why.
+
 ## Recording
 
-Append to `<project>/results.md` — create it with a header row if absent:
+Append to `<project>/results.md` — create it with a header row if absent. The table is a shared
+spine plus columns each project adds after `EL lag p99`:
 
 ```markdown
-| date | profile | infra change | RPS | k6 attainment | service attainment | budget burn x | p95 fast/std/heavy | db ms | cpu ms | EL lag p99 | throttles | RCU/WCU | $/hr |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| date | profile | infra change | RPS | k6 attainment | service attainment | budget burn x | p95 fast/std/heavy | db ms | cpu ms | EL lag p99 | <project columns> | $/hr |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
 ```
+
+Per-project columns between `EL lag p99` and `$/hr`:
+
+```markdown
+`ecs-rds-postgres-pool`: | pool wait p95 | waiting peak | DBLoadCPU/vCPU | connections | pool size | credit balance | posts rows |
+`ecs-dynamodb-rps`:      | throttles | RCU/WCU |
+```
+
+Never carry one project's columns into the other's `results.md` — an empty cell for a metric that
+does not apply to that project is not a result, so each project's table has only its own columns.
 
 **Two attainment columns, because two different numbers both legitimately answer "did it meet the
 SLO", and they are not interchangeable:**
@@ -213,21 +266,36 @@ infra change is blank is not a result, it is a number.
 ### Completeness check
 
 Before writing up results, confirm every row carries the columns that make it a result rather than a
-number:
+number. `$4` (infra change), `$6` (k6 attainment) and `$7` (service attainment) are spine columns —
+they sit before any per-project column, so they land on the same field number in every project's
+`results.md`:
 
 ```bash
-awk -F'|' 'NR>2 && NF>3 && ($4 ~ /^ *$/ || $6 ~ /^ *$/ || $7 ~ /^ *$/ || $13 ~ /^ *$/) \
+awk -F'|' 'NR>2 && NF>3 && ($4 ~ /^ *$/ || $6 ~ /^ *$/ || $7 ~ /^ *$/) \
   { print "INCOMPLETE ROW:", $0 }' <project>/results.md
 ```
 
-`$4` = infra change, `$6` = k6 attainment, `$7` = service attainment, `$13` = throttles.
+**Do not assume those indices survive a schema change — spine or not.** `awk -F'|'` on a
+leading-pipe Markdown row makes `$1` the empty string before the first column, so the field number
+is never the column number. After touching this table again, re-derive every index by piping the
+header row through `awk -F'|'` and printing the fields — never by counting pipes by eye. Counting
+is how the previous version of this check ended up validating the wrong columns while documenting
+itself as validating the right ones.
 
-**Do not assume those indices survive a schema change.** `awk -F'|'` on a leading-pipe Markdown row
-makes `$1` the empty string before the first column, so the field number is never the column number.
-After touching this table again, re-derive every index by piping the header row through
-`awk -F'|'` and printing the fields — never by counting pipes by eye. Counting is how the previous
-version of this check ended up validating the wrong columns while documenting itself as validating
-the right ones.
+A project may extend the check with its own distinguishing column — the one that tells you *why* a
+bad row was bad, the way `throttles` does for `ecs-dynamodb-rps`. Re-derive that index from that
+project's own header; it is **not** portable between projects even when the number happens to
+match:
+
+```bash
+# ecs-dynamodb-rps:      $13 = throttles
+# ecs-rds-postgres-pool: $14 = waiting peak
+```
+
+For `ecs-dynamodb-rps`'s current 15-field header `$13` is `throttles`; for
+`ecs-rds-postgres-pool`'s 20-field header, `$13` is `pool wait p95`, not `throttles` — the same
+field number means a different column in each project's table, which is exactly why this addendum
+check must be re-derived per project rather than copied.
 
 `budget burn x` is the burn-rate multiple: observed miss rate / sustainable miss rate. A k6 run is
 minutes and the SLO window is days, so a raw "0.03% of budget" figure does not travel between runs.

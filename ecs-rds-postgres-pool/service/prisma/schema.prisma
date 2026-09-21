@@ -1,0 +1,38 @@
+generator client {
+  provider = "prisma-client-js"
+  // No previewFeatures: the "metrics" feature was removed in Prisma 7.0.0.
+  // Pool observability comes from the pg.Pool this service owns (src/pool.js).
+}
+
+datasource db {
+  provider = "postgresql"
+  // No `url` here: Prisma 7 removed datasource.url from schema.prisma
+  // (P1012, "the datasource property `url` is no longer supported in schema
+  // files"). The connection URL now lives in prisma.config.js, read from the
+  // same DATABASE_URL env var (src/config.js reads it for the app itself).
+}
+
+model Feed {
+  id    Int    @id
+  name  String @db.VarChar(64)
+  posts Post[]
+
+  @@map("feeds")
+}
+
+model Post {
+  // Int, never BigInt: Prisma maps BigInt to a JavaScript BigInt, which
+  // JSON.stringify refuses to serialize -- every response would throw on the
+  // happy path, at the last moment.
+  id        Int      @id @default(autoincrement())
+  feedId    Int      @map("feed_id")
+  author    String   @db.VarChar(32)
+  body      String   @db.VarChar(1024)
+  score     Int
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  feed Feed @relation(fields: [feedId], references: [id])
+
+  @@index([feedId, createdAt(sort: Desc)], map: "post_feed_recent_idx")
+  @@map("posts")
+}

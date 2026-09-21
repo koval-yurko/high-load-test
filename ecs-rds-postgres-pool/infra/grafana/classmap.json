@@ -1,0 +1,6 @@
+{
+  "/posts/:id": "fast",
+  "/posts": "fast",
+  "/feeds/:id/posts": "standard",
+  "/reports": "heavy"
+}

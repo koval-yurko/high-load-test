@@ -1,0 +1,13 @@
+{
+  "pool_wait_p99_by_class": "histogram_quantile(0.99, sum by (class) (rate(db_pool_wait_duration_seconds{job=\"ecs-rds-postgres-pool\", http_route!~\"/healthz\", class=~\"fast|standard|heavy\"}[60s])))",
+  "pool_wait_p99_opened": "histogram_quantile(0.99, sum by (pool_opened) (rate(db_pool_wait_duration_seconds{job=\"ecs-rds-postgres-pool\", http_route!~\"/healthz\", class=~\"fast|standard|heavy\"}[60s])))",
+  "pool_waiting": "db_pool_waiting{job=\"ecs-rds-postgres-pool\"}",
+  "pool_idle": "db_pool_idle{job=\"ecs-rds-postgres-pool\"}",
+  "pool_total": "db_pool_total{job=\"ecs-rds-postgres-pool\"}",
+  "db_wall_avg_by_route": "1000 * sum by (http_route) (histogram_sum(rate(http_server_db_duration_seconds{job=\"ecs-rds-postgres-pool\", http_route!~\"/healthz\", class=~\"fast|standard|heavy\"}[60s]))) / sum by (http_route) (histogram_count(rate(http_server_db_duration_seconds{job=\"ecs-rds-postgres-pool\", http_route!~\"/healthz\", class=~\"fast|standard|heavy\"}[60s])))",
+  "cpu_seconds_per_second": "sum by (instance) (histogram_sum(rate(http_server_cpu_duration_seconds{job=\"ecs-rds-postgres-pool\", http_route!~\"/healthz\", class=~\"fast|standard|heavy\"}[60s])))",
+  "cpu_saturation_ratio": "sum by (instance) (histogram_sum(rate(http_server_cpu_duration_seconds{job=\"ecs-rds-postgres-pool\", http_route!~\"/healthz\", class=~\"fast|standard|heavy\"}[60s]))) / 0.25",
+  "eventloop_delay_p99": "nodejs_eventloop_delay_p99_seconds{job=\"ecs-rds-postgres-pool\"}",
+  "eventloop_delay_max": "nodejs_eventloop_delay_max_seconds{job=\"ecs-rds-postgres-pool\"}",
+  "eventloop_utilization": "nodejs_eventloop_utilization_ratio{job=\"ecs-rds-postgres-pool\"}"
+}
