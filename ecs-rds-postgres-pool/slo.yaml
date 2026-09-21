@@ -1,0 +1,83 @@
+service: ecs-rds-postgres-pool
+
+# The SLO is defined over LOAD-BEARING traffic; authoritative attainment is
+# run-scoped, over a load run's own window, as results.md records it.
+#
+# THE WINDOW IS PINNED AT 7d and is not a lever. Grafana's SLO API refuses any
+# window outside 7-32 days and Grafana Cloud Free retains 14, so 7d..14d is the
+# whole legal range. A SHORTER window burns the budget FASTER, not slower.
+window: 7d
+
+endpoints:
+  getPost:    /posts/:id
+  createPost: /posts
+  feed:       /feeds/:id/posts
+  report:     /reports
+
+slos:
+  - name: latency-classes
+    sli: class_threshold_ratio
+    # A request is GOOD when it meets its class threshold AND is not a 5xx.
+    # A 4xx is NOT a miss in Grafana; k6's own SLI requires a 2xx. This project
+    # has no admission control, so NO 4xx is ever a load-shedding response --
+    # nothing here answers overload with a 429, which is the whole reason the
+    # two verdicts stay aligned under load. The 4xx that do exist are malformed
+    # requests (a non-integer id, unparseable JSON), which a load profile does
+    # not send.
+    objective: 95.0
+    tail_objective: 99.0
+    tail_multiplier: 3
+    classes:
+      # THRESHOLDS ARE DELIBERATELY UNSET. They are frozen in plan 3, after
+      # calibration on the real db.t4g.micro, because they are what the k6 VU
+      # sizing is derived from and inventing them now would be inventing the
+      # assertion this project exists to test. `npm run slo:check` fails while
+      # any threshold_ms is null -- that is the guard, not an oversight.
+      fast:     { threshold_ms: null, endpoints: [getPost, createPost] }
+      standard: { threshold_ms: null, endpoints: [feed] }
+      heavy:    { threshold_ms: null, endpoints: [report] }
+
+  - name: availability
+    sli: success_rate
+    objective: 99.9
+
+# Advisory only -- infra/main/dev.tfvars is authoritative for every sizing knob,
+# the same arrangement the sibling adopted on 2026-09-18 after a generated file
+# made overrides silent rather than preventing them.
+capacity:
+  # RE-SEED BEFORE EVERY MEASURED RUN, baseline and comparison alike.
+  #
+  # The workload grows the table it measures. `write` and `report` below are
+  # both inserts, so that share of every request is a new row in `posts` -- the
+  # table the heavy route scans and the feed route orders. A run therefore leaves
+  # the database bigger than it found it, and the next run scans more rows for
+  # the same REPORT_SCAN_ROWS. A load profile is only comparable to itself, so a
+  # comparison against a table the previous run inflated is not a comparison.
+  #
+  # scripts/calibrate.js also inserts a probe row per measurement, for the same
+  # reason and with the same remedy.
+  #
+  # Drop and re-seed (SEED_ON_BOOT=1 on a single task -- the seed is not
+  # idempotent, see the boot block in service/src/server.js) between runs, and
+  # record in results.md that you did.
+  target_rps: null          # set in plan 3, from the discovered knee
+  mix: { read: 0.55, write: 0.15, feed: 0.25, report: 0.05 }
+  pool:
+    baseline_size: 5
+    released_size: 25
+    # The task counts the knob sequence visits, so the advisory can price every
+    # state rather than the roomiest one. The spec's knob table (section 6.2 of
+    # docs/superpowers/specs/2026-09-19-ecs-rds-postgres-pool-design.md) runs
+    # baseline 5x1 = 5, knob 1 25x1 = 25, knob 2 25x4 = 100 -- and 100 against
+    # the ~112 below is where `FATAL: sorry, too many clients already` becomes
+    # reachable. Advisory, like every other key here: infra/main/dev.tfvars sets
+    # the real desired_count.
+    task_counts: [1, 4]
+    max_connections_estimate: 112   # SHOW max_connections on the real instance
+
+attribution:
+  vcpu_per_task: 0.25
+  # There is no server-side per-operation latency in Postgres to subtract, so
+  # the sibling's queueing estimate has no analogue. Queue depth is measured
+  # directly instead: db.pool.wait.duration, per class.
+  pool_wait_metric: db.pool.wait.duration

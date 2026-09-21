@@ -1,6 +1,19 @@
 // scripts/generate-slo.js
-// The single source: slo.yaml -> k6 thresholds, capacity tfvars, Grafana alert
-// rules, Alloy class map. Nothing downstream of this file is edited by hand.
+// Forked from ecs-dynamodb-rps/service/scripts/generate-slo.js on 2026-09-20.
+// A bug fixed here does not reach the sibling copy; fix both.
+//
+// Changed from the sibling, and only these:
+//  - validateSlo() is split out of loadSlo() so the rules have one home and two
+//    entry points, and it gained the null-threshold guard (see below).
+//  - the sibling's capacity trio (capacityModel / readCapacityTfvars /
+//    capacityReport) is replaced by renderCapacityAdvisory(): RCU/WCU has no
+//    analogue, and all three read infra/main/dev.tfvars, which this project does
+//    not have until plan 2.
+//  - queueingExpr() and renderQueries() are DROPPED. See the note above OUTPUTS
+//    for exactly what plan 2 must build in their place.
+//
+// The single source: slo.yaml -> k6 thresholds, Grafana alert rules, Alloy class
+// map. Nothing downstream of this file is edited by hand.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parse } from 'yaml';
 
@@ -48,24 +61,25 @@ export function burnWindows(windowSeconds) {
 /**
  * Every rule the document must satisfy, in one place.
  *
- * Split out of loadSlo so the rules have one home and two entry points: loadSlo
- * calls this on the parsed file, and a caller holding a document in memory (the
- * tests) can ask the same question without going through the filesystem.
- * Duplicating the rules across the two would mean a guard that holds on one
- * path and not the other, which is worse than no guard because both paths
- * still read as checked.
+ * Split out of loadSlo (which the sibling keeps them inside) so there are two
+ * entry points and ONE implementation: loadSlo calls this on the parsed file,
+ * and a caller holding a document in memory -- the tests, and anything plan 3
+ * writes to freeze the calibrated thresholds -- can ask the same question
+ * without going through the filesystem. Duplicating the rules across the two
+ * would mean a guard that holds on one path and not the other, which is worse
+ * than no guard because both paths still read as checked.
  */
 export function validateSlo(doc, { requireCapacityMix = false } = {}) {
   if (doc.capacity) {
-    // Reading doc.capacity.mix unconditionally throws a bare TypeError on a
-    // capacity block that has no mix -- "Cannot convert undefined or null to
-    // object", with nothing saying which file or which key is wrong.
-    // capacity.mix is where the load profile's request distribution comes
-    // from, so a document that lost it is a real misconfiguration and gets a
-    // named error -- but only when the key is REQUIRED: a document read from
-    // disk (the committed source of truth) must be complete, while one handed
-    // over pre-parsed (a fixture) is partial by nature. loadSlo sets the flag
-    // from which of the two happened.
+    // The sibling reads doc.capacity.mix unconditionally, which throws a
+    // TypeError on a capacity block that has a pool and no mix -- the shape
+    // every in-memory fixture here has. Guarding with `?.` alone would have
+    // traded that TypeError for SILENCE: a slo.yaml that lost its `mix:` block
+    // would validate clean, and capacity.mix is where the load profile's
+    // request distribution comes from. So the key is REQUIRED of a document
+    // read from disk -- the committed source of truth, which must be complete
+    // -- and optional for one handed over pre-parsed, which is partial by
+    // nature. loadSlo sets the flag from which of the two happened.
     if (doc.capacity.mix === undefined || doc.capacity.mix === null) {
       if (requireCapacityMix) {
         throw new Error('capacity is declared without capacity.mix; the load profile has no request distribution to read');
@@ -105,30 +119,36 @@ export function validateSlo(doc, { requireCapacityMix = false } = {}) {
     }
   }
 
-  // A classified endpoint with no attribution.operations entry cannot have a
-  // queueing query built for it, and the previous shape of that query -- one
-  // avg() over the whole table -- hid exactly that: it rendered fine for a route
-  // whose operations nobody had declared. Refuse here so the omission is a build
-  // failure rather than a subtraction of the wrong number.
-  if (doc.attribution) {
-    for (const slo of doc.slos ?? []) {
-      if (slo.sli !== 'class_threshold_ratio') continue;
-      for (const cls of Object.values(slo.classes)) {
-        for (const endpoint of cls.endpoints) {
-          const ops = doc.attribution.operations?.[endpoint];
-          if (!Array.isArray(ops) || ops.length === 0) {
-            throw new Error(`endpoint "${endpoint}" is classified but has no attribution.operations entry`);
-          }
-        }
+  // THE GUARD THIS PROJECT IS CURRENTLY RED ON, deliberately. slo.yaml ships
+  // with every threshold_ms null: they are frozen in plan 3, from a calibration
+  // run against the real db.t4g.micro, because the k6 VU sizing is derived from
+  // them and a number invented now would be inventing the assertion. A null
+  // threshold renders as `histogram_fraction(0, NaN, ...)` in PromQL and
+  // `fast: null` in the k6 thresholds -- both of which parse, deploy, and
+  // measure nothing. Refuse here instead, naming the class, so `slo:check` is
+  // red for a reason a reader can act on.
+  for (const slo of doc.slos ?? []) {
+    if (slo.sli !== 'class_threshold_ratio') continue;
+    for (const [name, cls] of Object.entries(slo.classes)) {
+      if (typeof cls.threshold_ms !== 'number' || !Number.isFinite(cls.threshold_ms)) {
+        throw new Error(
+          `class "${name}" has no threshold_ms (${JSON.stringify(cls.threshold_ms ?? null)}). `
+          + 'Thresholds are calibrated and frozen in plan 3; until then slo:check is red on purpose.',
+        );
       }
     }
   }
+
+  return doc;
 }
 
 export function loadSlo(path, preParsed, { requireCapacityMix = preParsed === undefined } = {}) {
   const doc = preParsed ?? parse(readFileSync(path, 'utf8'));
   // A document read from disk is the committed source of truth and has to be
   // complete; one passed in pre-parsed is a fixture and is partial on purpose.
+  // The CLI parses the file itself, to print the advisory before validating, so
+  // it passes the flag back explicitly -- otherwise the one document that must
+  // be complete would be the one checked most loosely.
   validateSlo(doc, { requireCapacityMix });
   return { ...doc, windowSeconds: durationSeconds(doc.window), burn: burnWindows(durationSeconds(doc.window)) };
 }
@@ -146,8 +166,8 @@ export const TAIL_MULTIPLIER = ${slo.tail_multiplier};
 // The primary objective as a bare 0..1 rate, exported so a profile that needs it
 // OUTSIDE the thresholds object below does not retype it. discovery.js does: it
 // builds one threshold per step, plus an abortOnFail stop, and both were typed as
-// literal 'rate>0.99' until 2026-09-09 -- so the discovery run kept measuring the
-// knee against 99% while slo.yaml said something else, silently and for free.
+// literal 'rate>0.99' in the sibling until 2026-09-09 -- so the discovery run kept
+// measuring the knee against 99% while slo.yaml said something else, silently.
 export const SLO_MET_RATE = ${rate(slo.objective)};
 
 export const thresholds = {
@@ -172,60 +192,106 @@ ${Object.entries(slo.classes).map(([n]) => `  'http_req_duration{class:${n}}': [
 }
 
 /**
- * What the capacity model in slo.yaml WOULD provision, per unit and in total.
+ * The (pool size x task count) states the knob sequence actually visits.
  *
- * ADVISORY ONLY since 2026-09-18. Provisioned capacity is the single biggest
- * line on the bill, so it is hand-set in infra/main/dev.tfvars where the other
- * sizing knobs are, and this model only says what it thinks. It used to render
- * infra/main/capacity.auto.tfvars, which was byte-checked and therefore
- * unoverridable -- and which a -var-file on the CLI outranked anyway, so a
- * number in dev.tfvars won silently. There is now one file, and it wins openly.
+ * Built from slo.yaml alone -- baseline_size, released_size, task_counts --
+ * and shaped to match the spec's knob table (section 6.2 of
+ * docs/superpowers/specs/2026-09-19-ecs-rds-postgres-pool-design.md): baseline
+ * runs the small pool at the first task count, then each knob releases the pool
+ * and walks the task counts. With [1, 4] that is 5x1, 25x1, 25x4. Nothing is
+ * invented here; a state this function does not know about is a key missing
+ * from slo.yaml.
  */
-export function capacityModel(doc) {
-  const { mix, cost_per_request: cost, target_rps: rps } = doc.capacity;
-  const per = (unit) => Object.entries(mix).reduce((sum, [k, share]) => sum + share * (cost[k][unit] ?? 0), 0);
-  const terms = (unit) => Object.entries(mix)
-    .filter(([k]) => (cost[k][unit] ?? 0) > 0)
-    .map(([k, share]) => `${share}*${cost[k][unit].toFixed(1)}`).join(' + ');
-  const rcu = per('rcu'), wcu = per('wcu');
-  return {
-    rps,
-    rcuPerRps: rcu, wcuPerRps: wcu,
-    rcuTerms: terms('rcu'), wcuTerms: terms('wcu'),
-    read: Math.round(rcu * rps), write: Math.round(wcu * rps),
-  };
+export function plannedStates(doc) {
+  const pool = doc.capacity?.pool ?? {};
+  if (pool.baseline_size === undefined && pool.released_size === undefined) return [];
+  const counts = Array.isArray(pool.task_counts) ? pool.task_counts : [];
+  const states = [{ label: 'baseline', poolMax: pool.baseline_size, desiredCount: counts[0] }];
+  counts.forEach((n, i) => states.push({ label: `knob ${i + 1}`, poolMax: pool.released_size, desiredCount: n }));
+  return states;
 }
 
 /**
- * The two capacity numbers as dev.tfvars actually sets them, or null for a
- * variable the file does not set. Null is a real answer, not an error: with no
- * capacity.auto.tfvars behind it, an unset variable has no default in
- * variables.tf and terraform will ask for it -- worth saying out loud.
+ * How many Postgres connections each planned state would actually open, said
+ * out loud, as a matrix rather than as one cell.
+ *
+ * ADVISORY ONLY, like the sibling's capacity report since 2026-09-18, and for
+ * the same reason: infra/main/dev.tfvars holds every sizing knob and wins
+ * openly, so this model only says what it thinks. It NEVER contributes to the
+ * exit code -- a hand-set pool that disagrees with slo.yaml is a choice, not
+ * drift.
+ *
+ * It replaces capacityModel / readCapacityTfvars / capacityReport, which
+ * computed DynamoDB RCU/WCU from a per-request cost table. There is no such
+ * table here: the number that can take the database down is not provisioned
+ * throughput, it is `pool max x tasks` against the instance's own
+ * max_connections, which on a db.t4g.micro is small enough to reach by
+ * accident.
+ *
+ * EVERY state, not the roomiest one. This printed `25 x 1 = 25, 22.3% of
+ * estimate` until 2026-09-20 -- true of knob 1, and the state with the most
+ * headroom of the three. A reader taking that in before an apply concludes
+ * there is 4.5x of room, when knob 2 (25 x 4 = 100 of ~112) is the state the
+ * project is explicitly driving toward and has about 12% left. The pool size
+ * is only half the product; the task count is the other half, and pinning it to
+ * the smallest value the sequence ever uses hid the whole finding.
+ *
+ * The second argument overrides the sequence with one state (or a list of
+ * them), which is how plan 2 will price the real desired_count out of
+ * infra/main/dev.tfvars. The no-argument form is what the CLI prints, and it is
+ * the one that carries the ceiling warning.
  */
-export function readCapacityTfvars(text) {
-  const value = (name) => {
-    // Anchored per line so a commented-out `# read_capacity = 25` is not read
-    // as the setting. HCL allows any spacing around `=`.
-    const m = new RegExp(`^\\s*${name}\\s*=\\s*(\\d+)`, 'm').exec(text);
-    return m ? Number(m[1]) : null;
-  };
-  return { read: value('read_capacity'), write: value('write_capacity') };
-}
+export function renderCapacityAdvisory(doc, states) {
+  const estimate = doc.capacity?.pool?.max_connections_estimate ?? null;
+  const availability = doc.slos?.find((s) => s.sli === 'success_rate');
+  const rows = states === undefined ? plannedStates(doc)
+    : Array.isArray(states) ? states
+    : [{ label: 'requested', ...states }];
 
-/** One line per unit: what is set, what the model says, and whether they agree. */
-export function capacityReport(doc, tfvars) {
-  const model = capacityModel(doc);
-  const set = readCapacityTfvars(tfvars);
-  const line = (unit, actual, wanted, terms, perRps) =>
-    `  ${unit} dev.tfvars ${String(actual === null ? 'UNSET' : actual).padStart(5)}` +
-    `  |  model ${String(wanted).padStart(5)}` +
-    `  (${terms} = ${perRps.toFixed(3)}/rps x ${model.rps} rps)` +
-    `${actual === wanted ? '' : '  <- differs'}`;
-  return [
-    'capacity (advisory -- dev.tfvars is authoritative):',
-    line('RCU', set.read, model.read, model.rcuTerms, model.rcuPerRps),
-    line('WCU', set.write, model.write, model.wcuTerms, model.wcuPerRps),
-  ].join('\n');
+  // A state whose pool size or task count is missing renders UNSET rather than
+  // multiplying into NaN. This block runs on the UNVALIDATED document, before
+  // validateSlo has had a chance to refuse anything, precisely so that it still
+  // prints when something else is wrong -- so it has to survive a document with
+  // holes in it and stay readable.
+  const finite = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const cells = rows.map((s) => {
+    const poolMax = finite(s.poolMax);
+    const desiredCount = finite(s.desiredCount);
+    return { label: s.label ?? 'requested', poolMax, desiredCount, total: poolMax === null || desiredCount === null ? null : poolMax * desiredCount };
+  });
+  const share = (total) => (total === null || estimate === null ? null : (total / estimate) * 100);
+  const worst = cells.reduce((a, b) => (b.total !== null && (a === null || b.total > a.total) ? b : a), null);
+  const marked = worst !== null && cells.length > 1;
+
+  const lines = [
+    'pool (advisory -- infra/main/dev.tfvars is authoritative; it arrives in plan 2):',
+    `  max_connections_estimate ${String(estimate ?? 'UNSET').padStart(5)}   `
+    + (estimate === null ? 'slo.yaml sets no estimate' : 'SHOW max_connections on the real instance'),
+  ];
+  if (cells.length === 0) lines.push('  capacity.pool is unset in slo.yaml -- there is nothing to size');
+  for (const c of cells) {
+    const size = c.poolMax === null ? 'UNSET' : String(c.poolMax).padStart(2);
+    const tasks = c.desiredCount === null
+      ? 'UNSET tasks' : `${c.desiredCount} task${c.desiredCount === 1 ? '' : 's'}`;
+    const pct = share(c.total);
+    lines.push(
+      `  ${c.label.padEnd(9)} pool ${size} x ${tasks.padEnd(8)} = ${String(c.total ?? 'n/a').padStart(5)}`
+      + (pct === null ? '' : `   ${`${pct.toFixed(1)}%`.padStart(6)} of estimate`)
+      + (marked && c === worst ? '   <-- the ceiling check' : ''),
+    );
+  }
+  if (marked && share(worst.total) !== null) {
+    // The marker says WHICH row; these three lines say WHY it is the one to
+    // read. A connection the server refuses is not a slow request, it is a 5xx,
+    // so it lands on the availability objective -- the one with the smallest
+    // budget -- and not on the latency classes this project spends its time on.
+    lines.push(
+      `  ^ the marked row is the tightest state the knob sequence visits. A connection`,
+      '    refused there is `FATAL: sorry, too many clients already` -- a 5xx, so it burns',
+      `    ${availability ? `the ${availability.objective}% availability budget` : 'the availability budget'}, not the latency one.`,
+    );
+  }
+  return lines.join('\n');
 }
 
 /**
@@ -233,8 +299,7 @@ export function capacityReport(doc, tfvars) {
  * Keyed by TEMPLATE, not endpoint name: slo.yaml is the human vocabulary,
  * http.route is the collector's, and this file is the join between them.
  * Unclassified routes (/healthz, and anything unmatched) are absent on purpose
- * -- the SLO query excludes them by selector. /stats used to be named here too;
- * that route no longer exists.
+ * -- the SLO query excludes them by selector.
  */
 export function renderClassMap(doc) {
   const slo = classRatio(doc);
@@ -250,12 +315,12 @@ const METRIC = 'http_server_request_duration_seconds';
  * The SLO population: requests that belong to a latency class, and nothing else.
  *
  * The class selector is load-bearing, not decorative. The ALB is internet-facing,
- * so scanners probe it constantly -- measured at 0.12 req/s of 404s on unmatched
- * paths, which was 68% of the window. Those requests pass an http_route filter,
- * carry no class, and so land in the denominator while contributing nothing to
- * the numerator: every one of them counts as an SLO violation. It drove the
- * measured miss rate to 66% and put three burn rules into firing on background
- * noise.
+ * so scanners probe it constantly -- the sibling measured 0.12 req/s of 404s on
+ * unmatched paths, which was 68% of its window. Those requests pass an
+ * http_route filter, carry no class, and so land in the denominator while
+ * contributing nothing to the numerator: every one of them counts as an SLO
+ * violation. It drove that project's measured miss rate to 66% and put three
+ * burn rules into firing on background noise.
  *
  * Selecting on class inverts the default. An endpoint is measured only once
  * slo.yaml gives it a class, so anything new -- a scanner path, an unclassified
@@ -272,10 +337,13 @@ const SCOPE = (doc) => `job="${doc.service}", http_route!~"/healthz", class=~"${
  * which is what k6's slo_met does (it requires a 2xx before it looks at the
  * duration). Without this a request that fails in 3 ms sits inside
  * histogram_fraction and is scored as meeting its class, and results.md ends up
- * recording two different indicators under one name. 4xx is deliberately NOT a
- * miss here: a client error is not charged to the service (decided 2026-09-02,
- * recorded in slo.yaml). Label name verified live against Grafana Cloud the
- * same day: http.response.status_code arrives as http_response_status_code.
+ * recording two different indicators under one name.
+ *
+ * 4xx is deliberately NOT a miss here: a client error is not charged to the
+ * service. Unlike the sibling, this project has NO admission control, so no 4xx
+ * is ever a shed request -- the 400s that exist are malformed input, which a
+ * load profile does not send. Label name as Grafana Cloud's OTLP translation
+ * emits it: http.response.status_code arrives as http_response_status_code.
  */
 const GOOD = 'http_response_status_code!~"5.."';
 
@@ -299,8 +367,7 @@ export function ratioExpr(doc, { multiplier = 1, range, job }) {
     // empty, so one silent class empties the entire numerator while the
     // denominator stays populated. The ratio then returns nothing, and every
     // rule group here carries no_data_state = "OK": the alerts silently do not
-    // fire. That is currently masked only because the heartbeat touches all
-    // four routes every minute. `vector(0)` carries no labels, exactly like
+    // fire. `vector(0)` carries no labels, exactly like
     // histogram_count(sum(...)), so the `+` still matches on the empty label
     // set and an absent class contributes 0 good requests instead of erasing
     // the measurement.
@@ -314,11 +381,11 @@ export function ratioExpr(doc, { multiplier = 1, range, job }) {
  * grafana/locals.tf: the SLO object's own inputs, generated so they cannot drift
  * from slo.yaml.
  *
- * The objective and window were previously typed into grafana/slo.tf by hand --
- * the same 99.0 and 3d that live in slo.yaml, in a file `slo:check` did not read.
- * That is precisely the failure this generator exists to prevent: the SLO
- * asserting one number while the gate asserts another, both green, neither
- * meaning anything.
+ * The sibling typed the objective and window into grafana/slo.tf by hand -- the
+ * same numbers that live in slo.yaml, in a file `slo:check` did not read. That
+ * is precisely the failure this generator exists to prevent: the SLO asserting
+ * one number while the gate asserts another, both green, neither meaning
+ * anything.
  *
  * The query is the same ratio the burn rules read, with two deliberate
  * differences: $__rate_interval in place of a literal range, and var.project in
@@ -376,15 +443,18 @@ export function availabilityMissExpr(doc, { range }) {
 /**
  * Where an alert points the person it wakes.
  *
- * The runbook is the README's "Is it about to break?" section -- the anchor is
- * GitHub's slug for that heading, so renaming the heading breaks the link
- * silently. The panel id is the dashboard's "SLI ratio: proportion meeting
- * per-class threshold" panel, which is the exact series every one of these six
- * rules alerts on; it is a literal here because dashboard.json.tftpl is
- * hand-maintained JSON and nothing generates its ids.
+ * The runbook is this project's README "Is it about to break?" section -- the
+ * anchor is GitHub's slug for that heading, so renaming the heading breaks the
+ * link silently. NEITHER TARGET EXISTS YET: plan 2 writes the README and the
+ * dashboard, and it owns both of these constants. The panel id is a placeholder
+ * for this project's "SLI ratio" panel; it is a literal because the dashboard
+ * JSON is hand-maintained and nothing generates its ids. The test asserts that
+ * every rule carries a runbook link and a panel deep link, not that the id is
+ * any particular number -- pinning a number for a dashboard that does not exist
+ * would assert a fiction.
  */
 const RUNBOOK_URL =
-  'https://github.com/koval-yurko/high-load-test/blob/master/ecs-dynamodb-rps/README.md#6-is-it-about-to-break';
+  'https://github.com/koval-yurko/high-load-test/blob/master/ecs-rds-postgres-pool/README.md#6-is-it-about-to-break';
 const SLI_RATIO_PANEL_ID = 19;
 
 export function renderAlerts(doc) {
@@ -499,7 +569,8 @@ export function renderAlerts(doc) {
     // ours: given both, the alert renders a "View panel" link straight to panel
     // ${SLI_RATIO_PANEL_ID}, the SLI ratio these rules alert on. __dashboardUid__ is an HCL
     // REFERENCE, not a string -- hardcoding the uid would silently point at a
-    // dashboard that no longer exists after a recreate.
+    // dashboard that no longer exists after a recreate. Plan 2 must name its
+    // dashboard resource grafana_dashboard.attribution or change this.
     annotations = {
       summary          = "${label} (${objective}% objective) burning error budget ~${burn.multiplier}x sustainable over ${burn.window}."
       computation      = "window ${doc.window}; sustainable miss rate = 1 - ${objective / 100} = ${(sustainable * 100).toFixed(3)}%; ${kind}-burn threshold = ${burn.multiplier} * ${(sustainable * 100).toFixed(3)}% = ${(threshold * 100).toFixed(3)}%; alert window ${burn.window} = ${burn.budgetFraction * 100}% of budget"
@@ -533,167 +604,85 @@ ${blocks.join('\n\n')}
 `;
 }
 
-const DB = 'http_server_db_duration_seconds';
-const CPU = 'http_server_cpu_duration_seconds';
-
 /**
- * grafana/queries.json: every query the dashboard panels, /loadtest and the
- * README deep-links read, defined once.
+ * WHAT PLAN 2 MUST ADD BACK, IN POSTGRES FORM.
  *
- * Four properties are load-bearing and each produces a silently wrong number
- * if dropped:
- *  - The service's own histograms are NATIVE histograms, not classic ones --
- *    there is no `_sum{...}` / `_count{...}` / `_bucket{...}` series to query.
- *    `rate(X_sum{...}[60s])` parses, returns "success", and matches nothing,
- *    forever -- the exact silent-empty failure this project exists to catch.
- *    The sum and count live inside the single native series and come out
- *    through `histogram_sum(rate(X{...}[60s]))` / `histogram_count(...)`, the
- *    same functions ratioExpr already uses via histogram_fraction/
- *    histogram_count. `sum by (...)` wraps the histogram_* call, not the
- *    other way around, or the label being grouped on is gone before the
- *    aggregation ever sees it.
- *  - CloudWatch SuccessfulRequestLatency is MILLISECONDS; the histograms are
- *    SECONDS. queueing_ms_by_route converts explicitly.
- *  - SuccessfulRequestLatency counts only SUCCESSFUL calls, so the gap stops
- *    being interpretable once throttling starts -- by which point the throttle
- *    panel and the throttle alert rule, both reading CloudWatch live, have
- *    already answered the question. No throttle query is generated here: see
- *    the note where they used to be, in renderQueries.
- *  - The subtrahend is PER ROUTE, from attribution.operations. A single
- *    avg() over the whole table averages unlike operations together and
- *    subtracts the same wrong number from every route -- see queueingExpr.
+ * The sibling has two more renderers here, and this fork drops BOTH rather than
+ * porting them, because each is built on `attribution.operations` -- a map from
+ * endpoint to DynamoDB operation names -- and this project's slo.yaml has no
+ * such section and will not grow one:
+ *
+ *  - queueingExpr(doc): in-process db wall-clock MINUS DynamoDB's own
+ *    server-side clock, per route, to estimate queueing. Postgres publishes no
+ *    per-operation server-side latency to subtract, which is precisely why the
+ *    spec has this project measure pool wait DIRECTLY instead
+ *    (docs/superpowers/specs/2026-09-19-ecs-rds-postgres-pool-design.md, the
+ *    "Three queues in series" section).
+ *  - renderQueries(doc): grafana/queries.json -- every query the dashboard
+ *    panels, /loadtest and the README deep-links read, defined once. Its
+ *    sli_ratio, db_wall_avg_by_route, cpu_seconds_per_second,
+ *    cpu_saturation_ratio and the three event-loop queries all have analogues
+ *    here; only the DynamoDB ones do not.
+ *
+ * So plan 2 owes this file an attribution/queries renderer built on the two
+ * keys slo.yaml DOES carry:
+ *
+ *  - attribution.pool_wait_metric (`db.pool.wait.duration`, which arrives in
+ *    Prometheus as db_pool_wait_duration_seconds) -- a per-class and per-route
+ *    pool-wait query, in the same native-histogram form as everything else:
+ *    histogram_sum(rate(X{...}[60s])) / histogram_count(rate(X{...}[60s])).
+ *    There is no `_sum`/`_count`/`_bucket` series to match; that form parses,
+ *    returns "success", and matches nothing forever.
+ *  - attribution.vcpu_per_task (0.25) -- cpu_saturation_ratio, the CPU-seconds
+ *    per wall-second divided by the allocation, where 1.0 is saturation. Plan 2
+ *    must also restore the sibling's cross-check that this number equals
+ *    infra/main/dev.tfvars task_cpu / 1024, since Terraform is what actually
+ *    allocates it.
+ *
+ * Alongside them: the three pool gauges src/otel.js publishes -- db.pool.waiting,
+ * db.pool.idle, db.pool.total -- which the spec says are read BESIDE the
+ * histogram, not instead of it.
  */
 
-const SRL = 'aws_dynamodb_successful_request_latency_average';
-
-/**
- * queueing_ms_by_route: in-process db wall-clock minus DynamoDB's own clock,
- * per route, in milliseconds.
- *
- * The subtrahend must be built from `attribution.operations`, which is why that
- * block exists in slo.yaml. A single
- * `avg(SRL{dimension_TableName=...})` -- the form this file used to emit --
- * averages every operation on the table into one number and subtracts it
- * identically from all four routes. Measured 2026-09-01 on the live stack:
- * GetItem 0.912, PutItem 2.018, Query 1.1625, BatchWriteItem 0 (seeding, not
- * request traffic, and its zero drags the mean down) -> 1.023 subtracted
- * everywhere, where /reports needs Query + PutItem = 3.18. A 2 ms error on a
- * signal whose whole job is detecting a few ms of event-loop queueing is larger
- * than the signal.
- *
- * A request makes one call per listed operation and `marks` sums them (spec
- * section 3), so the comparison value is the SUM over the route's operations --
- * `/reports` issues Query then PutItem, so Query + PutItem. Each operation is
- * summed SEPARATELY and the sums added, rather than matched by one
- * `dimension_Operation=~"a|b"` regex: a route that issued the same operation
- * twice would need it counted twice, and a missing operation series must empty
- * the term rather than silently under-subtract.
- *
- * One expression covers all four routes, `or`-joined, each term carrying its own
- * `http_route` label -- `or` unions disjoint per-route vectors, so a route with
- * no traffic drops out of the result instead of emptying the whole query.
- *
- * `group_left ()` needs its empty parentheses. `on()` alone matches one-to-one
- * and drops every label not named in it, which would throw away the `http_route`
- * the panel legend is keyed on; but `group_left (` immediately followed by the
- * right-hand expression is a parse error -- the parser reads that `(` as the
- * group's label list ("unexpected \"(\" in grouping opts"). The empty list
- * closes it explicitly, verified live against Grafana Cloud.
- */
-export function queueingExpr(doc) {
-  const scope = SCOPE(doc);
-  const routes = Object.values(classRatio(doc).classes).flatMap((c) => c.endpoints);
-  return routes.map((endpoint) => {
-    const route = doc.endpoints[endpoint];
-    const ops = doc.attribution.operations[endpoint];
-    const sel = `${DB}{${scope}, http_route="${route}"}`;
-    const srl = ops
-      // `max by (dimension_TableName)`, not `sum` and not `max without
-      // (instance)`. `sum` double-counts across an overlapping pair of collector
-      // tasks during a redeploy. `without (instance)` fixes that but KEEPS
-      // dimension_Operation -- so the two-operation subtrahend for /reports adds
-      // series whose label sets differ, matches nothing, and renders EMPTY
-      // (verified against live Prometheus, 2026-09-01). Aggregating BY the one
-      // label both terms share leaves a single series that still adds, and that
-      // `- on() group_left ()` can still match against.
-      .map(
-        (op) =>
-          `max by (dimension_TableName) (${SRL}{dimension_TableName="${doc.service}", dimension_Operation="${op}"})`,
-      )
-      .join('\n      + ');
-    return `  (\n`
-      + `    1000 * sum by (http_route) (histogram_sum(rate(${sel}[60s])))\n`
-      + `    / sum by (http_route) (histogram_count(rate(${sel}[60s])))\n`
-      + `    - on() group_left () (\n      ${srl}\n    )\n`
-      + `  )`;
-  }).join('\n  or\n');
-}
-
-export function renderQueries(doc) {
-  const scope = SCOPE(doc);
-  const vcpu = doc.attribution.vcpu_per_task;
-  const q = {
-    sli_ratio: ratioExpr(doc, { range: '$__rate_interval' }),
-
-    db_wall_avg_by_route:
-      `1000 * sum by (http_route) (histogram_sum(rate(${DB}{${scope}}[60s])))`
-      + ` / sum by (http_route) (histogram_count(rate(${DB}{${scope}}[60s])))`,
-
-    // `max`, never `sum`: every aws_* series carries an `instance` label naming
-    // the Alloy task that scraped it. desired_count is 1, so sum() is right at
-    // steady state -- but a replaced collector's series overlap the new task's
-    // during a redeploy and every sum() reads double. Grouping BY the two
-    // dimensions keeps one series per operation, which is what this breakdown is.
-    cloudwatch_srl_by_operation:
-      `max by (dimension_TableName, dimension_Operation) (${SRL}{dimension_TableName="${doc.service}"})`,
-
-    // The queueing signal, in milliseconds. It is time spent inside the process
-    // around the await, and it includes AWS SDK retry backoff on throttled
-    // DynamoDB calls -- so while throttle events are non-zero it is not evidence
-    // about the event loop. Subtrahend is per route, from attribution.operations
-    // -- see queueingExpr.
-    queueing_ms_by_route: queueingExpr(doc),
-
-    // CPU-seconds burned per wall-second, per task.
-    cpu_seconds_per_second: `sum by (instance) (histogram_sum(rate(${CPU}{${scope}}[60s])))`,
-
-    // The same number as a fraction of the allocation. 1.0 is saturation.
-    cpu_saturation_ratio: `sum by (instance) (histogram_sum(rate(${CPU}{${scope}}[60s]))) / ${vcpu}`,
-
-    eventloop_delay_p99: `nodejs_eventloop_delay_p99_seconds{job="${doc.service}"}`,
-    eventloop_delay_max: `nodejs_eventloop_delay_max_seconds{job="${doc.service}"}`,
-    eventloop_utilization: `nodejs_eventloop_utilization_ratio{job="${doc.service}"}`,
-
-    // No throttle queries here, deliberately. Read and write throttle events are
-    // read LIVE from CloudWatch by everything that wants them -- the dashboard's
-    // throttle panel, the throttle alert rule in grafana/throttles.tf, and
-    // /loadtest -- so Alloy no longer forwards a Prometheus copy for anything to
-    // query. Adding one back here means adding the metric{} block back to
-    // alloy.alloy.tftpl too, or the query renders empty.
-  };
-  return `${JSON.stringify(q, null, 2)}\n`;
-}
-
-// Capacity is deliberately NOT here. infra/main/dev.tfvars sets read_capacity /
-// write_capacity by hand and outranks anything this script could write; the
-// model only reports, via capacityReport below.
+// Capacity is deliberately NOT an output. infra/main/dev.tfvars sets the pool
+// and task sizing by hand and outranks anything this script could write; the
+// model only reports, via renderCapacityAdvisory above.
+//
+// Both directories arrive in plan 2. Until then every output is "missing",
+// which registers as drift -- and slo:check never gets that far anyway, because
+// validateSlo refuses the null thresholds first.
 const OUTPUTS = [
   ['infra/k6/tests/lib/slo.js', renderK6],
   ['infra/grafana/classmap.json', renderClassMap],
   ['infra/grafana/alerts.tf', renderAlerts],
   ['infra/grafana/locals.tf', renderLocals],
-  ['infra/grafana/queries.json', renderQueries],
 ];
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const root = new URL('../..', import.meta.url).pathname;
-  // slo.yaml is the committed source of truth and must be complete, so the CLI
-  // passes the flag explicitly rather than leaning on loadSlo's default -- the
-  // default only happens to agree here because this call has no preParsed
-  // argument; a later refactor that reads the file first and hands it in
-  // (as the fork's CLI does) would silently flip it.
-  const doc = loadSlo(`${root}slo.yaml`, undefined, { requireCapacityMix: true });
   const check = process.argv.includes('--check');
+
+  // Parsed, then validated separately, so the advisory below can print even
+  // when the document is refused. Connections are the number that can exhaust
+  // max_connections; a run that says nothing about them because some unrelated
+  // field was wrong is a run that wasted its output.
+  //
+  // No second argument: the advisory prices EVERY state the knob sequence
+  // visits, not one of them. Which state is being applied is not something this
+  // script can know, and guessing produced the roomiest of the three.
+  const raw = parse(readFileSync(`${root}slo.yaml`, 'utf8'));
+  console.log(renderCapacityAdvisory(raw));
+
+  let doc;
+  try {
+    // The document came off disk here, so it is held to the complete-document
+    // rules even though loadSlo is handed the already-parsed copy.
+    doc = loadSlo(null, raw, { requireCapacityMix: true });
+  } catch (err) {
+    console.error(`slo.yaml is not valid: ${err.message}`);
+    process.exit(1);
+  }
+
   let drifted = 0;
   for (const [rel, render] of OUTPUTS) {
     const wanted = render(doc);
@@ -707,11 +696,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (check) console.error(`DRIFT: ${rel} does not match slo.yaml`);
     else { writeFileSync(`${root}${rel}`, wanted); console.log(`wrote ${rel}`); }
   }
-  // Printed in BOTH modes and before the exit, so a run that is failing on
-  // drift still says what capacity is set to -- that is the number on the bill.
-  // It never touches `drifted`: a hand-set capacity that disagrees with the
-  // model is a choice, not drift.
-  console.log(capacityReport(doc, readFileSync(`${root}infra/main/dev.tfvars`, 'utf8')));
   if (check && drifted) process.exit(1);
   if (check) console.log('slo.yaml and its generated outputs agree');
 }
