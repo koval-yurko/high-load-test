@@ -45,15 +45,38 @@ export function burnWindows(windowSeconds) {
   };
 }
 
-export function loadSlo(path, preParsed) {
-  const doc = preParsed ?? parse(readFileSync(path, 'utf8'));
-
+/**
+ * Every rule the document must satisfy, in one place.
+ *
+ * Split out of loadSlo so the rules have one home and two entry points: loadSlo
+ * calls this on the parsed file, and a caller holding a document in memory (the
+ * tests) can ask the same question without going through the filesystem.
+ * Duplicating the rules across the two would mean a guard that holds on one
+ * path and not the other, which is worse than no guard because both paths
+ * still read as checked.
+ */
+export function validateSlo(doc, { requireCapacityMix = false } = {}) {
   if (doc.capacity) {
-    const shares = Object.values(doc.capacity.mix);
-    const total = shares.reduce((a, b) => a + b, 0);
-    // A mix that does not sum to one produces capacity numbers that are quietly
-    // wrong rather than obviously wrong. Refuse, do not round.
-    if (Math.abs(total - 1) > 1e-9) throw new Error(`capacity.mix must sum to 1.0, got ${total}`);
+    // Reading doc.capacity.mix unconditionally throws a bare TypeError on a
+    // capacity block that has no mix -- "Cannot convert undefined or null to
+    // object", with nothing saying which file or which key is wrong.
+    // capacity.mix is where the load profile's request distribution comes
+    // from, so a document that lost it is a real misconfiguration and gets a
+    // named error -- but only when the key is REQUIRED: a document read from
+    // disk (the committed source of truth) must be complete, while one handed
+    // over pre-parsed (a fixture) is partial by nature. loadSlo sets the flag
+    // from which of the two happened.
+    if (doc.capacity.mix === undefined || doc.capacity.mix === null) {
+      if (requireCapacityMix) {
+        throw new Error('capacity is declared without capacity.mix; the load profile has no request distribution to read');
+      }
+    } else {
+      const shares = Object.values(doc.capacity.mix);
+      const total = shares.reduce((a, b) => a + b, 0);
+      // A mix that does not sum to one produces capacity numbers that are quietly
+      // wrong rather than obviously wrong. Refuse, do not round.
+      if (Math.abs(total - 1) > 1e-9) throw new Error(`capacity.mix must sum to 1.0, got ${total}`);
+    }
   }
 
   for (const slo of doc.slos ?? []) {
@@ -100,7 +123,13 @@ export function loadSlo(path, preParsed) {
       }
     }
   }
+}
 
+export function loadSlo(path, preParsed, { requireCapacityMix = preParsed === undefined } = {}) {
+  const doc = preParsed ?? parse(readFileSync(path, 'utf8'));
+  // A document read from disk is the committed source of truth and has to be
+  // complete; one passed in pre-parsed is a fixture and is partial on purpose.
+  validateSlo(doc, { requireCapacityMix });
   return { ...doc, windowSeconds: durationSeconds(doc.window), burn: burnWindows(durationSeconds(doc.window)) };
 }
 
@@ -658,7 +687,12 @@ const OUTPUTS = [
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const root = new URL('../..', import.meta.url).pathname;
-  const doc = loadSlo(`${root}slo.yaml`);
+  // slo.yaml is the committed source of truth and must be complete, so the CLI
+  // passes the flag explicitly rather than leaning on loadSlo's default -- the
+  // default only happens to agree here because this call has no preParsed
+  // argument; a later refactor that reads the file first and hands it in
+  // (as the fork's CLI does) would silently flip it.
+  const doc = loadSlo(`${root}slo.yaml`, undefined, { requireCapacityMix: true });
   const check = process.argv.includes('--check');
   let drifted = 0;
   for (const [rel, render] of OUTPUTS) {

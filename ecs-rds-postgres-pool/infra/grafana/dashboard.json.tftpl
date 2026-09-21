@@ -1,0 +1,1312 @@
+{
+  "title": "ecs-rds-postgres-pool — attribution",
+  "description": "Read side by side during a k6 run: how long requests waited for a pool connection (row 3b), and whether the database itself was the constraint (DBLoadRelativeToNumVCPUs, row 1). Nothing on this dashboard computes a verdict about which resource was the ceiling; every other panel is context for those two.",
+  "tags": [
+    "ecs-rds-postgres-pool"
+  ],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "refresh": "1m",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "1. Latency and database load",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "DBLoad relative to vCPUs",
+      "description": "Was the database the constraint? DBLoadRelativeToNumVCPUs is Performance Insights' average active sessions divided by the instance's vCPU count. Above 1.0, more sessions are runnable than the instance has CPUs to run them: the database saying it is the constraint. The 1.0 line is that definition, not an SLO threshold. Read it beside the pool row (3b): a long pool wait with this line well under 1.0 is a pool too small for the offered load; a long pool wait with this line above 1.0 is a database that could not have served more connections anyway. Average per 60s period, instance level.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/RDS",
+          "metricName": "DBLoadRelativeToNumVCPUs",
+          "statistic": "Average",
+          "dimensions": {
+            "DBInstanceIdentifier": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "unit": "none",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "3. Capacity headroom (saturation as convergence, not a number)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "panels": []
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "Connections vs the connection ceiling",
+      "description": "DatabaseConnections at instance level (Average and Maximum per 60s). It confirms the pool opened what its configuration says it opened: tasks x POOL_MAX, plus anything else connected to the instance. The ceiling line is not drawn yet: the instance's usable connection ceiling is unconfirmed until it is read off the running instance, and a line at a guessed number would look like a fact. It arrives from a variable, not a literal, once that value exists.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/RDS",
+          "metricName": "DatabaseConnections",
+          "statistic": "Average",
+          "dimensions": {
+            "DBInstanceIdentifier": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/RDS",
+          "metricName": "DatabaseConnections",
+          "statistic": "Maximum",
+          "dimensions": {
+            "DBInstanceIdentifier": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "CPU credits: balance and surplus spent",
+      "description": "The run gate for a burstable (T-class) instance. RDS runs T-class instances in unlimited credit mode, so an empty CPUCreditBalance does not throttle the CPU; the instance starts SPENDING surplus credits instead, and CPUSurplusCreditBalance rises above zero at exactly that moment. Any non-zero surplus balance during a run means the instance ran past its burst budget, and its CPU during that run is not the CPU of the next one: the run is not comparable. (CPUSurplusCreditsCharged is not the gate: it only goes non-zero when spent surplus outlives 24h of earning, or at stop/termination, so on a lab instance destroyed daily it stays 0 through the event.) Balance is on the left axis, surplus spent on the right. Credit metrics are published every 5 minutes, hence the 300s period.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/RDS",
+          "metricName": "CPUCreditBalance",
+          "statistic": "Average",
+          "dimensions": {
+            "DBInstanceIdentifier": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "300",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/RDS",
+          "metricName": "CPUSurplusCreditBalance",
+          "statistic": "Maximum",
+          "dimensions": {
+            "DBInstanceIdentifier": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "300",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 28,
+      "type": "row",
+      "title": "3b. The pool — what this project exists to measure",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "panels": []
+    },
+    {
+      "id": 29,
+      "type": "timeseries",
+      "title": "Pool wait p99 by class",
+      "description": "How long requests of each latency class waited to be handed a pool connection, p99 over 60s, from the service's db.pool.wait.duration native histogram. This is the project's central series: every knob this project turns is meant to move it. /healthz is excluded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus_datasource_uid}"
+          },
+          "expr": ${jsonencode(pool_wait_p99_by_class)},
+          "legendFormat": "{{class}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Pool wait p99 split by pool.opened",
+      "description": "The same wait, split by whether the acquire had to open a new connection (pool.opened=true) or was handed an existing one (false). A long wait on the true line is connection setup (TCP, TLS, auth), not queueing; a long wait on the false line is a real queue for a connection the pool already had.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus_datasource_uid}"
+          },
+          "expr": ${jsonencode(pool_wait_p99_opened)},
+          "legendFormat": "opened={{pool_opened}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Pool: waiting",
+      "description": "Requests queued for a connection right now, per task. Non-zero means every connection the pool may hold was busy.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 27
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus_datasource_uid}"
+          },
+          "expr": ${jsonencode(pool_waiting)},
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "none",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Pool: idle",
+      "description": "Open connections nobody is using, per task. Idle at zero while waiting is non-zero is a saturated pool.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 27
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus_datasource_uid}"
+          },
+          "expr": ${jsonencode(pool_idle)},
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "none",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Pool: total",
+      "description": "Open connections, per task, bounded by POOL_MAX. Total rising during a wait says the wait was connection setup rather than queueing; total flat at POOL_MAX with waiting above zero is the queue.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 27
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus_datasource_uid}"
+          },
+          "expr": ${jsonencode(pool_total)},
+          "legendFormat": "{{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "none",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "4. Service (ECS) — what the task itself was doing",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "ECS CPUUtilization (Average & Maximum)",
+      "description": "CPU against the 0.25 vCPU task allocation. Read it beside the pool row and the event-loop panel, not in isolation: a request waiting for a pool connection or for the database burns no CPU in the task, so low CPU here is not evidence the service was idle.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 36
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ECS",
+          "metricName": "CPUUtilization",
+          "statistic": "Average",
+          "dimensions": {
+            "ClusterName": "${project}",
+            "ServiceName": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ECS",
+          "metricName": "CPUUtilization",
+          "statistic": "Maximum",
+          "dimensions": {
+            "ClusterName": "${project}",
+            "ServiceName": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "ECS MemoryUtilization (Average & Maximum)",
+      "description": "Memory pressure is a confound worth ruling out: if memory is climbing toward the task limit, latency may be about the container rather than about anything else shown here.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 36
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ECS",
+          "metricName": "MemoryUtilization",
+          "statistic": "Average",
+          "dimensions": {
+            "ClusterName": "${project}",
+            "ServiceName": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ECS",
+          "metricName": "MemoryUtilization",
+          "statistic": "Maximum",
+          "dimensions": {
+            "ClusterName": "${project}",
+            "ServiceName": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "ECS LiveTaskCount",
+      "description": "Running task count over time. Fixed by desired_count, which Terraform owns; knob 2 raises it from 1 to 4 with an apply. There is no autoscaler, so this line moves only when an apply changes desired_count, or when a task dies and ECS replaces it.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 36
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ECS",
+          "metricName": "LiveTaskCount",
+          "statistic": "Average",
+          "dimensions": {
+            "ClusterName": "${project}",
+            "ServiceName": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "5. Edge (ALB) — confirm load actually arrived as intended",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "panels": []
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "ALB RequestCount",
+      "description": "Requests actually reaching the target group per period. Compare against k6's arrival rate to confirm the offered load and the delivered load match — a gap means requests k6 intended to send never reached the ALB. Read it beside the latency panels before calling that an upstream limit: k6's arrival-rate executor also drops iterations when its pre-allocated VUs are exhausted, which happens when responses are slow, so a slow app produces this gap too.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 45
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "RequestCount",
+          "statistic": "Sum",
+          "dimensions": {
+            "LoadBalancer": "${alb_arn_suffix}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "ALB TargetResponseTime (p95, Average, Maximum)",
+      "description": "Edge-measured response time, independent of anything the service reports about itself. p95 via the CloudWatch extended statistic where supported; Average and Maximum are always included as a fallback and to show tail spread.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 45
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "TargetResponseTime",
+          "statistic": "p95",
+          "dimensions": {
+            "LoadBalancer": "${alb_arn_suffix}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "TargetResponseTime",
+          "statistic": "Average",
+          "dimensions": {
+            "LoadBalancer": "${alb_arn_suffix}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "TargetResponseTime",
+          "statistic": "Maximum",
+          "dimensions": {
+            "LoadBalancer": "${alb_arn_suffix}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "HTTP status codes (2XX / 4XX / 5XX)",
+      "description": "5XX rising is the app or its dependencies failing outright, not just slowing down — a distinct failure mode from slowness. 4XX at the target vs. at the ELB itself separates application-level rejections from load-balancer-level ones (e.g. malformed requests never reaching a task).",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 45
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HTTPCode_Target_2XX_Count",
+          "statistic": "Sum",
+          "dimensions": {
+            "LoadBalancer": "${alb_arn_suffix}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HTTPCode_Target_4XX_Count",
+          "statistic": "Sum",
+          "dimensions": {
+            "LoadBalancer": "${alb_arn_suffix}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HTTPCode_Target_5XX_Count",
+          "statistic": "Sum",
+          "dimensions": {
+            "LoadBalancer": "${alb_arn_suffix}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HTTPCode_ELB_4XX_Count",
+          "statistic": "Sum",
+          "dimensions": {
+            "LoadBalancer": "${alb_arn_suffix}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "ALB HealthyHostCount",
+      "description": "Healthy targets in the target group. A drop here during a run means tasks are failing health checks under load. That is not by itself a service-side ceiling: a task whose event loop is saturated fails its health check too, whatever saturated it. Read it beside the event-loop and pool panels.",
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "${cloudwatch_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 45
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_datasource_uid}"
+          },
+          "namespace": "AWS/ApplicationELB",
+          "metricName": "HealthyHostCount",
+          "statistic": "Average",
+          "dimensions": {
+            "TargetGroup": "${target_group_arn_suffix}",
+            "LoadBalancer": "${alb_arn_suffix}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "row",
+      "title": "6. Service SLI — as the alert rules compute it",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      },
+      "panels": []
+    },
+    {
+      "id": 19,
+      "type": "text",
+      "title": "SLI ratio: proportion meeting per-class threshold",
+      "description": "Placeholder. The SLI is a ratio against per-class latency thresholds, and those are null in slo.yaml until they are calibrated; this panel keeps its id because the burn-rate rules will point at it.",
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 54
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "The SLI query arrives when plan 3 freezes the class thresholds (slo.yaml)."
+      }
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "7. Derived panels — read these with the two headline metrics",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 58
+      },
+      "panels": []
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "CPU saturation",
+      "description": "CPU seconds burned per second (by task), over the 0.25 vCPU Fargate ceiling. 1.0 is the ceiling: a task pinned at or above it is CPU-bound regardless of what the pool or the database says. READ IT ONE WAY ONLY: that is sufficient evidence of CPU-bound, never necessary. http.server.cpu.duration sums only the bracketed synchronous block in src/handlers.js (feed's summarize); JSON serialisation, pg driver work and the OTel export are uncounted, and routes that bracket nothing contribute no series at all. A task can be genuinely pinned while this panel reads low.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 59
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus_datasource_uid}"
+          },
+          "expr": ${jsonencode(cpu_saturation_ratio)}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "Event-loop delay p99 by task",
+      "description": "nodejs_eventloop_delay_p99_seconds, by (instance): one line per task. A rising delay here with CPU saturation flat says only that the loop had pending work the CPU accounting does not see; it does not say what kind. Read it beside the pool row: requests parked waiting for a connection are pending callbacks, not compute.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 59
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus_datasource_uid}"
+          },
+          "expr": ${jsonencode(eventloop_delay_p99)}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    }
+  ]
+}
