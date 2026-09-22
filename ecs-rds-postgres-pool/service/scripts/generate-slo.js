@@ -9,13 +9,19 @@
 //    capacityReport) is replaced by renderCapacityAdvisory(): RCU/WCU has no
 //    analogue, and all three read infra/main/dev.tfvars, which this project does
 //    not have until plan 2.
-//  - queueingExpr() and renderQueries() are DROPPED. See the note above OUTPUTS
-//    for exactly what plan 2 must build in their place.
+//  - queueingExpr() is DROPPED, and renderQueries() is rebuilt on pool wait
+//    rather than ported: see the note above renderQueries.
+//  - validateSlo() takes requireThresholds, and the CLI takes --only-unblocked,
+//    so the two threshold-free outputs can be written before plan 3 calibrates.
 //
 // The single source: slo.yaml -> k6 thresholds, Grafana alert rules, Alloy class
 // map. Nothing downstream of this file is edited by hand.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parse } from 'yaml';
+import {
+  REQUEST_DURATION, DB_DURATION, CPU_DURATION,
+  POOL_WAIT_DURATION, POOL_WAITING, POOL_IDLE, POOL_TOTAL,
+} from '../src/otel.js';
 
 const UNIT_SECONDS = { ms: 0.001, s: 1, m: 60, h: 3600, d: 86400, w: 604800, y: 31536000 };
 
@@ -69,7 +75,7 @@ export function burnWindows(windowSeconds) {
  * would mean a guard that holds on one path and not the other, which is worse
  * than no guard because both paths still read as checked.
  */
-export function validateSlo(doc, { requireCapacityMix = false } = {}) {
+export function validateSlo(doc, { requireCapacityMix = false, requireThresholds = true } = {}) {
   if (doc.capacity) {
     // The sibling reads doc.capacity.mix unconditionally, which throws a
     // TypeError on a capacity block that has a pool and no mix -- the shape
@@ -127,7 +133,12 @@ export function validateSlo(doc, { requireCapacityMix = false } = {}) {
   // `fast: null` in the k6 thresholds -- both of which parse, deploy, and
   // measure nothing. Refuse here instead, naming the class, so `slo:check` is
   // red for a reason a reader can act on.
-  for (const slo of doc.slos ?? []) {
+  //
+  // requireThresholds defaults to TRUE, so every caller that does not say
+  // otherwise -- slo:check included -- keeps this guard. Only the CLI's
+  // --only-unblocked turns it off, and it then writes only the outputs that do
+  // not read a threshold. Every rule above still runs either way.
+  for (const slo of requireThresholds ? (doc.slos ?? []) : []) {
     if (slo.sli !== 'class_threshold_ratio') continue;
     for (const [name, cls] of Object.entries(slo.classes)) {
       if (typeof cls.threshold_ms !== 'number' || !Number.isFinite(cls.threshold_ms)) {
@@ -142,14 +153,14 @@ export function validateSlo(doc, { requireCapacityMix = false } = {}) {
   return doc;
 }
 
-export function loadSlo(path, preParsed, { requireCapacityMix = preParsed === undefined } = {}) {
+export function loadSlo(path, preParsed, { requireCapacityMix = preParsed === undefined, requireThresholds = true } = {}) {
   const doc = preParsed ?? parse(readFileSync(path, 'utf8'));
   // A document read from disk is the committed source of truth and has to be
   // complete; one passed in pre-parsed is a fixture and is partial on purpose.
   // The CLI parses the file itself, to print the advisory before validating, so
   // it passes the flag back explicitly -- otherwise the one document that must
   // be complete would be the one checked most loosely.
-  validateSlo(doc, { requireCapacityMix });
+  validateSlo(doc, { requireCapacityMix, requireThresholds });
   return { ...doc, windowSeconds: durationSeconds(doc.window), burn: burnWindows(durationSeconds(doc.window)) };
 }
 
@@ -310,7 +321,17 @@ export function renderClassMap(doc) {
   return `${JSON.stringify(map, null, 2)}\n`;
 }
 
-const METRIC = 'http_server_request_duration_seconds';
+/**
+ * OTel instrument name -> the Prometheus name Grafana Cloud's OTLP translation
+ * gives it: dots become underscores, and unit `s` appends `_seconds`. Built from
+ * the constants in src/otel.js rather than retyped -- the names drifted once
+ * already. No `_bucket`/`_sum`/`_count` suffix: these are NATIVE histograms,
+ * one series each (see renderQueries).
+ */
+const promSeconds = (otelName) => `${otelName.replace(/\./g, '_')}_seconds`;
+const promGauge = (otelName) => otelName.replace(/\./g, '_');
+
+const METRIC = promSeconds(REQUEST_DURATION);
 /**
  * The SLO population: requests that belong to a latency class, and nothing else.
  *
@@ -604,63 +625,117 @@ ${blocks.join('\n\n')}
 `;
 }
 
+const DB = promSeconds(DB_DURATION);
+const CPU = promSeconds(CPU_DURATION);
+const POOL_WAIT = promSeconds(POOL_WAIT_DURATION);
+
+/** True when every latency class has a finite threshold -- sli_ratio needs all of them. */
+const thresholdsSet = (doc) => Object.values(classRatio(doc).classes)
+  .every((c) => typeof c.threshold_ms === 'number' && Number.isFinite(c.threshold_ms));
+
 /**
- * WHAT PLAN 2 MUST ADD BACK, IN POSTGRES FORM.
+ * grafana/queries.json: every query the dashboard panels, /loadtest and the
+ * README deep-links read, defined once.
  *
- * The sibling has two more renderers here, and this fork drops BOTH rather than
- * porting them, because each is built on `attribution.operations` -- a map from
- * endpoint to DynamoDB operation names -- and this project's slo.yaml has no
- * such section and will not grow one:
+ * Ported from the sibling's renderQueries, with its two DynamoDB keys dropped
+ * rather than translated: cloudwatch_srl_by_operation and queueing_ms_by_route
+ * subtract DynamoDB's own server-side clock from the in-process db time, and
+ * Postgres publishes no per-operation server-side latency to subtract. This
+ * project measures the queue DIRECTLY instead -- db.pool.wait.duration, per
+ * class (docs/superpowers/specs/2026-09-19-ecs-rds-postgres-pool-design.md,
+ * "Three queues in series").
  *
- *  - queueingExpr(doc): in-process db wall-clock MINUS DynamoDB's own
- *    server-side clock, per route, to estimate queueing. Postgres publishes no
- *    per-operation server-side latency to subtract, which is precisely why the
- *    spec has this project measure pool wait DIRECTLY instead
- *    (docs/superpowers/specs/2026-09-19-ecs-rds-postgres-pool-design.md, the
- *    "Three queues in series" section).
- *  - renderQueries(doc): grafana/queries.json -- every query the dashboard
- *    panels, /loadtest and the README deep-links read, defined once. Its
- *    sli_ratio, db_wall_avg_by_route, cpu_seconds_per_second,
- *    cpu_saturation_ratio and the three event-loop queries all have analogues
- *    here; only the DynamoDB ones do not.
+ * The histograms are NATIVE: there is no `_sum{...}`/`_count{...}`/`_bucket{...}`
+ * series to match. That form parses, returns "success", and matches nothing
+ * forever. Quantiles come from histogram_quantile over rate() of the one native
+ * series; sums and counts from histogram_sum/histogram_count. `sum by (...)`
+ * wraps the rate before the quantile, or the label being grouped on is gone.
  *
- * So plan 2 owes this file an attribution/queries renderer built on the two
- * keys slo.yaml DOES carry:
- *
- *  - attribution.pool_wait_metric (`db.pool.wait.duration`, which arrives in
- *    Prometheus as db_pool_wait_duration_seconds) -- a per-class and per-route
- *    pool-wait query, in the same native-histogram form as everything else:
- *    histogram_sum(rate(X{...}[60s])) / histogram_count(rate(X{...}[60s])).
- *    There is no `_sum`/`_count`/`_bucket` series to match; that form parses,
- *    returns "success", and matches nothing forever.
- *  - attribution.vcpu_per_task (0.25) -- cpu_saturation_ratio, the CPU-seconds
- *    per wall-second divided by the allocation, where 1.0 is saturation. Plan 2
- *    must also restore the sibling's cross-check that this number equals
- *    infra/main/dev.tfvars task_cpu / 1024, since Terraform is what actually
- *    allocates it.
- *
- * Alongside them: the three pool gauges src/otel.js publishes -- db.pool.waiting,
- * db.pool.idle, db.pool.total -- which the spec says are read BESIDE the
- * histogram, not instead of it.
+ * Two keys are conditional, and both are omitted rather than rendered broken:
+ *  - sli_ratio bakes the class thresholds into PromQL, so it appears only once
+ *    every threshold_ms is set (plan 3). Before then it would render
+ *    histogram_fraction(0, NaN, ...), which parses and measures nothing.
+ *  - cpu_saturation_ratio divides by attribution.vcpu_per_task. A document
+ *    without that key gets no ratio -- inventing a vCPU number would be
+ *    inventing the denominator. cpu_seconds_per_second is always emitted.
+ *    (Still owed from plan 1: a cross-check that vcpu_per_task equals
+ *    infra/main/dev.tfvars task_cpu / 1024, since Terraform allocates it.)
  */
+export function renderQueries(doc) {
+  const scope = SCOPE(doc);
+  const job = `job="${doc.service}"`;
+  const vcpu = doc.attribution?.vcpu_per_task;
+  const q = {};
+
+  if (thresholdsSet(doc)) q.sli_ratio = ratioExpr(doc, { range: '$__rate_interval' });
+
+  // THE project's central series: how long each class waited for a connection.
+  // Per class because a global histogram cannot say whose requests queued --
+  // /reports holding connections shows up as /posts/:id waiting.
+  q.pool_wait_p99_by_class =
+    `histogram_quantile(0.99, sum by (class) (rate(${POOL_WAIT}{${scope}}[60s])))`;
+
+  // The same wait split by pool.opened: true means the checkout had to open a
+  // connection (TCP, TLS, Postgres auth), false means it queued for one that
+  // already existed. Only the second is the queue the pool knob moves.
+  q.pool_wait_p99_opened =
+    `histogram_quantile(0.99, sum by (pool_opened) (rate(${POOL_WAIT}{${scope}}[60s])))`;
+
+  // Read BESIDE the histogram, not instead of it. `total` rising while waits
+  // rise says setup, not queueing. One series per task; no labels to aggregate.
+  q.pool_waiting = `${promGauge(POOL_WAITING)}{${job}}`;
+  q.pool_idle = `${promGauge(POOL_IDLE)}{${job}}`;
+  q.pool_total = `${promGauge(POOL_TOTAL)}{${job}}`;
+
+  // In-process database time per route, milliseconds. Brackets an await, so it
+  // includes pool wait AND event-loop queueing -- compare it against the two.
+  q.db_wall_avg_by_route =
+    `1000 * sum by (http_route) (histogram_sum(rate(${DB}{${scope}}[60s])))`
+    + ` / sum by (http_route) (histogram_count(rate(${DB}{${scope}}[60s])))`;
+
+  // CPU-seconds burned per wall-second, per task.
+  q.cpu_seconds_per_second = `sum by (instance) (histogram_sum(rate(${CPU}{${scope}}[60s])))`;
+
+  // The same number as a fraction of the allocation. 1.0 is saturation.
+  if (typeof vcpu === 'number' && Number.isFinite(vcpu) && vcpu > 0) {
+    q.cpu_saturation_ratio = `${q.cpu_seconds_per_second} / ${vcpu}`;
+  }
+
+  q.eventloop_delay_p99 = `nodejs_eventloop_delay_p99_seconds{${job}}`;
+  q.eventloop_delay_max = `nodejs_eventloop_delay_max_seconds{${job}}`;
+  q.eventloop_utilization = `nodejs_eventloop_utilization_ratio{${job}}`;
+
+  return `${JSON.stringify(q, null, 2)}\n`;
+}
 
 // Capacity is deliberately NOT an output. infra/main/dev.tfvars sets the pool
 // and task sizing by hand and outranks anything this script could write; the
 // model only reports, via renderCapacityAdvisory above.
 //
-// Both directories arrive in plan 2. Until then every output is "missing",
-// which registers as drift -- and slo:check never gets that far anyway, because
-// validateSlo refuses the null thresholds first.
+// Two of the five outputs do not depend on a calibrated threshold, and plan 2
+// needs them before calibration happens: classmap.json is route -> class, which
+// handlers.js already fixes, and queries.json's attribution keys are built on
+// metric names. queries.json gains sli_ratio once thresholds exist. The other
+// three bake threshold values into PromQL and k6 assertions, so they stay behind
+// the null guard until plan 3 freezes them.
 const OUTPUTS = [
-  ['infra/k6/tests/lib/slo.js', renderK6],
-  ['infra/grafana/classmap.json', renderClassMap],
-  ['infra/grafana/alerts.tf', renderAlerts],
-  ['infra/grafana/locals.tf', renderLocals],
+  { path: 'infra/grafana/classmap.json', render: renderClassMap, needsThresholds: false },
+  { path: 'infra/grafana/queries.json', render: renderQueries, needsThresholds: false },
+  { path: 'infra/grafana/locals.tf', render: renderLocals, needsThresholds: true },
+  { path: 'infra/grafana/alerts.tf', render: renderAlerts, needsThresholds: true },
+  { path: 'infra/k6/tests/lib/slo.js', render: renderK6, needsThresholds: true },
 ];
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const root = new URL('../..', import.meta.url).pathname;
   const check = process.argv.includes('--check');
+  const onlyUnblocked = process.argv.includes('--only-unblocked');
+  // --check is the guard. A flag that relaxes it would make it decorative, so
+  // the combination is refused outright rather than quietly ignored.
+  if (check && onlyUnblocked) {
+    console.error('--check does not accept --only-unblocked: the check always validates every threshold');
+    process.exit(2);
+  }
 
   // Parsed, then validated separately, so the advisory below can print even
   // when the document is refused. Connections are the number that can exhaust
@@ -677,14 +752,18 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   try {
     // The document came off disk here, so it is held to the complete-document
     // rules even though loadSlo is handed the already-parsed copy.
-    doc = loadSlo(null, raw, { requireCapacityMix: true });
+    doc = loadSlo(null, raw, { requireCapacityMix: true, requireThresholds: !onlyUnblocked });
   } catch (err) {
     console.error(`slo.yaml is not valid: ${err.message}`);
     process.exit(1);
   }
 
   let drifted = 0;
-  for (const [rel, render] of OUTPUTS) {
+  for (const { path: rel, render, needsThresholds } of OUTPUTS) {
+    if (onlyUnblocked && needsThresholds) {
+      console.log(`skipped ${rel}: it bakes class thresholds in, and slo.yaml's threshold_ms are unset until plan 3`);
+      continue;
+    }
     const wanted = render(doc);
     // A newly added output does not exist yet. That is drift, not a crash --
     // otherwise the run that is supposed to create the file dies reading it.

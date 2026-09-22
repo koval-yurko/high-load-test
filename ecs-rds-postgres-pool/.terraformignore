@@ -1,0 +1,11 @@
+# Forked from ecs-dynamodb-rps/.terraformignore on 2026-09-21.
+# A bug fixed here does not reach the sibling copy; fix both.
+# Upload root for HCP CLI-driven runs is this directory, because the workspace's
+# working directory is infra/main. That is what makes ../grafana, ../k6 and
+# ../../heartbeat resolve in a remote run. Nothing below is needed by a plan.
+service/
+infra/k6/tests/
+*.md
+*.html
+infra/main/.terraform/
+infra/main/tfplan*

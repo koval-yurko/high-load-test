@@ -36,5 +36,15 @@ COPY scripts ./scripts
 # arm64/amd64 mismatch surfacing as CannotPullContainerError at task start, not
 # at build -- pass --platform explicitly in deploy-service.sh (plan 2).
 EXPOSE 8080
+# The RDS CA bundle, verified by checksum so a changed file fails the build
+# instead of silently changing what the service trusts. AWS rotates these CAs on
+# a published schedule; when it does, this line fails loudly and the digest is
+# updated deliberately. src/pool.js reads it (DB_CA_BUNDLE).
+# --chmod=0644 is not optional: ADD --checksum lands the file 0600 (root-only)
+# with this BuildKit, which the non-root `node` user below cannot read.
+ADD --checksum=sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3 \
+    --chmod=0644 \
+    https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+    /app/certs/rds-global-bundle.pem
 USER node
 CMD ["node", "src/server.js"]

@@ -17,7 +17,7 @@ import { matchRoute, ROUTE_CLASS } from '../src/handlers.js';
 import { POOL_WAIT_DURATION } from '../src/otel.js';
 import {
   burnWindows, loadSlo, validateSlo, renderCapacityAdvisory, plannedStates,
-  renderClassMap, renderK6, renderAlerts,
+  renderClassMap, renderK6, renderAlerts, renderQueries,
 } from '../scripts/generate-slo.js';
 import { ratioExpr, renderLocals, classRatio, rate } from '../scripts/generate-slo.js';
 
@@ -597,4 +597,53 @@ test('no generated Terraform addresses a service histogram by its classic _sum/_
   const model = committed();
   assert.ok(!CLASSIC_SERIES.test(renderAlerts(model)), 'alerts.tf queries a classic _sum/_count series');
   assert.ok(!CLASSIC_SERIES.test(renderLocals(model)), 'locals.tf queries a classic _sum/_count series');
+});
+
+// ---------------------------------------------------------------------------
+// Plan 2: the two outputs that do not depend on a calibrated threshold.
+// ---------------------------------------------------------------------------
+
+test('the attribution queries are built on the pool wait metric, not on dynamodb operations', () => {
+  const q = JSON.parse(renderQueries(doc()));
+  const text = JSON.stringify(q);
+  assert.match(text, new RegExp(POOL_WAIT_DURATION.replace(/\./g, '_')),
+    'the pool wait histogram is what this project measures; its metric name must appear');
+  assert.doesNotMatch(text, /dynamodb|SuccessfulRequestLatency|queueing_ms_by_route/i,
+    'the sibling subtracted a server-side clock Postgres does not publish');
+});
+
+test('pool wait is queried per class, because a global histogram cannot say whose requests queued', () => {
+  const q = JSON.parse(renderQueries(doc()));
+  assert.match(q.pool_wait_p99_by_class ?? '', /by \(class\)/);
+});
+
+test('queries.json renders without thresholds, and omits the one key that needs them', () => {
+  const q = JSON.parse(renderQueries(doc())); // doc() has every threshold_ms null
+  assert.equal(q.sli_ratio, undefined,
+    'sli_ratio bakes thresholds into PromQL; it must not appear until plan 3 freezes them');
+});
+
+test('queries.json gains sli_ratio once thresholds are set', () => {
+  const d = doc();
+  d.slos[0].classes.fast.threshold_ms = 1;
+  d.slos[0].classes.standard.threshold_ms = 2;
+  d.slos[0].classes.heavy.threshold_ms = 3;
+  assert.ok(JSON.parse(renderQueries(d)).sli_ratio);
+});
+
+test('the class map covers every classified route and nothing else', () => {
+  assert.deepEqual(JSON.parse(renderClassMap(doc())), {
+    '/posts/:id': 'fast',
+    '/posts': 'fast',
+    '/feeds/:id/posts': 'standard',
+    '/reports': 'heavy',
+  });
+});
+
+test('validateSlo can skip the threshold guard without skipping any other rule', () => {
+  const d = doc();
+  assert.doesNotThrow(() => validateSlo(d, { requireThresholds: false }));
+  d.slos[0].classes.heavy.endpoints.push('feed');
+  assert.throws(() => validateSlo(d, { requireThresholds: false }), /feed/,
+    'the endpoint-in-two-classes rule must still fire with the threshold guard off');
 });

@@ -31,6 +31,9 @@ export function loadConfig(env = process.env) {
     // only as latency. Raised in plan 3 if the heavy threshold lands higher.
     poolConnectionTimeoutMs: num(env, 'POOL_CONNECTION_TIMEOUT_MS', 900),
     dbSsl,
+    // The RDS CA bundle, which the image writes at build time (Dockerfile).
+    // Overridable for a local run against a database with a different chain.
+    dbCaBundle: env.DB_CA_BUNDLE || '/app/certs/rds-global-bundle.pem',
     migrateOnBoot: flag(env, 'MIGRATE_ON_BOOT'),
     seedOnBoot: flag(env, 'SEED_ON_BOOT'),
     seedRows: num(env, 'SEED_ROWS', 50_000),

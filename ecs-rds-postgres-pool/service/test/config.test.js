@@ -10,6 +10,7 @@ test('defaults match the environment-variable contract', () => {
   assert.equal(c.poolMax, 5);
   assert.equal(c.poolConnectionTimeoutMs, 900);
   assert.equal(c.dbSsl, 'require');
+  assert.equal(c.dbCaBundle, '/app/certs/rds-global-bundle.pem');
   assert.equal(c.feedPageSize, 20);
   assert.equal(c.reportScanRows, 0);
   assert.equal(c.seedRows, 50_000);
@@ -36,6 +37,10 @@ test('a negative number is rejected by name', () => {
 test('DB_SSL accepts only require or off', () => {
   assert.equal(loadConfig({ ...base, DB_SSL: 'off' }).dbSsl, 'off');
   assert.throws(() => loadConfig({ ...base, DB_SSL: 'maybe' }), /DB_SSL/);
+});
+
+test('DB_CA_BUNDLE overrides the default bundle path', () => {
+  assert.equal(loadConfig({ ...base, DB_CA_BUNDLE: '/local/rds.pem' }).dbCaBundle, '/local/rds.pem');
 });
 
 test('OTEL_SERVICE_INSTANCE_ID reaches the config as instanceIdFallback', () => {

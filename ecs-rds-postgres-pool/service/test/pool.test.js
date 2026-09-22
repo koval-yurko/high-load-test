@@ -2,8 +2,65 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import pg from 'pg';
-import { instrumentConnect } from '../src/pool.js';
+import { instrumentConnect, buildSsl } from '../src/pool.js';
 import { runInRequestContext } from '../src/context.js';
+import tls from 'node:tls';
+
+// buildSsl now calls tls.createSecureContext() itself (to build the shared
+// secureContext once), which requires a real, parseable PEM certificate --
+// unlike the old fixture (a "FAKE-RDS-CA" string with no valid PEM body),
+// createSecureContext throws on garbage input. The fixture stands in one of
+// Node's own root certs for "the RDS CA bundle": it's a real cert, so it
+// parses. buildSsl appends the bundle LAST (`[...tls.rootCertificates,
+// bundle]`), so the fixture is asserted by its POSITION (ca.at(-1)) plus the
+// exact length (roots + 1), not by ca.includes(fakeCaCert) -- includes() is
+// tautological here, since rootCertificates[0] is already a member of
+// tls.rootCertificates and would pass even if buildSsl dropped the bundle
+// entirely. index 0 is deliberately not the last root cert (verified: index 0
+// !== rootCertificates[rootCertificates.length - 1] on this Node build), so a
+// dropped bundle changes what ca.at(-1) is and this assertion actually fails.
+const fakeCaCert = tls.rootCertificates[0];
+const readFake = () => fakeCaCert;
+
+test('require verifies the server certificate', () => {
+  const ssl = buildSsl({ dbSsl: 'require', dbCaBundle: '/x/rds.pem' }, readFake);
+  assert.equal(ssl.rejectUnauthorized, true,
+    'a lab still verifies: an unverified TLS connection is encryption without identity');
+});
+
+test('the trust store holds the RDS CA AND the public roots, because knob 3 needs both', () => {
+  const ssl = buildSsl({ dbSsl: 'require', dbCaBundle: '/x/rds.pem' }, readFake);
+  // Position, not membership: ssl.ca.includes(fakeCaCert) would pass even if
+  // buildSsl dropped the bundle entirely, because the fixture IS a root cert
+  // already in tls.rootCertificates. Pinning ca.at(-1) plus the exact length
+  // proves what readFile returned actually reached the trust store.
+  assert.equal(ssl.ca.at(-1), fakeCaCert,
+    'the instance presents a certificate signed by the RDS CA -- readFile\'s return value must ' +
+    'land at the end of ca (fixture stands in a real root cert)');
+  assert.equal(ssl.ca.length, tls.rootCertificates.length + 1,
+    'RDS Proxy presents an ACM certificate chaining to public roots. Passing ca REPLACES the ' +
+    'default store, so dropping the roots would verify the instance and break the proxy at knob 3');
+});
+
+test('off disables TLS entirely', () => {
+  assert.equal(buildSsl({ dbSsl: 'off', dbCaBundle: '/x/rds.pem' }, readFake), undefined);
+});
+
+test('a missing bundle fails loudly at boot rather than silently downgrading', () => {
+  const missing = () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); };
+  assert.throws(() => buildSsl({ dbSsl: 'require', dbCaBundle: '/nope.pem' }, missing), /\/nope\.pem/);
+});
+
+test('the TLS context is built once in buildSsl, not left for tls.connect to rebuild per-connect', () => {
+  // pg hands ssl straight to tls.connect(); a secureContext in the options
+  // makes tls.connect skip its own createSecureContext() call. Without this,
+  // that call re-parses ~150 public roots + the RDS bundle's ~108 certs on
+  // EVERY connect (~20ms of sync CPU measured locally for this ca list) --
+  // paid on warm() and every reconnect, including RDS Proxy's at knob 3.
+  const ssl = buildSsl({ dbSsl: 'require', dbCaBundle: '/x/rds.pem' }, readFake);
+  assert.ok(ssl.secureContext instanceof tls.SecureContext,
+    'buildSsl must hand back a prebuilt SecureContext, not leave it for tls.connect to build');
+});
 
 /** Minimal stand-in for pg.Pool: enough surface for the wrapper, no database. */
 function fakePool({ delayMs = 0, fail = false } = {}) {

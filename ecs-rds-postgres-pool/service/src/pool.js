@@ -7,6 +7,8 @@
 // instead, so the pool is ours again and checkout is ours to time. Do not go
 // looking for $metrics; it does not exist in any version we can pin.
 import pg from 'pg';
+import tls from 'node:tls';
+import { readFileSync } from 'node:fs';
 import { currentRequest } from './context.js';
 
 /**
@@ -93,6 +95,43 @@ export function instrumentConnect(pool, onWait) {
   return pool;
 }
 
+/**
+ * The TLS options for the pool, or undefined when TLS is off.
+ *
+ * Trusts the RDS CA bundle AND Node's public roots, and the second half matters.
+ * Knob 3 switches the service from the instance to RDS Proxy (infra/main/proxy.tf),
+ * and the two present different chains: the instance a certificate signed by the
+ * RDS CA, the proxy an ACM certificate chaining to Amazon's public roots. Passing
+ * `ca` to TLS REPLACES Node's default store rather than adding to it -- so trusting
+ * the bundle alone would verify the instance and break the proxy, and it would
+ * surface only when knob 3 ran.
+ *
+ * A missing bundle throws, naming the path. Falling back to an unverified
+ * connection would turn a packaging mistake into a silent loss of identity.
+ *
+ * The secureContext is built ONCE, here, and reused for every connect. pg
+ * passes this options object straight into tls.connect(); without a
+ * secureContext, Node calls tls.createSecureContext(options) itself on
+ * EVERY connect, reparsing ~150 public roots plus the RDS bundle's ~108
+ * certificates each time (~20ms of synchronous event-loop CPU measured
+ * locally per call) -- which lands on warm() and every reconnect, including
+ * RDS Proxy's at knob 3, and inflates the pool-wait `opened` series this
+ * project measures. Passing a prebuilt secureContext makes tls.connect skip
+ * that call entirely (confirmed locally: 0 createSecureContext calls during
+ * connect when one is supplied).
+ */
+export function buildSsl(config, readFile = readFileSync) {
+  if (config.dbSsl !== 'require') return undefined;
+  let bundle;
+  try {
+    bundle = readFile(config.dbCaBundle, 'utf8');
+  } catch (err) {
+    throw new Error(`DB_SSL=require but the CA bundle at ${config.dbCaBundle} could not be read (${err.code ?? err.message})`);
+  }
+  const ca = [...tls.rootCertificates, bundle];
+  return { ca, secureContext: tls.createSecureContext({ ca }), rejectUnauthorized: true };
+}
+
 export function createPool({ config, onWait }) {
   const pool = new pg.Pool({
     connectionString: config.databaseUrl,
@@ -103,11 +142,7 @@ export function createPool({ config, onWait }) {
     // next request paid a fresh TLS handshake. Under Prisma's own pool this was
     // only mitigable; owning the pool makes it preventable.
     idleTimeoutMillis: 0,
-    // RDS PostgreSQL 15+ ships rds.force_ssl = 1 in the default parameter
-    // group. rejectUnauthorized is false because the task trusts the VPC path
-    // and carrying the RDS CA bundle in the image is plan 2's problem, not a
-    // reason to fail closed here.
-    ssl: config.dbSsl === 'require' ? { rejectUnauthorized: false } : undefined,
+    ssl: buildSsl(config),
   });
 
   instrumentConnect(pool, onWait);

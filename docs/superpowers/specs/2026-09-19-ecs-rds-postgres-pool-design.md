@@ -239,7 +239,7 @@ made to bind before DynamoDB does; here the equivalent knob lives in the databas
 |---|---|
 | `service/src/admission.js` | it sheds 429 above ELU 0.92 — see the collision below |
 | `infra/main/autoscaling.tf` | a feedback loop that changes task count mid-run; §6 uses a fixed `desired_count` instead |
-| `infra/grafana/canary.tf` | a synthetic check, orthogonal to this project's question |
+| `infra/grafana/canary.tf` | a synthetic check, orthogonal to this project's question. **Reversed 2026-09-21** in `docs/superpowers/plans/2026-09-21-ecs-rds-postgres-pool-infrastructure.md` (decision D1): the file is not a synthetic check. Its live resource alerts when the SLI series goes absent, which guards against a silent pipeline — the failure this project can least afford. It is forked. |
 
 **The collision, stated because it is the reason S3 was asked at all.** This design wants a
 saturated pool to produce **5xx**: `connectionTimeoutMillis` is set just above the heavy-class
@@ -270,13 +270,16 @@ Read live from the CloudWatch datasource by whichever panel or rule wants it:
 | `DBLoadRelativeToNumVCPUs` | above 1.0, more sessions are runnable than the instance has CPUs — the database saying it is the constraint |
 | `DBLoadCPU` / `DBLoadNonCPU` | how much of that load is running versus waiting on something |
 | `DatabaseConnections` | confirms the pool opened what the configuration says it opened |
-| `CPUCreditBalance`, `CPUSurplusCreditsCharged` | §7.2's run gate |
+| `CPUCreditBalance`, `CPUSurplusCreditsCharged` | §7.2's run gate. **Amended 2026-09-21** in `docs/superpowers/plans/2026-09-21-ecs-rds-postgres-pool-infrastructure.md` (Task 11): `CPUSurplusCreditBalance > 0` replaces `CPUSurplusCreditsCharged`. Charged becomes non-zero only once surplus credits outlive 24 hours of earning, or when the instance is terminated, so on an instance destroyed daily it stays 0 through the very event it is meant to catch; the surplus balance rises the moment the instance spends past its burst budget. |
 
 These carry the same trap as the sibling's throttle metrics and for the same reason: AWS publishes
 them only when there is load, so **a quiet minute produces no datapoint, not a zero**. Every reading
 rule already encoded in `ecs-dynamodb-rps/infra/grafana/throttles.tf` transfers unchanged —
 `no_data_state = "OK"`, a 300 s lookback, and `reduce(last)` rather than a math expression across
-two queries.
+two queries. **Amended 2026-09-21** in `docs/superpowers/plans/2026-09-21-ecs-rds-postgres-pool-infrastructure.md` (Task 11), for the
+credit metric only: T-class credit metrics publish every 5 minutes, so a 300 s window over them is
+usually empty and `no_data_state = "OK"` turns that into silence. The credit rule uses a 300 s period
+and a 600 s lookback; the other saturation rules keep 60 s and 300 s.
 
 **The Alloy collector stays; only its CloudWatch pipeline goes.** Alloy runs two independent
 pipelines in the sibling. Pipeline 1 is the OTLP gateway: the service exports its histograms to
@@ -331,7 +334,11 @@ which `shared_buffers` is roughly a quarter. If the seeded table exceeds that, a
 becomes random reads from gp3 and the first run of a session differs from the second by an order of
 magnitude. `seed_rows` (row count × row width) is therefore a **measurement parameter**, set in
 `dev.tfvars` beside the other sizing knobs, and the seed is followed by `VACUUM ANALYZE` and a
-warm-up pass.
+warm-up pass. **Amended 2026-09-22** in
+`docs/superpowers/plans/2026-09-21-ecs-rds-postgres-pool-infrastructure.md` (ruling R20): 20% of the
+mix and the heartbeat insert into `posts` and nothing deletes, so the table grows past `seed_rows`
+across runs. The drift is accepted, not reset: every `results.md` row records the `posts` row count
+taken before the run.
 
 ## 6. The knob sequence — the S2 decision
 
@@ -420,6 +427,10 @@ the proxy endpoint.
 handled in HCL.
 
 - `CPUCreditBalance` and `CPUSurplusCreditsCharged` are recorded as columns on **every** ledger row.
+  **Amended 2026-09-21** in `docs/superpowers/plans/2026-09-21-ecs-rds-postgres-pool-infrastructure.md` (Task 11, and its section "Amended
+  during execution and plan-3 handoff"): the second column, the alert rule and the dashboard panel
+  use `CPUSurplusCreditBalance > 0` instead. Charged becomes non-zero only once surplus credits outlive 24 hours of earning, or when the instance is terminated, so on an instance destroyed daily it stays 0 through the very event it is meant to catch; the surplus balance rises the moment the instance spends past its burst budget. Credit metrics publish every 5 minutes, so
+  the rule reads them with a 300 s period and a 600 s lookback.
 - A run does not start until the balance is full. This replaces the sibling's six-minute wait for
   DynamoDB's burst bucket — the equivalent ritual here runs the other way and is longer: warm the
   buffer cache, confirm the pool is at `max`, confirm the credit balance, then start.
@@ -444,7 +455,9 @@ Per decision D4, **migrations and seed run at container start behind a flag**. P
 a Postgres advisory lock, which removes the "a rolling deploy races itself" cost this option would
 otherwise carry. The instance is additionally made publicly accessible with a security group
 admitting only the operator's IP and the task security group, because `psql` during a load-testing
-session is worth a great deal for debugging and the alternative costs a NAT gateway.
+session is worth a great deal for debugging and the alternative costs a NAT gateway. **Amended 2026-09-22** in
+`docs/superpowers/plans/2026-09-21-ecs-rds-postgres-pool-infrastructure.md` (ruling R19): the group
+admits 5432 from any address, guarded by a random password kept as `DB_PASSWORD` in the root `.env`.
 
 ### 7.4 TLS and credentials
 
@@ -452,7 +465,10 @@ session is worth a great deal for debugging and the alternative costs a NAT gate
   `ssl` and the image must carry the RDS CA bundle. With no local Postgres, this fails first in AWS
   — expected, and called out in the plan's first deploy task.
 - Password path: `random_password` → SSM `SecureString`, free and immediate to delete, reusing the
-  pattern `ecs-dynamodb-rps/infra/main/collector.tf` already uses for Grafana tokens.
+  pattern `ecs-dynamodb-rps/infra/main/collector.tf` already uses for Grafana tokens. **Amended
+  2026-09-22** in `docs/superpowers/plans/2026-09-21-ecs-rds-postgres-pool-infrastructure.md` (ruling
+  R19): neither exists any more. The password is `DB_PASSWORD` in the root `.env`, forwarded by
+  `platform/` through the shared HCP variable set as the sensitive `db_password` variable.
 - **RDS Proxy requires AWS Secrets Manager** plus an IAM role. Secrets Manager deletes with a
   recovery window of 7–30 days by default, so a destroy/re-apply cycle collides with "a secret with
   this name is scheduled for deletion". **`recovery_window_in_days = 0` is mandatory** in a lab
@@ -512,7 +528,10 @@ the hold time is known would be inventing the assertion the project is supposed 
 
 `infra/grafana/throttles.tf` becomes `saturation.tf`: `DBLoadRelativeToNumVCPUs`,
 `DatabaseConnections` against the ceiling, `CPUCreditBalance`, and — for knob 3 only — borrow latency
-and session pinning.
+and session pinning. **Amended 2026-09-21** in `docs/superpowers/plans/2026-09-21-ecs-rds-postgres-pool-infrastructure.md` (Task 11): the credit
+rule watches `CPUSurplusCreditBalance > 0` (spent past the burst budget), not the balance, because an
+unlimited-mode instance does not throttle on an empty balance, so no threshold on `CPUCreditBalance`
+means anything.
 
 `scripts/generate-slo.js` is copied, not shared, per the 2026-09-04 decision. Its `renderCapacityTfvars`
 has no analogue and is replaced by the advisory print described in §4.3. **Both copies get a header
@@ -571,6 +590,12 @@ ecs-rds-postgres-pool/
       dashboard.json.tftpl   rows: request / pool / database / service / edge / SLI / latency
       saturation.tf          NEW   replaces throttles.tf (§8)
       alerts.tf slo.tf folder.tf locals.tf queries.json classmap.json alloy.alloy.tftpl
+                             AMENDED 2026-09-21 by docs/superpowers/plans/
+                             2026-09-21-ecs-rds-postgres-pool-infrastructure.md (decision D2):
+                             locals.tf, alerts.tf and slo.tf are created in plan 3, not plan 2.
+                             They are generated from slo.yaml's class thresholds (the SLI PromQL
+                             and every burn-rate rule bake them in), and those thresholds stay
+                             null until plan 3 calibrates them on the real instance.
     k6/
       tests/                 discovery.js constant.js stress.js + lib/ — shapes copied, mix re-derived
   service/
@@ -638,5 +663,5 @@ session.
 | `max_connections` is not ~112 | measure it with `SHOW max_connections` before knob 2 is sized (§6.2) |
 | Knob 2 breaches the ceiling harder than intended and every run 5xxs | that is a result, recorded as one; knob 3 is then the test of whether the proxy recovers it |
 | Borrow latency unit error of 1000× | confirm in the CloudWatch console before any panel or threshold (§6.3) |
-| Credit depletion invalidates a run silently | §7.2's gate and the two recorded columns exist for exactly this |
+| Credit depletion invalidates a run silently | §7.2's gate and the two recorded columns exist for exactly this (the surplus column is `CPUSurplusCreditBalance`, not `CPUSurplusCreditsCharged`, since 2026-09-21: Charged stays 0 on an instance destroyed daily — see `docs/superpowers/plans/2026-09-21-ecs-rds-postgres-pool-infrastructure.md`, Task 11) |
 | `AsyncLocalStorage` overhead distorts the thing being measured | benchmark it the way the sibling benchmarked its instrumentation (`scripts/bench-otel.js`, 200k iterations, 0.51 µs/request) and record the number before trusting any result |
