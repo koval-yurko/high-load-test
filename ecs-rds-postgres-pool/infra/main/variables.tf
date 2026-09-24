@@ -141,7 +141,7 @@ variable "db_username" {
 }
 
 variable "db_password" {
-  description = "The database master password (plan decision D7). From DB_PASSWORD in the root .env, delivered to remote runs by the shared HCP variable set (platform/tfc.tf) -- never in a tfvars file. It is the only thing guarding a port open to the internet (network.tf), and it goes into DATABASE_URL verbatim, hence the rules below."
+  description = "The database master password (plan decision D7). From DB_PASSWORD in the root .env, delivered to remote runs as a write-only variable on this workspace alone (platform/tfc.tf, local.projects) -- never in a tfvars file. It is the only thing guarding a port open to the internet (network.tf), and it goes into DATABASE_URL verbatim, hence the rules below."
   type        = string
   sensitive   = true
 

@@ -17,3 +17,29 @@ resource "grafana_folder" "root" {
   uid   = "high-load-test"
   title = "high-load-test"
 }
+
+# The folder's whole permission set -- grafana_folder_permission replaces whatever is
+# there, and project folders nested under this one inherit it.
+#
+# Editor is reduced to View: SLOs and alert rules are code (CLAUDE.md, "SLOs are
+# code"), so nobody should be able to change the generated rules from the UI. The
+# service account behind GRAFANA_AUTH gets Admin on this folder instead, which is
+# what lets every project stack keep creating and deleting its own subfolder, rules
+# and dashboards whether that account's org role is Editor or Admin. Org Admins keep
+# full access regardless (platform security review, 2026-09-24).
+resource "grafana_folder_permission" "root" {
+  folder_uid = grafana_folder.root.uid
+
+  permissions {
+    role       = "Viewer"
+    permission = "View"
+  }
+  permissions {
+    role       = "Editor"
+    permission = "View"
+  }
+  permissions {
+    user_id    = var.grafana_service_account_id
+    permission = "Admin"
+  }
+}

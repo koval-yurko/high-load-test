@@ -7,15 +7,19 @@ every project workspace depends on, plus the one Grafana Cloud resource shared a
 |---|---|
 | `tfe_project.this` | the `high-load-test` Terraform Cloud project |
 | `tfe_workspace.project` + `_settings` | one workspace per repo project (`local.projects` in `tfc.tf`) — remote execution, working directory, pinned `terraform_version`, `auto_apply = false` |
-| `tfe_variable_set.shared` | every credential a project workspace needs, attached to the TFC project so future workspaces inherit it. Fed from the root `.env` via `TF_VAR_*` — **the only copy in HCP**, `.env` the only copy on disk |
-| `grafana_folder.root` | the shared parent folder (fixed uid `high-load-test`) each project nests under |
+| `tfe_variable_set.shared` | the **non-secret** values every project workspace needs (region, account id, Grafana URL and stack id, OTLP/Prometheus endpoints and usernames), attached to the TFC project so future workspaces inherit them |
+| `tfe_variable.secret` | each workspace's secrets — only those listed in its `local.projects[*].secrets` — written with the write-only `value_wo`, so **no secret is stored in this stack's state** |
+| `aws_iam_openid_connect_provider.hcp_terraform` + `aws_iam_role.run` | dynamic AWS credentials: per workspace, a `ReadOnlyAccess` role for the plan phase and an `AdministratorAccess` role for apply, each trusting exactly that workspace and phase. `tfe_variable.aws_auth` points the workspace at them. **No AWS key is stored in HCP** |
+| `grafana_folder.root` + `grafana_folder_permission.root` | the shared parent folder (fixed uid `high-load-test`) each project nests under; Editors get View only, the Terraform service account Admin |
+| `tfe_team_project_access.this`, `tfe_notification_configuration.runs` | optional: who may use the project workspaces (`team_project_access`, empty = org owners), and run emails (`TFC_NOTIFICATION_EMAIL`, empty = off) |
 
 **Not here: the Grafana Cloud k6 projects.** They lived here from 2026-09-03 to 2026-09-14, so that
 the project id and run history survived `/env down`. They moved into each project's own
 `infra/k6` module, created and destroyed with the environment, once the id stopped being copied into
 `.env` — see `docs/superpowers/specs/2026-09-14-ecs-dynamodb-rps-k6-project-ownership-design.md`.
-This stack still **forwards** `GRAFANA_K6_ACCESS_TOKEN` and `GRAFANA_STACK_ID` into the variable set,
-because that is how each project's remote run authenticates to create its k6 project.
+This stack still **forwards** `GRAFANA_K6_ACCESS_TOKEN` (a workspace secret) and `GRAFANA_STACK_ID`
+(the shared set) to the project workspaces, because that is how each project's remote run
+authenticates to create its k6 project.
 
 It **cannot run remotely**: this is the stack that creates the credentials the other workspaces run
 with, so it runs locally against state in HCP. `tfe_workspace_settings.platform` pins
@@ -34,7 +38,14 @@ From the repo root, in a direnv-loaded shell (root `README.md`, Step 2). Workspa
 from `cloud { workspaces { name = "platform" } }` in `versions.tf`, never the shell — no
 `TF_WORKSPACE`, no `env -u` prefix. Credentials *do* come from the shell, and this stack needs more
 of them than any other root module: `TFE_TOKEN` for the `tfe` provider (`.envrc` aliases it from
-`TF_TOKEN_app_terraform_io`), plus every `TF_VAR_*` it writes into the variable set.
+`TF_TOKEN_app_terraform_io`), the `.env` AWS keys for the `aws` provider (read directly, never
+forwarded anywhere), plus every `TF_VAR_*` it writes into HCP. Every required `TF_VAR_*` is validated
+non-empty: `.envrc` turns a missing `.env` line into `""`, and the plan fails on it rather than
+blanking the value in HCP.
+
+**After changing a secret in `.env`, re-apply this stack.** Secrets are write-only, so Terraform
+cannot see the old value. It notices a change through `value_wo_version`, a 48-bit prefix of the
+value's SHA-256, which changes with the value.
 
 An unloaded shell fails here first:
 
@@ -50,6 +61,24 @@ direnv: `direnv exec . terraform -chdir=platform …`.
 
 > A stale `TF_WORKSPACE=ecs-dynamodb-rps` in an older shell aborts the same way, by disagreeing with
 > the `cloud` block. It was removed from `.env` on 2026-09-09 — unset it.
+
+## Security model
+
+This stack holds every credential in the repo, so its design rules are about limiting who can read
+them. The findings behind each rule are in
+`docs/superpowers/specs/2026-09-24-platform-security-hardening-design.md`.
+
+- **No secret in state.** Secrets use `value_wo`. Non-secret values use plain `value` and live in
+  the shared set.
+- **Plan permission equals reading the secrets.** A CLI-driven remote plan runs whatever
+  configuration it is given, with whatever the workspace holds. That is why the plan phase gets a
+  read-only AWS role, why each workspace holds only its own secrets, and why `team_project_access`
+  lists every team that can plan (empty means org owners only).
+- **No long-lived AWS key leaves the machine.** Remote runs get one-hour OIDC role credentials. The
+  apply role is still `AdministratorAccess`, the same privilege as the IAM user keys it replaced.
+  Narrowing it is future work.
+- **Provider versions are pinned to the patch level** (`~> x.y.z`), because this stack runs locally
+  with every credential in its environment.
 
 ## Bootstrap sequence
 
@@ -71,18 +100,22 @@ Full detail in Task 7 of `docs/superpowers/plans/2026-09-03-ecs-dynamodb-rps-res
 
 ## Adding a project
 
-Add one line to `local.projects` in `tfc.tf`:
+Add one entry to `local.projects` in `tfc.tf`:
 
 ```hcl
 locals {
   projects = {
-    "ecs-dynamodb-rps"    = { working_directory = "infra/main" }
-    "<new-project-dir>"   = { working_directory = "infra/main" }
+    "<new-project-dir>" = {
+      working_directory = "infra/main"
+      secrets           = ["GRAFANA_AUTH", "GRAFANA_K6_ACCESS_TOKEN", "grafana_otlp_password"]
+    }
   }
 }
 ```
 
-That single map drives the TFC workspace and its execution-mode settings — nothing else in this
-stack needs to change. The new project's Grafana Cloud k6 project is **not** created here: give the
+That single map drives the TFC workspace, its execution-mode settings, its plan and apply IAM roles
+and its secrets. Nothing else in this stack needs to change. List **only** the secrets the project
+declares. A workspace receives nothing secret it does not name here; that is the point. A new
+secret needs a variable in `variables.tf`, an entry in `local.secrets` and a `.envrc` alias. The new project's Grafana Cloud k6 project is **not** created here: give the
 project its own `infra/k6` module with `grafana_k6_project` + `grafana_k6_project_limits` (copy
 `ecs-dynamodb-rps/infra/k6/`, including the comment on the limits resource).

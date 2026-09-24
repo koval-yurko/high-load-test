@@ -3,9 +3,10 @@
 
 provider "registry.terraform.io/grafana/grafana" {
   version     = "3.25.9"
-  constraints = "~> 3.0"
+  constraints = "~> 3.25.0"
   hashes = [
     "h1:Mr94xUwSKxLJxWxd/zed2K2xb57zE/+18uhIuo5/k44=",
+    "h1:m19AUS7s6DUOawfYD4OSEXVqxjp7OG/i8ArjcxCDIW0=",
     "zh:052dd83cbf794d6a0c41ef6262286063d64c7b2107f3a6b1b81e679303072759",
     "zh:117092dfc73619621eb48046934ef14c09e4419fc6d5bab35bff7549eac905fb",
     "zh:153952d2f01812cada014905852c8a03fb68a204b98a533b81830e923bf69848",
@@ -29,10 +30,23 @@ provider "registry.terraform.io/grafana/grafana" {
   ]
 }
 
+provider "registry.terraform.io/hashicorp/aws" {
+  version     = "6.66.0"
+  constraints = "~> 6.66.0"
+  hashes = [
+    "h1:5t1vkYwqDYRN27RliDkyWRmQfQCnNHFqWxC2UDVCK78=",
+    "h1:OnLj4nhqJnEcUzyyRKUjp1FgWG00Y8maikJEYSf9Zjw=",
+    "h1:hBEaeBm9nm7A/u1nnD0nfolTPP55/BoKRFWk8zG8/fk=",
+    "h1:mIolsCn33slp3F7Zd4KCTScXAWuUQsjtIzA/a6TFG6Q=",
+    "h1:xehZnyesOrJ1/R9tmnRSu7FRkwoDDKelEHI3WdnJ72g=",
+  ]
+}
+
 provider "registry.terraform.io/hashicorp/tfe" {
   version     = "0.80.0"
-  constraints = "~> 0.80"
+  constraints = "~> 0.80.0"
   hashes = [
+    "h1:b7z7ULuD07e25pjWbIKcWRDg/4XDTaN2SP/2bE3Ly6Q=",
     "h1:xlf95EEFJAOoO2pu7tTCO9io+1GpwIb8VoZLoWbWdaU=",
     "zh:3ae2626286692d06536219d1eb1e7cb4511077319e7a82d3014176357d96a3a8",
     "zh:4d4158bf9f9663db95fcab43cacefdeb3099f89bb32b475e5bc5ab4a037fefd0",

@@ -23,8 +23,8 @@
 # settings page has no provider resource and no API at all, so that page is a
 # fallback that must merely not contradict the upload.
 #
-# Auth: GRAFANA_K6_ACCESS_TOKEN and GRAFANA_STACK_ID, both delivered by the
-# workspace variable set platform/ manages (remote execution means a local .env
+# Auth: GRAFANA_K6_ACCESS_TOKEN (a workspace variable) and GRAFANA_STACK_ID (the
+# shared variable set), both managed by platform/ (remote execution means a local .env
 # never reaches the run). Before this resource moved here those two variables only
 # fed a read; they are now what creates and deletes a project.
 resource "grafana_k6_project" "this" {
