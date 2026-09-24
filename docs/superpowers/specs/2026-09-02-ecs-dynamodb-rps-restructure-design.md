@@ -192,7 +192,11 @@ from it; numbers are kept so the page's log still reads correctly.
 ### Tier 3 — considered, not now
 
 - **2.3 Dynamic provider credentials (OIDC)** — declined ("nope"). The IAM user keys stay in
-  `.env` and in the variable set.
+  `.env` and in the variable set. *Reversed 2026-09-24 by
+  `docs/superpowers/specs/2026-09-24-platform-security-hardening-design.md`: any user who can queue
+  a plan on a CLI-driven remote workspace can print the keys, so a permanent admin key in HCP is
+  readable by anyone who can plan. Remote runs now assume a read-only role for plan and an admin
+  role for apply through OIDC (`platform/aws.tf`), and the keys stay in `.env` only.*
 - **2.5 Image pipeline** (git-SHA tags, `image_tag` in tfvars, digest pinned in the task
   definition) — moved here. The build / push / `--force-new-deployment` cycle stays manual and in
   the README's known gaps.
@@ -236,7 +240,12 @@ What it owns, and why each is code rather than a UI setting:
   `GRAFANA_STACK_ID`, the six OTLP/Prometheus Terraform variables, `aws_account_id`), scoped to
   the TFC project so every future workspace inherits them. Values come from `.env` through
   `TF_VAR_*`; **the variable set is the only copy in HCP** and `.env` the only copy on disk.
-  `GRAFANA_SM_ACCESS_TOKEN` and the two capacity variables are dropped (1.7).
+  `GRAFANA_SM_ACCESS_TOKEN` and the two capacity variables are dropped (1.7). *Amended 2026-09-24
+  by `docs/superpowers/specs/2026-09-24-platform-security-hardening-design.md`: "the only copy"
+  was false, because `tfe_variable.value` is also saved to the platform state. Inheriting every
+  secret also meant every workspace got all of them. The shared set now holds only non-secret
+  values. Secrets are write-only (`value_wo`) variables on the workspaces that list them, and the
+  AWS keys are replaced by OIDC roles.*
 - **`grafana_folder.high_load_test`** — the parent folder (7.1). Projects find it with
   `data "grafana_folder" { uid = "high-load-test" }` — a fixed string, not a state read, so
   "projects must not import each other's state" holds. *Amended 2026-09-04 during execution: in

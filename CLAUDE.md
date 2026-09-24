@@ -87,8 +87,9 @@ remote HCP run, so it is set on the workspace by `platform/`, not in HCL.
 
 Global (repo root) holds only shared credentials/config for AWS, Terraform Cloud, and Grafana Cloud —
 and `platform/`, the one Terraform root that is not a project: it owns the TFC project, the project
-workspaces, the shared variable set and the Grafana folder `high-load-test` (the restructure spec,
-section 6). **Everything else is per-project** — including the Grafana Cloud k6 project, which each
+workspaces, the shared (non-secret) variable set, each workspace's secrets, the AWS OIDC roles remote
+runs assume, and the Grafana folder `high-load-test` (the restructure spec, section 6, amended by
+`docs/superpowers/specs/2026-09-24-platform-security-hardening-design.md`). **Everything else is per-project** — including the Grafana Cloud k6 project, which each
 project's `infra/k6` creates and `/env down` destroys, so its id is read from `terraform output` and
 never copied into `.env` (moved out of `platform/` on 2026-09-14,
 `docs/superpowers/specs/2026-09-14-ecs-dynamodb-rps-k6-project-ownership-design.md`). Projects must

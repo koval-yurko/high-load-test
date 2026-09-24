@@ -276,7 +276,8 @@ docs/superpowers/plans/   plans   (writing-plans skill)
 ```
 
 `platform/` is the one Terraform root that is not a project: it owns the Terraform Cloud project, one
-workspace per repo project, the shared variable set and the Grafana folder `high-load-test` —
+workspace per repo project and its secrets, the shared non-secret variable set, the AWS OIDC roles
+remote runs assume instead of stored keys, and the Grafana folder `high-load-test` —
 everything a project workspace needs to already exist. (Each project's Grafana Cloud k6 project is
 not here: it lives in that project's `infra/k6` and is destroyed with it.) It is long-lived,
 runs locally, and is applied by hand

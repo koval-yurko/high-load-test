@@ -469,6 +469,9 @@ admits 5432 from any address, guarded by a random password kept as `DB_PASSWORD`
   2026-09-22** in `docs/superpowers/plans/2026-09-21-ecs-rds-postgres-pool-infrastructure.md` (ruling
   R19): neither exists any more. The password is `DB_PASSWORD` in the root `.env`, forwarded by
   `platform/` through the shared HCP variable set as the sensitive `db_password` variable.
+  *Amended 2026-09-24 by `docs/superpowers/specs/2026-09-24-platform-security-hardening-design.md`:
+  it now goes only to the `ecs-rds-postgres-pool` workspace, as a write-only variable that is never
+  stored in the platform state. The shared set had also handed it to `ecs-dynamodb-rps`.*
 - **RDS Proxy requires AWS Secrets Manager** plus an IAM role. Secrets Manager deletes with a
   recovery window of 7–30 days by default, so a destroy/re-apply cycle collides with "a secret with
   this name is scheduled for deletion". **`recovery_window_in_days = 0` is mandatory** in a lab

@@ -311,7 +311,8 @@ so the confound is visible in the ledger.
   instance; until then the heavy route does no work.
 - **`db_password` is not in any tfvars file on purpose.** It is `DB_PASSWORD` in the root `.env`
   (generate with `openssl rand -hex 24`); `.envrc` exports it as `TF_VAR_db_password` and
-  `platform/` puts it in the shared HCP variable set, which is how remote runs receive it. After
+  `platform/` writes it, write-only, to this project's HCP workspace alone, which is how remote runs
+  receive it. After
   changing it, re-apply `platform/` (`terraform -chdir=platform apply`, from the repo root) before
   the next `/env up`. A validation requires 20–128 URL-safe characters.
 - **`pool_connection_timeout_ms` has no measured default** (plan decision D5). `dev.tfvars` carries
