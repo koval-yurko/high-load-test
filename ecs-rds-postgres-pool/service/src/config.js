@@ -42,6 +42,11 @@ export function loadConfig(env = process.env) {
     // The calibrated cost knob. 0 => the aggregate returns immediately, so an
     // uncalibrated service never silently runs a workload nobody chose.
     reportScanRows: num(env, 'REPORT_SCAN_ROWS', 0),
+    // The second half of the calibrated knob (plan 3, decision D1). The scan
+    // sets what the DATABASE spends; this sets the rest of the hold, so pool
+    // occupancy and database CPU can be aimed at independently. 0 => pg_sleep(0),
+    // which returns immediately and leaves the statement's shape unchanged.
+    reportSleepMs: num(env, 'REPORT_SLEEP_MS', 0),
     serviceName: env.OTEL_SERVICE_NAME ?? 'ecs-rds-postgres-pool',
     // The manual override for service.instance.id, used only when ECS task
     // metadata detection fails. It has to exist: the last-resort default in

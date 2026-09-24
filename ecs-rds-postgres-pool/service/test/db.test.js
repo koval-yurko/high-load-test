@@ -14,7 +14,7 @@ function fakePrisma() {
   };
 }
 
-const config = { feedPageSize: 20, reportScanRows: 0, seedFeeds: 16 };
+const config = { feedPageSize: 20, reportScanRows: 0, reportSleepMs: 0, seedFeeds: 16 };
 
 test('a post body is the configured width', () => {
   assert.equal(buildPost(0).body.length, BODY_BYTES);
@@ -85,4 +85,26 @@ test('report at 0 scan rows keeps the same statement shape', async () => {
   const text = String(prisma.calls[0][1]);
   assert.match(text, /insert\s+into\s+posts/i,
     'the write must still happen at 0, or the baseline measures a different route');
+});
+
+test('report sleeps INSIDE the one statement, so the hold is still one checkout', async () => {
+  const prisma = fakePrisma();
+  await createRepo({ prisma, config }).report({ scanRows: 5000, sleepMs: 320, post: buildPost(1) });
+  assert.equal(prisma.calls.length, 1,
+    'the wait must be part of the same statement -- a second round trip would be a second checkout');
+  const text = String(prisma.calls[0][1]);
+  assert.match(text, /pg_sleep/i);
+  assert.match(text, /materialized/i,
+    'the sleep CTE is MATERIALIZED so it cannot be inlined away from the plan');
+  assert.match(text, /count\(distinct/i, 'the CPU half of the knob stays');
+});
+
+test('report at sleepMs 0 keeps the same statement shape', async () => {
+  const prisma = fakePrisma();
+  await createRepo({ prisma, config }).report({ scanRows: 0, sleepMs: 0, post: buildPost(1) });
+  assert.equal(prisma.calls.length, 1);
+  const text = String(prisma.calls[0][1]);
+  assert.match(text, /pg_sleep/i,
+    'pg_sleep(0) returns immediately; removing it at 0 would make the baseline a different statement');
+  assert.match(text, /insert\s+into\s+posts/i);
 });

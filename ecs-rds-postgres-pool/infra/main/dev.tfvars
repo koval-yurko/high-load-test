@@ -16,6 +16,7 @@ allocated_storage = 20
 seed_rows        = 50000 # x ~1 KB must stay inside shared_buffers
 seed_feeds       = 16
 report_scan_rows = 0 # THE CALIBRATED KNOB. Plan 3 sets it; 0 means uncalibrated.
+report_sleep_ms  = 0 # THE OTHER HALF OF THE KNOB. Plan 3 sets it; 0 means uncalibrated.
 feed_page_size   = 20
 
 # --- boot behaviour. seed_on_boot is one task, one shot: it is not idempotent. ---

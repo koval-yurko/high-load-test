@@ -211,6 +211,14 @@ test('slo.yaml names the pool-wait metric src/otel.js actually emits', () => {
     'slo.yaml attribution.pool_wait_metric must equal POOL_WAIT_DURATION in src/otel.js');
 });
 
+test('vcpu_per_task agrees with the task size Terraform allocates', () => {
+  const tfvars = readFileSync(new URL('../../infra/main/dev.tfvars', import.meta.url), 'utf8');
+  const taskCpu = Number(/task_cpu\s*=\s*(\d+)/.exec(tfvars)[1]);
+  const doc = parse(readFileSync(new URL('../../slo.yaml', import.meta.url), 'utf8'));
+  assert.equal(doc.attribution.vcpu_per_task, taskCpu / 1024,
+    'the CPU saturation ratio divides by this; a stale value silently rescales the panel');
+});
+
 test('every endpoint in slo.yaml maps to a route template that handlers.js serves', () => {
   const model = committed();
   for (const [name, template] of Object.entries(model.endpoints)) {

@@ -185,6 +185,12 @@ variable "report_scan_rows" {
   default     = 0
 }
 
+variable "report_sleep_ms" {
+  description = "THE SECOND HALF OF THE CALIBRATED KNOB: how long the heavy route's single statement waits, in milliseconds, beside the CPU cost report_scan_rows sets. The two are separate because the pool must bind while the database still has CPU headroom, and a purely CPU-bound hold puts 5 connections at ~2.5x this instance's 2 vCPUs before the pool of 5 ever binds (plan 3, decision D1). 0 means uncalibrated: pg_sleep(0) returns immediately."
+  type        = number
+  default     = 0
+}
+
 variable "migrate_on_boot" {
   description = "Runs prisma migrate deploy at container start. Safe on every task: Prisma Migrate takes a Postgres advisory lock, so a rolling deploy does not race itself."
   type        = bool

@@ -59,6 +59,7 @@ output "knobs" {
     proxy_enabled    = var.proxy_enabled
     instance_class   = var.instance_class
     report_scan_rows = var.report_scan_rows
+    report_sleep_ms  = var.report_sleep_ms
     seed_rows        = var.seed_rows
   }
 }

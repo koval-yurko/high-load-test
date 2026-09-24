@@ -28,23 +28,29 @@ const SEED_ROWS = 50000;
 const CLASS_OF = { read: 'fast', write: 'fast', feed: 'standard', report: 'heavy' };
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
+// The feed id advances once per FEED request, not per iteration: the mix cycle
+// is 20 long and there are 16 feeds, so iteration % 16 never selects feeds 4, 8,
+// 12 or 16 -- a quarter of the seeded table would never be read, and the ones
+// that were would stay hotter in cache than the workload implies.
+let feedTurn = 0;
+const nextFeed = (feeds) => (feedTurn++ % feeds) + 1;
+
 export function doRequest(baseUrl) {
   const i = exec.scenario.iterationInTest;
   const kind = pick(i);
   const cls = CLASS_OF[kind];
   const tags = { class: cls, kind };
-  const feedId = 1 + (i % SEED_FEEDS);
   const postId = 1 + (i % SEED_ROWS);
 
   let res;
   if (kind === 'read') {
     res = http.get(`${baseUrl}/posts/${postId}`, { tags });
   } else if (kind === 'feed') {
-    res = http.get(`${baseUrl}/feeds/${feedId}/posts`, { tags });
+    res = http.get(`${baseUrl}/feeds/${nextFeed(SEED_FEEDS)}/posts`, { tags });
   } else if (kind === 'write') {
     res = http.post(`${baseUrl}/posts`, '{}', { headers: JSON_HEADERS, tags });
   } else {
-    res = http.post(`${baseUrl}/reports`, JSON.stringify({ feedId }), { headers: JSON_HEADERS, tags });
+    res = http.post(`${baseUrl}/reports`, JSON.stringify({ feedId: nextFeed(SEED_FEEDS) }), { headers: JSON_HEADERS, tags });
   }
 
   // The primary SLI: did THIS request meet the threshold for ITS class?

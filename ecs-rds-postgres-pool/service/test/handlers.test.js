@@ -81,6 +81,16 @@ test('report takes exactly one repository call', async () => {
     'one repository call -- report is raw SQL in src/db.js, so that is one statement and one checkout');
 });
 
+test('the report handler passes both knob positions from config', async () => {
+  const seen = [];
+  const repo = { report: async (a) => { seen.push(a); return { n: 0, bytes: 0, feeds: 0, recordId: 1 }; } };
+  const handlers = createHandlers({ repo, config: { reportScanRows: 4000, reportSleepMs: 320, seedFeeds: 16 } });
+  await handlers.report({ body: { feedId: 2 }, timer: createTimer() });
+  assert.equal(seen[0].scanRows, 4000);
+  assert.equal(seen[0].sleepMs, 320,
+    'the sleep is what makes DBLoadCPU readable at the pool knee (plan 3, D1)');
+});
+
 test('report defaults its feed when the body omits one', async () => {
   const res = await createHandlers({ repo: fakeRepo(), config }).report({ body: undefined, timer: createTimer() });
   assert.equal(res.status, 200);

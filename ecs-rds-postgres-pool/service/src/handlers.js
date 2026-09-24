@@ -91,7 +91,11 @@ export function createHandlers({ repo, config }) {
     async report({ body, timer }) {
       const feedId = toId(body?.feedId) ?? someFeed();
       const post = buildPost(feedId);
-      const out = await timer.measure('db', () => repo.report({ scanRows: config.reportScanRows, post }));
+      const out = await timer.measure('db', () => repo.report({
+        scanRows: config.reportScanRows,
+        sleepMs: config.reportSleepMs,
+        post,
+      }));
       return {
         status: 200,
         body: { feedId, scanned: out.n, bytes: out.bytes, feeds: out.feeds, recordId: out.recordId },

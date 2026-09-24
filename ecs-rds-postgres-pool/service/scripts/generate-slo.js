@@ -99,6 +99,22 @@ export function validateSlo(doc, { requireCapacityMix = false, requireThresholds
     }
   }
 
+  // cpu_saturation_ratio (renderQueries) divides by attribution.vcpu_per_task,
+  // and the CPU dashboard panel with it. A missing or non-positive value would
+  // either throw deep inside a renderer or -- worse -- render a ratio nobody
+  // can trust, so it is refused here, at the one entry point every caller goes
+  // through. Gated on the block existing at all: the in-memory fixtures used
+  // by the tests above have no attribution block and must keep validating.
+  // What this does NOT catch -- a value that no longer matches the task size
+  // Terraform actually allocates -- is a test, not a validateSlo rule: see
+  // "vcpu_per_task agrees with the task size Terraform allocates" below.
+  if (doc.attribution) {
+    const vcpu = doc.attribution.vcpu_per_task;
+    if (typeof vcpu !== 'number' || !Number.isFinite(vcpu) || vcpu <= 0) {
+      throw new Error(`attribution.vcpu_per_task must be a positive number, got ${JSON.stringify(vcpu ?? null)}`);
+    }
+  }
+
   for (const slo of doc.slos ?? []) {
     if (slo.sli !== 'class_threshold_ratio') continue;
     const seen = new Set();
@@ -658,8 +674,10 @@ const thresholdsSet = (doc) => Object.values(classRatio(doc).classes)
  *  - cpu_saturation_ratio divides by attribution.vcpu_per_task. A document
  *    without that key gets no ratio -- inventing a vCPU number would be
  *    inventing the denominator. cpu_seconds_per_second is always emitted.
- *    (Still owed from plan 1: a cross-check that vcpu_per_task equals
- *    infra/main/dev.tfvars task_cpu / 1024, since Terraform allocates it.)
+ *    validateSlo refuses a present-but-non-positive value, and
+ *    test/generate-slo.test.js cross-checks it against
+ *    infra/main/dev.tfvars task_cpu / 1024, since Terraform allocates it
+ *    (plan 1's deferred item, closed in plan 3 Task 11 Step 10 / Task 19).
  */
 export function renderQueries(doc) {
   const scope = SCOPE(doc);

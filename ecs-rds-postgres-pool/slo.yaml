@@ -45,21 +45,19 @@ slos:
 # the same arrangement the sibling adopted on 2026-09-18 after a generated file
 # made overrides silent rather than preventing them.
 capacity:
-  # RE-SEED BEFORE EVERY MEASURED RUN, baseline and comparison alike.
+  # THE TABLE IS NOT RESET BETWEEN RUNS; ITS SIZE IS RECORDED INSTEAD.
   #
-  # The workload grows the table it measures. `write` and `report` below are
-  # both inserts, so that share of every request is a new row in `posts` -- the
-  # table the heavy route scans and the feed route orders. A run therefore leaves
-  # the database bigger than it found it, and the next run scans more rows for
-  # the same REPORT_SCAN_ROWS. A load profile is only comparable to itself, so a
-  # comparison against a table the previous run inflated is not a comparison.
+  # 20% of the mix inserts (`write` 15%, `report` 5%) and the heartbeat inserts
+  # every minute, so `posts` grows whether or not a load test is running. A
+  # drop-and-re-seed before every run was the earlier instruction; it was dropped
+  # on 2026-09-22 (plan docs/superpowers/plans/
+  # 2026-09-21-ecs-rds-postgres-pool-infrastructure.md, ruling R20) because the
+  # seed is not idempotent and the reset is more machinery than the drift is
+  # worth. Every results.md row records `SELECT count(*) FROM posts`, taken just
+  # before the run, so a comparison can be read against the table it ran on.
   #
-  # scripts/calibrate.js also inserts a probe row per measurement, for the same
-  # reason and with the same remedy.
-  #
-  # Drop and re-seed (SEED_ON_BOOT=1 on a single task -- the seed is not
-  # idempotent, see the boot block in service/src/server.js) between runs, and
-  # record in results.md that you did.
+  # scripts/calibrate.js inserts one row per probe for the same reason, and is
+  # covered by the same rule.
   target_rps: null          # set in plan 3, from the discovered knee
   mix: { read: 0.55, write: 0.15, feed: 0.25, report: 0.05 }
   pool:

@@ -13,6 +13,7 @@ test('defaults match the environment-variable contract', () => {
   assert.equal(c.dbCaBundle, '/app/certs/rds-global-bundle.pem');
   assert.equal(c.feedPageSize, 20);
   assert.equal(c.reportScanRows, 0);
+  assert.equal(c.reportSleepMs, 0, 'an uncalibrated service must not sleep');
   assert.equal(c.seedRows, 50_000);
   assert.equal(c.seedFeeds, 16);
   assert.equal(c.migrateOnBoot, false);
@@ -22,6 +23,11 @@ test('defaults match the environment-variable contract', () => {
 
 test('DATABASE_URL is required', () => {
   assert.throws(() => loadConfig({}), /DATABASE_URL/);
+});
+
+test('REPORT_SLEEP_MS is read as milliseconds', () => {
+  const c = loadConfig({ DATABASE_URL: 'postgresql://u:p@h:5432/d', REPORT_SLEEP_MS: '320' });
+  assert.equal(c.reportSleepMs, 320);
 });
 
 test('absent OTLP_ENDPOINT and METRICS_NAMESPACE read as undefined, not empty string', () => {

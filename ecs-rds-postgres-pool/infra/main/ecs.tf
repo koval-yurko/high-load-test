@@ -107,6 +107,7 @@ locals {
 
     # THE CALIBRATED COST KNOB. 0 until plan 3 measures it.
     { name = "REPORT_SCAN_ROWS", value = tostring(var.report_scan_rows) },
+    { name = "REPORT_SLEEP_MS", value = tostring(var.report_sleep_ms) },
 
     { name = "OTLP_ENDPOINT", value = "http://collector.${aws_service_discovery_private_dns_namespace.internal.name}:4318" },
     { name = "METRICS_NAMESPACE", value = local.metrics_namespace },

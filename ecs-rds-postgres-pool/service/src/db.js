@@ -82,10 +82,29 @@ export function createRepo({ prisma, config }) {
      * that scans `scanRows` rows, aggregates them, and inserts one row -- all
      * in one statement, so one checkout.
      *
-     * NOT pg_sleep, deliberately: sleeping holds a connection without consuming
-     * CPU, which would leave DBLoadCPU near zero and make the calibration
-     * target -- "the pool binds while the database still has headroom" --
-     * unreadable, because the instance would look idle at any load.
+     * The hold is deliberately TWO costs in one statement (plan 3, decision D1,
+     * amending plan 1's "NOT pg_sleep" note):
+     *
+     *   scanRows -> what the database SPENDS ON CPU
+     *   sleepMs  -> the rest of the hold, waiting rather than working
+     *
+     * Plan 1 was right that a pure pg_sleep workload is useless here: it leaves
+     * DBLoadCPU near zero, so "the pool binds while the database still has
+     * headroom" becomes unreadable. But a pure scan is CPU-bound end to end, and
+     * five such connections against 2 vCPUs put the database at ~2.5x its CPU
+     * before the pool of 5 ever binds -- the two saturating together, which is
+     * the one outcome the spec exists to avoid. Splitting the cost makes the
+     * ratio a knob: scripts/calibrate.js solves for both.
+     *
+     * The wait is part of the SAME statement, so it is still one checkout. It
+     * stands in for lock or I/O wait, which is what a database-bound workload on
+     * a bigger table would show anyway -- and it is deterministic, which a
+     * working set spilled out of shared_buffers onto gp3 would not be.
+     *
+     * NOTE: a session in pg_sleep is `active` in pg_stat_activity with wait
+     * event Timeout:PgSleep, so Performance Insights counts it. At the knee
+     * DBLoadRelativeToNumVCPUs reads ~2.5 BY CONSTRUCTION; the metric that
+     * answers the spec's question is DBLoadCPU against the instance's vCPUs.
      *
      * count(DISTINCT feed_id) is what makes the cost scale with rows rather
      * than being a cheap running total: it forces a sort or a hash.
@@ -95,7 +114,7 @@ export function createRepo({ prisma, config }) {
      * A knob that restructured the statement would mean the baseline measured
      * a different route than the comparison did.
      */
-    async report({ scanRows, post }) {
+    async report({ scanRows, sleepMs = 0, post }) {
       const [row] = await prisma.$queryRaw`
         WITH scanned AS (
           SELECT feed_id, score, body FROM posts ORDER BY id LIMIT ${scanRows}
@@ -107,13 +126,16 @@ export function createRepo({ prisma, config }) {
                  coalesce(avg(score), 0)::float      AS avg_score
             FROM scanned
         ),
+        waited AS MATERIALIZED (
+          SELECT pg_sleep(${sleepMs}::float8 / 1000.0) AS slept
+        ),
         ins AS (
           INSERT INTO posts (feed_id, author, body, score)
           SELECT ${post.feedId}::int, ${post.author}::varchar, ${post.body}::varchar, 0 FROM agg
           RETURNING id
         )
         SELECT a.n, a.bytes, a.feeds, a.avg_score, i.id AS record_id
-          FROM agg a, ins i`;
+          FROM agg a, ins i, waited w`;
       return {
         n: row?.n ?? 0,
         bytes: row?.bytes ?? 0,
