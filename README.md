@@ -17,7 +17,7 @@ A project that provisions cleanly but has no recorded before/after numbers is no
 
 | directory | what it demonstrates | status |
 |---|---|---|
-| `ecs-dynamodb-rps/` | Node.js on ECS + DynamoDB, sustained RPS ceiling | built, first apply pending (restructured 2026-09-03) |
+| `ecs-dynamodb-rps/` | Node.js on ECS + DynamoDB, sustained RPS ceiling | built, first apply pending |
 | `ecs-rds-postgres-pool/` | Node.js on ECS Fargate + RDS PostgreSQL, the connection pool as the binding constraint (bigger pool / more tasks / RDS Proxy) | built, baseline pending |
 | `ecs-document-db/` | Node.js on ECS + DocumentDB, autoscaling 1→4 tasks | planned, no directory yet |
 | `lambda-concurrency-limit/` | Lambda + DB, concurrency limits under load | planned, no directory yet |
