@@ -94,7 +94,7 @@ export function createRepo({ prisma, config }) {
      * five such connections against 2 vCPUs put the database at ~2.5x its CPU
      * before the pool of 5 ever binds -- the two saturating together, which is
      * the one outcome the spec exists to avoid. Splitting the cost makes the
-     * ratio a knob: scripts/calibrate.js solves for both.
+     * ratio a knob: report_scan_rows and report_sleep_ms in dev.tfvars set both.
      *
      * The wait is part of the SAME statement, so it is still one checkout. It
      * stands in for lock or I/O wait, which is what a database-bound workload on

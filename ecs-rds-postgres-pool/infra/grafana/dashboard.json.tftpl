@@ -1177,18 +1177,142 @@
     },
     {
       "id": 19,
-      "type": "text",
+      "type": "timeseries",
       "title": "SLI ratio: proportion meeting per-class threshold",
-      "description": "Placeholder. The SLI is a ratio against per-class latency thresholds, and those are null in slo.yaml until they are calibrated; this panel keeps its id because the burn-rate rules will point at it.",
+      "description": "The fraction of requests that met their own class threshold and were not a 5xx, over $__rate_interval: the same expression the burn-rate alert rules use. The dashed line is the objective from slo.yaml; below it the error budget is burning.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus_datasource_uid}"
+      },
       "gridPos": {
-        "h": 4,
-        "w": 24,
+        "h": 8,
+        "w": 12,
         "x": 0,
         "y": 54
       },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus_datasource_uid}"
+          },
+          "expr": ${jsonencode(sli_ratio)},
+          "legendFormat": "SLI ratio"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus_datasource_uid}"
+          },
+          "expr": ${jsonencode(sli_objective)},
+          "legendFormat": "objective"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "spanNulls": true
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "objective" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          }
+        ]
+      },
       "options": {
-        "mode": "markdown",
-        "content": "The SLI query arrives when plan 3 freezes the class thresholds (slo.yaml)."
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min"] },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "Server p99 per class vs its threshold",
+      "description": "Server-side p99 (handler entry to response finish) per latency class, p99 over 60s, with each class's threshold from slo.yaml as a dashed line of the same colour. A solid line above its dashed line is a class missing its threshold. The thresholds are generated from slo.yaml, never typed here.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prometheus_datasource_uid}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 54
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus_datasource_uid}"
+          },
+          "expr": ${jsonencode(server_p99_by_class)},
+          "legendFormat": "{{{{class}}}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus_datasource_uid}"
+          },
+          "expr": ${jsonencode(threshold_seconds_fast)},
+          "legendFormat": "fast threshold"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus_datasource_uid}"
+          },
+          "expr": ${jsonencode(threshold_seconds_standard)},
+          "legendFormat": "standard threshold"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prometheus_datasource_uid}"
+          },
+          "expr": ${jsonencode(threshold_seconds_heavy)},
+          "legendFormat": "heavy threshold"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "fast" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "standard" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
+          { "matcher": { "id": "byName", "options": "heavy" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
+          { "matcher": { "id": "byName", "options": "fast threshold" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }, { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }] },
+          { "matcher": { "id": "byName", "options": "standard threshold" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }, { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }] },
+          { "matcher": { "id": "byName", "options": "heavy threshold" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }, { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } }] }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi" }
       }
     },
     {
@@ -1200,7 +1324,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 62
       },
       "panels": []
     },
@@ -1217,7 +1341,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 59
+        "y": 63
       },
       "targets": [
         {
@@ -1269,7 +1393,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 59
+        "y": 63
       },
       "targets": [
         {

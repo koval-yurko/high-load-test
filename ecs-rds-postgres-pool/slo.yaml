@@ -28,14 +28,17 @@ slos:
     tail_objective: 99.0
     tail_multiplier: 3
     classes:
-      # THRESHOLDS ARE DELIBERATELY UNSET. They are frozen in plan 3, after
-      # calibration on the real db.t4g.micro, because they are what the k6 VU
-      # sizing is derived from and inventing them now would be inventing the
-      # assertion this project exists to test. `npm run slo:check` fails while
-      # any threshold_ms is null -- that is the guard, not an oversight.
-      fast:     { threshold_ms: null, endpoints: [getPost, createPost] }
-      standard: { threshold_ms: null, endpoints: [feed] }
-      heavy:    { threshold_ms: null, endpoints: [report] }
+      # TARGET THRESHOLDS, SERVER-SIDE (handler entry to response finish). Set by
+      # decision on 2026-10-08, not probed: each is a round number comfortably
+      # above what the route does unloaded (index lookup ~ a few ms; the heavy
+      # route holds its connection ~345 ms by design, see report_scan_rows and
+      # report_sleep_ms in infra/main/dev.tfvars), so jitter does not breach it
+      # but pool queueing near the knee does. The k6 VU sizing is derived from
+      # them. Change one and the baseline must be re-run: a threshold is only
+      # comparable to itself. `npm run slo:check` fails while any is null.
+      fast:     { threshold_ms: 50,   endpoints: [getPost, createPost] }
+      standard: { threshold_ms: 100,  endpoints: [feed] }
+      heavy:    { threshold_ms: 1000, endpoints: [report] }
 
   - name: availability
     sli: success_rate
@@ -55,9 +58,6 @@ capacity:
   # seed is not idempotent and the reset is more machinery than the drift is
   # worth. Every results.md row records `SELECT count(*) FROM posts`, taken just
   # before the run, so a comparison can be read against the table it ran on.
-  #
-  # scripts/calibrate.js inserts one row per probe for the same reason, and is
-  # covered by the same rule.
   target_rps: null          # set in plan 3, from the discovered knee
   mix: { read: 0.55, write: 0.15, feed: 0.25, report: 0.05 }
   pool:
