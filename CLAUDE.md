@@ -285,7 +285,7 @@ common failure, not wrong syntax.
 
 ## Project skills
 
-Three skills in `.claude/skills/` automate the loop. Prefer them over ad-hoc commands — each encodes
+Four skills in `.claude/skills/` automate the loop and its documentation. Prefer them over ad-hoc commands — each encodes
 gotchas that cost real money or produce wrong numbers:
 
 - **`/env up|down|status <project>`** — Terraform lifecycle for `<project>/infra/main`, with an
@@ -297,6 +297,8 @@ gotchas that cost real money or produce wrong numbers:
   with the infra change that distinguishes the run. Encodes two verified k6 quirks (below).
 - **`/slo <project> [--check]`** — one `slo.yaml` generates both the k6 thresholds and the Grafana
   alert rules, so they cannot drift apart.
+- **`/readme <project>`** — writes or restructures a project's `README.md` to the shared section
+  order, phase numbering and evidence rules, so every scenario's runbook reads the same.
 
 ### k6 facts worth not re-learning
 
