@@ -11,8 +11,6 @@
 //    not have until plan 2.
 //  - queueingExpr() is DROPPED, and renderQueries() is rebuilt on pool wait
 //    rather than ported: see the note above renderQueries.
-//  - validateSlo() takes requireThresholds, and the CLI takes --only-unblocked,
-//    so the two threshold-free outputs can be written before plan 3 calibrates.
 //
 // The single source: slo.yaml -> k6 thresholds, Grafana alert rules, Alloy class
 // map. Nothing downstream of this file is edited by hand.
@@ -75,7 +73,7 @@ export function burnWindows(windowSeconds) {
  * would mean a guard that holds on one path and not the other, which is worse
  * than no guard because both paths still read as checked.
  */
-export function validateSlo(doc, { requireCapacityMix = false, requireThresholds = true } = {}) {
+export function validateSlo(doc, { requireCapacityMix = false } = {}) {
   if (doc.capacity) {
     // The sibling reads doc.capacity.mix unconditionally, which throws a
     // TypeError on a capacity block that has a pool and no mix -- the shape
@@ -141,26 +139,18 @@ export function validateSlo(doc, { requireCapacityMix = false, requireThresholds
     }
   }
 
-  // THE GUARD THIS PROJECT IS CURRENTLY RED ON, deliberately. slo.yaml ships
-  // with every threshold_ms null: they are frozen in plan 3, from a calibration
-  // run against the real db.t4g.micro, because the k6 VU sizing is derived from
-  // them and a number invented now would be inventing the assertion. A null
-  // threshold renders as `histogram_fraction(0, NaN, ...)` in PromQL and
-  // `fast: null` in the k6 thresholds -- both of which parse, deploy, and
-  // measure nothing. Refuse here instead, naming the class, so `slo:check` is
-  // red for a reason a reader can act on.
-  //
-  // requireThresholds defaults to TRUE, so every caller that does not say
-  // otherwise -- slo:check included -- keeps this guard. Only the CLI's
-  // --only-unblocked turns it off, and it then writes only the outputs that do
-  // not read a threshold. Every rule above still runs either way.
-  for (const slo of requireThresholds ? (doc.slos ?? []) : []) {
+  // Every class needs a threshold. A null one renders as
+  // `histogram_fraction(0, NaN, ...)` in PromQL and `fast: null` in the k6
+  // thresholds -- both of which parse, deploy, and measure nothing. Refuse here
+  // instead, naming the class, so `slo:check` is red for a reason a reader can
+  // act on.
+  for (const slo of doc.slos ?? []) {
     if (slo.sli !== 'class_threshold_ratio') continue;
     for (const [name, cls] of Object.entries(slo.classes)) {
       if (typeof cls.threshold_ms !== 'number' || !Number.isFinite(cls.threshold_ms)) {
         throw new Error(
           `class "${name}" has no threshold_ms (${JSON.stringify(cls.threshold_ms ?? null)}). `
-          + 'Thresholds are calibrated and frozen in plan 3; until then slo:check is red on purpose.',
+          + 'Set it in slo.yaml.',
         );
       }
     }
@@ -169,14 +159,14 @@ export function validateSlo(doc, { requireCapacityMix = false, requireThresholds
   return doc;
 }
 
-export function loadSlo(path, preParsed, { requireCapacityMix = preParsed === undefined, requireThresholds = true } = {}) {
+export function loadSlo(path, preParsed, { requireCapacityMix = preParsed === undefined } = {}) {
   const doc = preParsed ?? parse(readFileSync(path, 'utf8'));
   // A document read from disk is the committed source of truth and has to be
   // complete; one passed in pre-parsed is a fixture and is partial on purpose.
   // The CLI parses the file itself, to print the advisory before validating, so
   // it passes the flag back explicitly -- otherwise the one document that must
   // be complete would be the one checked most loosely.
-  validateSlo(doc, { requireCapacityMix, requireThresholds });
+  validateSlo(doc, { requireCapacityMix });
   return { ...doc, windowSeconds: durationSeconds(doc.window), burn: burnWindows(durationSeconds(doc.window)) };
 }
 
@@ -645,10 +635,6 @@ const DB = promSeconds(DB_DURATION);
 const CPU = promSeconds(CPU_DURATION);
 const POOL_WAIT = promSeconds(POOL_WAIT_DURATION);
 
-/** True when every latency class has a finite threshold -- sli_ratio needs all of them. */
-const thresholdsSet = (doc) => Object.values(classRatio(doc).classes)
-  .every((c) => typeof c.threshold_ms === 'number' && Number.isFinite(c.threshold_ms));
-
 /**
  * grafana/queries.json: every query the dashboard panels, /loadtest and the
  * README deep-links read, defined once.
@@ -667,17 +653,13 @@ const thresholdsSet = (doc) => Object.values(classRatio(doc).classes)
  * series; sums and counts from histogram_sum/histogram_count. `sum by (...)`
  * wraps the rate before the quantile, or the label being grouped on is gone.
  *
- * Two keys are conditional, and both are omitted rather than rendered broken:
- *  - sli_ratio bakes the class thresholds into PromQL, so it appears only once
- *    every threshold_ms is set (plan 3). Before then it would render
- *    histogram_fraction(0, NaN, ...), which parses and measures nothing.
- *  - cpu_saturation_ratio divides by attribution.vcpu_per_task. A document
- *    without that key gets no ratio -- inventing a vCPU number would be
- *    inventing the denominator. cpu_seconds_per_second is always emitted.
- *    validateSlo refuses a present-but-non-positive value, and
- *    test/generate-slo.test.js cross-checks it against
- *    infra/main/dev.tfvars task_cpu / 1024, since Terraform allocates it
- *    (plan 1's deferred item, closed in plan 3 Task 11 Step 10 / Task 19).
+ * One key is conditional, and is omitted rather than rendered broken:
+ * cpu_saturation_ratio divides by attribution.vcpu_per_task. A document
+ * without that key gets no ratio -- inventing a vCPU number would be
+ * inventing the denominator. cpu_seconds_per_second is always emitted.
+ * validateSlo refuses a present-but-non-positive value, and
+ * test/generate-slo.test.js cross-checks it against
+ * infra/main/dev.tfvars task_cpu / 1024, since Terraform allocates it.
  */
 export function renderQueries(doc) {
   const scope = SCOPE(doc);
@@ -685,7 +667,19 @@ export function renderQueries(doc) {
   const vcpu = doc.attribution?.vcpu_per_task;
   const q = {};
 
-  if (thresholdsSet(doc)) q.sli_ratio = ratioExpr(doc, { range: '$__rate_interval' });
+  q.sli_ratio = ratioExpr(doc, { range: '$__rate_interval' });
+
+  // Drawn as flat lines beside the measured p99 so the dashboard shows the
+  // numbers slo.yaml sets rather than a copy typed into the panel JSON.
+  const lat = classRatio(doc);
+  q.sli_objective = `vector(${lat.objective / 100})`;
+  for (const [name, cls] of Object.entries(lat.classes)) {
+    q[`threshold_seconds_${name}`] = `vector(${cls.threshold_ms / 1000})`;
+  }
+
+  // Server-side p99 per class, the series each class threshold is compared with.
+  q.server_p99_by_class =
+    `histogram_quantile(0.99, sum by (class) (rate(${METRIC}{${scope}}[60s])))`;
 
   // THE project's central series: how long each class waited for a connection.
   // Per class because a global histogram cannot say whose requests queued --
@@ -730,30 +724,19 @@ export function renderQueries(doc) {
 // and task sizing by hand and outranks anything this script could write; the
 // model only reports, via renderCapacityAdvisory above.
 //
-// Two of the five outputs do not depend on a calibrated threshold, and plan 2
-// needs them before calibration happens: classmap.json is route -> class, which
-// handlers.js already fixes, and queries.json's attribution keys are built on
-// metric names. queries.json gains sli_ratio once thresholds exist. The other
-// three bake threshold values into PromQL and k6 assertions, so they stay behind
-// the null guard until plan 3 freezes them.
+// All five outputs read slo.yaml, and the null-threshold guard in validateSlo
+// stops any of them being written from a class that has no threshold.
 const OUTPUTS = [
-  { path: 'infra/grafana/classmap.json', render: renderClassMap, needsThresholds: false },
-  { path: 'infra/grafana/queries.json', render: renderQueries, needsThresholds: false },
-  { path: 'infra/grafana/locals.tf', render: renderLocals, needsThresholds: true },
-  { path: 'infra/grafana/alerts.tf', render: renderAlerts, needsThresholds: true },
-  { path: 'infra/k6/tests/lib/slo.js', render: renderK6, needsThresholds: true },
+  { path: 'infra/grafana/classmap.json', render: renderClassMap },
+  { path: 'infra/grafana/queries.json', render: renderQueries },
+  { path: 'infra/grafana/locals.tf', render: renderLocals },
+  { path: 'infra/grafana/alerts.tf', render: renderAlerts },
+  { path: 'infra/k6/tests/lib/slo.js', render: renderK6 },
 ];
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const root = new URL('../..', import.meta.url).pathname;
   const check = process.argv.includes('--check');
-  const onlyUnblocked = process.argv.includes('--only-unblocked');
-  // --check is the guard. A flag that relaxes it would make it decorative, so
-  // the combination is refused outright rather than quietly ignored.
-  if (check && onlyUnblocked) {
-    console.error('--check does not accept --only-unblocked: the check always validates every threshold');
-    process.exit(2);
-  }
 
   // Parsed, then validated separately, so the advisory below can print even
   // when the document is refused. Connections are the number that can exhaust
@@ -770,18 +753,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   try {
     // The document came off disk here, so it is held to the complete-document
     // rules even though loadSlo is handed the already-parsed copy.
-    doc = loadSlo(null, raw, { requireCapacityMix: true, requireThresholds: !onlyUnblocked });
+    doc = loadSlo(null, raw, { requireCapacityMix: true });
   } catch (err) {
     console.error(`slo.yaml is not valid: ${err.message}`);
     process.exit(1);
   }
 
   let drifted = 0;
-  for (const { path: rel, render, needsThresholds } of OUTPUTS) {
-    if (onlyUnblocked && needsThresholds) {
-      console.log(`skipped ${rel}: it bakes class thresholds in, and slo.yaml's threshold_ms are unset until plan 3`);
-      continue;
-    }
+  for (const { path: rel, render } of OUTPUTS) {
     const wanted = render(doc);
     // A newly added output does not exist yet. That is drift, not a crash --
     // otherwise the run that is supposed to create the file dies reading it.

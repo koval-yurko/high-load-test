@@ -24,28 +24,8 @@ import { ratioExpr, renderLocals, classRatio, rate } from '../scripts/generate-s
 const HERE = new URL('../../', import.meta.url).pathname;
 const RAW = parse(readFileSync(`${HERE}slo.yaml`, 'utf8'));
 
-/**
- * slo.yaml ships with every threshold_ms NULL on purpose -- plan 3 freezes them
- * from a calibration run against the real instance -- and validateSlo refuses
- * that document, so nothing here can load the committed file as it stands.
- *
- * These are NOT thresholds and must never be read as a preview of the
- * calibrated ones. They are three distinct positive numbers, so that any
- * assertion about a rendered bound is DERIVED from them rather than pinned to a
- * literal: when plan 3 writes the real values, every test below keeps meaning
- * what it means today.
- */
-const PLACEHOLDER_MS = { fast: 1, standard: 2, heavy: 3 };
-
-/** The committed slo.yaml, with placeholder thresholds so renderers can run. */
-function committed() {
-  const doc = structuredClone(RAW);
-  for (const slo of doc.slos) {
-    if (slo.sli !== 'class_threshold_ratio') continue;
-    for (const [name, cls] of Object.entries(slo.classes)) cls.threshold_ms = PLACEHOLDER_MS[name];
-  }
-  return loadSlo(null, doc);
-}
+/** The committed slo.yaml, as the generator loads it. */
+const committed = () => loadSlo(null, structuredClone(RAW));
 
 /** The in-memory fixture the four new cases below work on. */
 const doc = () => ({
@@ -88,10 +68,11 @@ test('every endpoint belongs to exactly one class', () => {
   assert.throws(() => validateSlo(d), /feed/);
 });
 
-test('the committed slo.yaml is still red on its thresholds, which is the point', () => {
-  // The state plan 3 turns green. If this ever passes without plan 3 having run,
-  // someone has invented the numbers the k6 VU sizing is derived from.
-  assert.throws(() => loadSlo(null, structuredClone(RAW)), /threshold_ms/);
+test('the committed slo.yaml has every class threshold set', () => {
+  // The thresholds were null until 2026-10-08, when they were set by decision
+  // rather than probed. A null here would put `fast: null` into the k6 thresholds.
+  const d = loadSlo(null, structuredClone(RAW));
+  assert.ok(d, 'loadSlo accepts the committed slo.yaml');
 });
 
 test('the capacity advisory prints pool size and never contributes an exit code', () => {
@@ -612,7 +593,7 @@ test('no generated Terraform addresses a service histogram by its classic _sum/_
 // ---------------------------------------------------------------------------
 
 test('the attribution queries are built on the pool wait metric, not on dynamodb operations', () => {
-  const q = JSON.parse(renderQueries(doc()));
+  const q = JSON.parse(renderQueries(withThresholds()));
   const text = JSON.stringify(q);
   assert.match(text, new RegExp(POOL_WAIT_DURATION.replace(/\./g, '_')),
     'the pool wait histogram is what this project measures; its metric name must appear');
@@ -621,22 +602,15 @@ test('the attribution queries are built on the pool wait metric, not on dynamodb
 });
 
 test('pool wait is queried per class, because a global histogram cannot say whose requests queued', () => {
-  const q = JSON.parse(renderQueries(doc()));
+  const q = JSON.parse(renderQueries(withThresholds()));
   assert.match(q.pool_wait_p99_by_class ?? '', /by \(class\)/);
 });
 
-test('queries.json renders without thresholds, and omits the one key that needs them', () => {
-  const q = JSON.parse(renderQueries(doc())); // doc() has every threshold_ms null
-  assert.equal(q.sli_ratio, undefined,
-    'sli_ratio bakes thresholds into PromQL; it must not appear until plan 3 freezes them');
-});
-
-test('queries.json gains sli_ratio once thresholds are set', () => {
-  const d = doc();
-  d.slos[0].classes.fast.threshold_ms = 1;
-  d.slos[0].classes.standard.threshold_ms = 2;
-  d.slos[0].classes.heavy.threshold_ms = 3;
-  assert.ok(JSON.parse(renderQueries(d)).sli_ratio);
+test('queries.json carries sli_ratio and the threshold lines baked from slo.yaml', () => {
+  const q = JSON.parse(renderQueries(withThresholds()));
+  assert.ok(q.sli_ratio);
+  assert.equal(q.threshold_seconds_fast, 'vector(0.05)');
+  assert.equal(q.threshold_seconds_heavy, 'vector(0.8)');
 });
 
 test('the class map covers every classified route and nothing else', () => {
@@ -646,12 +620,4 @@ test('the class map covers every classified route and nothing else', () => {
     '/feeds/:id/posts': 'standard',
     '/reports': 'heavy',
   });
-});
-
-test('validateSlo can skip the threshold guard without skipping any other rule', () => {
-  const d = doc();
-  assert.doesNotThrow(() => validateSlo(d, { requireThresholds: false }));
-  d.slos[0].classes.heavy.endpoints.push('feed');
-  assert.throws(() => validateSlo(d, { requireThresholds: false }), /feed/,
-    'the endpoint-in-two-classes rule must still fire with the threshold guard off');
 });

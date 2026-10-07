@@ -7,7 +7,6 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test",
-    "calibrate": "node scripts/calibrate.js",
     "slo:generate": "node scripts/generate-slo.js",
     "slo:check": "node scripts/generate-slo.js --check",
     "prisma:generate": "prisma generate",

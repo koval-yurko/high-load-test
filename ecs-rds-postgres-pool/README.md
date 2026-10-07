@@ -26,7 +26,7 @@ has been measured, because nothing has run.
 |---|---|
 | `https://k0valchuk.grafana.net/dashboards` | folder `high-load-test / ecs-rds-postgres-pool` → dashboard **ecs-rds-postgres-pool — attribution**. Rows 1, 3, 3b, 4, 5, 6, 7; references below name the row and panel. |
 | `https://k0valchuk.grafana.net/alerting/list` | folder `high-load-test / ecs-rds-postgres-pool` → the burn-rate rules (generated), the SLI-absent rule (generated) and the five hand-written database-saturation rules — see [§6](#6-is-it-about-to-break) |
-| `https://k0valchuk.grafana.net/a/grafana-slo-app/slos` | the SLO entry for this project's `latency-classes` and `availability` objectives — error budget and 7-day attainment. Exists once `infra/grafana/slo.tf` is generated and applied ([Freeze the thresholds](#phase-4--freeze-the-thresholds)) |
+| `https://k0valchuk.grafana.net/a/grafana-slo-app/slos` | the SLO entry for this project's `latency-classes` and `availability` objectives — error budget and 7-day attainment. Exists once `infra/grafana/slo.tf` is generated and applied |
 | `https://k0valchuk.grafana.net/a/k6-app/projects` | the project named **ecs-rds-postgres-pool** → its k6 tests and the runs since the last `/env up` (the project is destroyed with the environment, so it is absent between runs) |
 
 ---
@@ -50,9 +50,8 @@ for a database-side reason, not a service bug.
 ## 2. Are we meeting the SLO?
 
 [dashboard][dash] → row 6 *Service SLI* → **SLI ratio: proportion meeting per-class threshold**
-(panel 19). It is a text placeholder — "The SLI query arrives when plan 3 freezes the class
-thresholds" — until [Freeze the thresholds](#phase-4--freeze-the-thresholds) runs; `npm run
-slo:check` exits non-zero for the same reason, and that is the guard, not a bug.
+(panel 19), and beside it **Server p99 per class vs its threshold** — each class's threshold from
+`slo.yaml` as a dashed line. `npm run slo:check` exits non-zero if a threshold is ever `null`.
 
 - A **5xx is a miss however fast it was**; a 4xx is not. This project has **no admission control** —
   there is deliberately no `SHED_ELU_THRESHOLD` (see the environment-variable contract below) — so no
@@ -120,8 +119,8 @@ The three objectives are latency primary (95% meet their class threshold), laten
 3×), and availability (99.9% not 5xx). Each burn threshold is arithmetic on its objective —
 `multiplier × (1 − objective)` — giving 72%/30%, 14.4%/6% and 1.44%/0.6% fast/slow respectively;
 every generated rule's own `computation` annotation shows the working. **No latency figure appears
-here or in any generated rule**: the class thresholds are calibrated and frozen in plan 3, and until
-then this project has nothing measured to state.
+here or in any generated rule**: the class thresholds live in `slo.yaml` (fast 50 ms, standard 100 ms, heavy 1000 ms) and
+are set by decision, not measured.
 
 **Why SLI-absent exists:** every burn rule treats "no data" as OK — correctly, since no traffic is
 not a burn — so a dead heartbeat, a stopped OTLP export, a stopped collector, or a Grafana Cloud
@@ -240,7 +239,7 @@ its default — so a change here is a change in both files.
 | `SEED_ROWS` | number | 50000 | `seed_rows` |
 | `SEED_FEEDS` | number | 16 | `seed_feeds` |
 | `FEED_PAGE_SIZE` | number | 20 | `feed_page_size` |
-| `REPORT_SCAN_ROWS` | number | 0 — the calibrated cost knob; 0 makes the heavy route return immediately | `report_scan_rows` |
+| `REPORT_SCAN_ROWS` | number | 0 — the heavy route's CPU cost; 0 makes it return immediately (`dev.tfvars` sets 25000) | `report_scan_rows` |
 | `OTEL_SERVICE_NAME` | string | `ecs-rds-postgres-pool` | the project name |
 | `OTEL_SERVICE_INSTANCE_ID` | string | ECS task metadata supplies `service.instance.id` | **deliberately not set**: a constant would collapse every task onto one series. It is a manual override for when detection fails |
 | `OTLP_ENDPOINT` | string | no exporter; recorders are no-ops | the collector's Cloud Map name, port 4318 |
@@ -305,20 +304,21 @@ so the confound is visible in the ledger.
   it, and `service/test/generate-slo.test.js` cross-checks the two.
 - **`seed_on_boot` is one task, one shot.** The seed is neither idempotent nor lock-guarded: two
   tasks booting with it set insert twice the rows, and a redeploy doubles them again. Prefer
-  `./scripts/run-oneoff.sh node prisma/seed.js` (below) — a one-off task that runs once regardless of
+  `./scripts/seed.sh` (below) — a one-off task that runs once regardless of
   `desired_count` and leaves no boot flag to remember to turn back off.
-- **`report_scan_rows = 0` means uncalibrated.** [Calibrate](#phase-3--calibrate) sets it on the real
-  instance; until then the heavy route does no work.
+- **`report_scan_rows = 0` means the heavy route does no work.** `dev.tfvars` sets 25000 and
+  `report_sleep_ms = 320`; both are chosen, not measured. If the baseline shows the pool is not what
+  binds first (pool wait near zero while `DBLoadCPU` is high, or the reverse), edit the two lines,
+  re-apply, and re-run the baseline.
 - **`db_password` is not in any tfvars file on purpose.** It is `DB_PASSWORD` in the root `.env`
   (generate with `openssl rand -hex 24`); `.envrc` exports it as `TF_VAR_db_password` and
   `platform/` puts it in the shared HCP variable set, which is how remote runs receive it. After
   changing it, re-apply `platform/` (`terraform -chdir=platform apply`, from the repo root) before
   the next `/env up`. A validation requires 20–128 URL-safe characters.
-- **`pool_connection_timeout_ms` has no measured default** (plan decision D5). `dev.tfvars` carries
-  an unmeasured placeholder until [Freeze the thresholds](#phase-4--freeze-the-thresholds) replaces
-  it with the heavy class threshold plus a margin.
-- **The class thresholds in `slo.yaml` are `null`** until [Freeze the thresholds](#phase-4--freeze-the-thresholds),
-  and `npm run slo:check` exits non-zero until then — that is the guard, not a bug.
+- **`pool_connection_timeout_ms` is the heavy class threshold plus 100 ms** (plan decision D5):
+  1100 for the 1000 ms heavy threshold. Change them together.
+- **The class thresholds in `slo.yaml` are 50 / 100 / 1000 ms**.
+  `npm run slo:check` exits non-zero if any is ever set back to `null`.
 
 ## The service, locally
 
@@ -339,165 +339,151 @@ full DynamoDB Local loop).
 
 ## Phase 0 — Setup (already done once)
 
+Everything from here needs a real AWS account and costs money.
+
 ```bash
 cp .env.example .env              # AWS, Terraform Cloud, Grafana, k6 tokens
 direnv allow                      # from the repo root, and again after every .env edit
 terraform -chdir=platform apply   # the shared stack, once, from the repo root
 cd ecs-rds-postgres-pool
-(cd service && npm ci)
+(cd service && npm ci)            # all Node tooling lives in service/
 terraform -chdir=infra/main init
 ```
 
-Tool shells need `direnv exec <repo-root> <command>` — direnv itself is interactive-only. No project
-script may run `terraform apply` or `terraform destroy`: the `permissions.ask` rule in
-`.claude/settings.json` matches on command text, so an apply buried in a script would never reach the
-approval gate.
-
-## Phase 1 — Provision
+Provision, deploy the service into it, then seed once:
 
 ```bash
-/env up ecs-rds-postgres-pool       # plans infra/main, stops for approval before applying
-./scripts/deploy-service.sh         # build --platform linux/amd64 → push → force-new-deployment → health
+terraform -chdir=infra/main apply -var-file=dev.tfvars   # approval gate
+./scripts/deploy-service.sh                              # build amd64 → push → force new deployment → health
+./scripts/seed.sh              # ONCE; not idempotent
 ```
 
-**Terraform never rebuilds the container image.** Every change under `service/src/` needs
-`./scripts/deploy-service.sh` again, and skipping it fails silently — the service stays healthy while
-running old code. `--skip-build` rolls the service without a rebuild.
+Re-run `./scripts/deploy-service.sh` after **every** change under `service/src/` — Terraform does not
+rebuild the image, and skipping it fails silently (the service stays healthy on old code).
+`--skip-build` only rolls the service. The seed runs inside the VPC on a throwaway Fargate task built
+from the service's own task definition; nothing truncates `posts` first, so a second run doubles it.
+No script runs `terraform apply` or `destroy`: the `permissions.ask` rule matches command text, so an
+apply buried in a script would never reach the approval gate. Tool shells need
+`direnv exec <repo-root> <command>`; direnv itself is interactive-only.
 
-## Phase 2 — Seed
+When setup breaks, it is almost always one of these:
+
+| symptom | cause |
+|---|---|
+| `"organization" must be set … TF_CLOUD_ORGANIZATION` | direnv did not load — `direnv allow` at the repo root |
+| plan fails on `data.grafana_folder.root` | `terraform -chdir=platform apply` was skipped; it creates the workspace, variable set and the `high-load-test` Grafana folder |
+| `Error creating workspace … Name has already been taken` | the workspace was created by an earlier `init`; `terraform -chdir=platform import 'tfe_workspace.project["ecs-rds-postgres-pool"]' <org>/ecs-rds-postgres-pool`, then apply |
+| `upload-k6.sh`: "infra/main has no k6_project_id output" | the environment is not applied, so its k6 project does not exist — apply first |
+| workspace lands in the org's *default* project | `.env` is missing `TF_CLOUD_PROJECT=high-load-test` |
+| `Error: No configuration files` | bare `terraform apply` at the project root — use `-chdir=infra/main` |
+| `CannotPullContainerError` at task start | an arm64 image; the script builds `--platform linux/amd64` for a reason |
+| healthy service, still the old code | the image was not rebuilt — run `deploy-service.sh` |
+
+## Phase 1 — Is it alive?
 
 ```bash
-./scripts/run-oneoff.sh node prisma/seed.js
+BASE=$(terraform -chdir=infra/main output -raw base_url)
+curl -fsS "$BASE/healthz"                       # {"ok":true}
+terraform -chdir=infra/main output -raw psql    # a psql command; then: SELECT count(*) FROM posts;
 ```
 
-One shot, and **not idempotent** — nothing truncates `posts` first. Run it once, right after the
-first deploy, before any load test. It runs inside the VPC (the same reason
-[Calibrate](#phase-3--calibrate) does), on a throwaway Fargate task built from the service's own
-running task definition, so it leaves no infrastructure behind.
+## Phase 2 — Run a load test
 
-## Phase 3 — Calibrate
-
-Solves the heavy route's two knobs — `REPORT_SCAN_ROWS` (database CPU cost) and `REPORT_SLEEP_MS`
-(the rest of the hold, as wait rather than work) — so the mix-weighted mean hold lands on the
-calibrator's target. Must run **inside the VPC**, never from a laptop: it measures connection hold
-time, and an internet round trip would be measured as database time.
-
-```bash
-cd ecs-rds-postgres-pool
-MIX=$(cd service && node -e "
-  import('./scripts/generate-slo.js').then(m => {
-    const doc = m.loadSlo('../slo.yaml', undefined, { requireCapacityMix: true, requireThresholds: false });
-    process.stdout.write(JSON.stringify(doc.capacity.mix));
-  })")
-./scripts/run-oneoff.sh -e CAPACITY_MIX="$MIX" -e DB_VCPUS=2 -e TARGET_MEAN_HOLD_MS=20 \
-  -e TARGET_CPU_RELATIVE=0.5 node scripts/calibrate.js
-```
-
-`DB_VCPUS=2` is `db.t4g.micro`'s vCPU count; substitute the real reading if the instance class
-changes. Keep the whole JSON output — `holds`, `solved`, `search`, `knobs` — it is the evidence for
-whatever gets written into `dev.tfvars`, and no number from this step may be reported without it.
-Three outcomes:
-
-| outcome | what it means | what to do |
-|---|---|---|
-| `feasible: true`, search converged | the target is reachable on this instance | write `report_scan_rows` and `report_sleep_ms` into `dev.tfvars`, with the date and instance class in a comment beside them, and re-deploy |
-| `feasible: false` | the light routes alone spend the whole CPU budget | **stop and report.** Re-examine the instance class or the pool size before running any comparison |
-| search pinned at `seed_rows` | the knob cannot reach the CPU target on a table this size | **stop and report.** Raise `seed_rows` (watching the working set against `shared_buffers`) and re-run |
-
-**Do not round a stop into a pass.** A calibration that did not converge makes every later number
-meaningless. The calibration is **instance-specific**: recreating the environment on a different
-instance class means re-running this phase.
-
-## Phase 4 — Freeze the thresholds
-
-1. **Probe.** A throwaway k6 script, written directly under `infra/k6/tests/` (it imports
-   `./lib/request.js` and `./lib/env.js` by relative path) and deleted immediately after — it carries
-   no thresholds and must never be confused with `discovery`/`constant`/`stress` or be committed. Run
-   it locally (`k6 run`, not `k6 cloud run`) at a fixed low rate for several minutes: low enough to be
-   far below any plausible knee, so it measures **unloaded** latency, not capacity.
-2. **Read the server-side p99 per class**, in Grafana Explore over the probe's own window, from
-   `http_server_request_duration_seconds` grouped by `class`. Also check `db.pool.wait` — near zero at
-   that rate is the evidence these are unloaded numbers.
-3. **Freeze**: `threshold_ms = 3 × the unloaded server-side p99` per class, rounded up to a clean
-   number (`slo.yaml`'s comment carries the exact rounding rule), written into `slo.yaml`'s `classes`
-   block in place of the `null`s. 3× because a threshold must not be breached by jitter at low load,
-   while pool queueing — which grows steeply as the pool saturates — still crosses it near the knee.
-4. **Set the pool's wait limit** from the heavy threshold: `pool_connection_timeout_ms = heavy + 100`
-   in `dev.tfvars`, replacing the unmeasured placeholder (plan decision D5) — just above the heavy
-   threshold, so an over-deep queue fails fast as a 5xx instead of growing latency without bound.
-5. **Generate and apply**:
-   ```bash
-   cd service && npm run slo:generate && npm run slo:check
-   ```
-   This is the only path that writes `infra/grafana/locals.tf`, `infra/grafana/alerts.tf` and
-   `infra/k6/tests/lib/slo.js` — none of the three exist before this step. `slo:check` has been red
-   **on purpose** since before this plan; it must exit 0 after this step, and stays red if you skip
-   it. An apply of `infra/main` (approval gate) is what moves the generated rules into Grafana — see
-   [How to move the infrastructure for the SLO](#how-to-move-the-infrastructure-for-the-slo).
-
-**The load profiles cannot run before this phase.** `discovery.js`, `constant.js` and `stress.js`
-already import `infra/k6/tests/lib/slo.js` for their VU sizing (Little's law: VUs = rate × the
-mix-weighted class threshold) — the import fails until Step 5 above generates that file.
-
-## Phase 5 — Load test
-
-Three shapes, in this order — B and C need the rate A discovers:
+Three shapes, in this order — B and C need the number A produces:
 
 | shape | file | what it's for |
 |---|---|---|
-| **A — discovery** | `infra/k6/tests/discovery.js` | ramps the request rate in fixed steps until a step's threshold breaches. **The knee is the lowest step whose threshold reads `true`** — k6 reports a threshold as *breached*, not *passed*, so the boolean is `true` when it was crossed. |
-| **B — constant** | `infra/k6/tests/constant.js` | holds at the discovered knee. The repeatable baseline for before/after comparison. |
+| **A — discovery** | `infra/k6/tests/discovery.js` | ramps the request rate in fixed steps, one threshold per step. **The knee is the lowest step whose threshold breached.** |
+| **B — constant** | `infra/k6/tests/constant.js` | holds at the discovered rate. The repeatable baseline for before/after comparison. |
 | **C — stress** | `infra/k6/tests/stress.js` | above the knee. Deliberately breaches the SLO — the only way the saturation and burn-rate alerts get tested. |
 
-**1. Upload the profiles.** A UI-started run executes the **archive stored in the cloud**, never the
-file on disk, and nothing warns you when it is stale:
+The class thresholds the runs are judged against are in `slo.yaml` (fast 50 ms, standard 100 ms,
+heavy 1000 ms) and drawn on the dashboard: row 6 → **Server p99 per class vs its threshold**. After
+editing them: `(cd service && npm run slo:generate && npm run slo:check)`, then apply `infra/main`.
+**Changing a threshold invalidates every earlier result.**
+
+**1. Upload the profiles.** A UI run executes the **archive stored in the cloud**, never the file on
+disk, and nothing warns you when it is stale:
 
 ```bash
-./scripts/upload-k6.sh --check      # what is uploaded, and is any of it stale?
-./scripts/upload-k6.sh              # discovery only — the knee is not known yet
-./scripts/upload-k6.sh --rate <knee>   # all three, constant/stress pinned to the measured knee
+./scripts/upload-k6.sh --check          # what is up there, and is any of it stale?
+./scripts/upload-k6.sh                  # discovery only — the knee is not known yet
+./scripts/upload-k6.sh --rate <knee>    # all three, constant/stress pinned to the measured knee
 ```
 
-Without `--rate`, `constant` and `stress` are not uploaded at all — archived at the placeholder rate
-and tagged `rate_source=default`, that would not be a capacity measurement, so the script refuses to
-pretend otherwise.
+It takes `BASE_URL` from `terraform output` and bakes it and `RATE` into the archive. Without
+`--rate`, `constant` and `stress` are not uploaded: archived at the placeholder rate and tagged
+`rate_source=default`, they would not be a capacity measurement.
 
 **2. Check the run gate before every run.** This instance runs in unlimited burst-credit mode: record
 `CPUCreditBalance` and `CPUSurplusCreditBalance` first — a run does not start until the balance is
-full, and a run that depletes it (`CPUSurplusCreditBalance > 0`, the saturation rule above) is
-disqualified and re-run (spec §7.2). Also record `SELECT count(*) FROM posts` — the `posts rows`
-column in `results.md`.
+full, and a run that makes `CPUSurplusCreditBalance > 0` is disqualified and re-run. Also record
+`SELECT count(*) FROM posts` (the `posts rows` column in `results.md`).
 
-**3. Run it**, capturing the exit code on the k6 line itself — behind a pipe you get the pipe's
-status:
+**3. Start the run** from the [k6 projects page][k6] → **ecs-rds-postgres-pool**. When discovery
+finishes, open its thresholds: each step has one named `slo_met{scenario:rps_N}`, and **k6 reports a
+threshold as breached, not passed — the boolean is `true` when it was crossed.** The knee is the
+lowest step that breached; `RATE` for B and C is the step before it.
+
+**From a terminal instead** — no upload needed, `-e` wins over everything:
 
 ```bash
-K6_CLOUD_PROJECT_ID="$K6_PROJECT" direnv exec . k6 cloud run \
-  --summary-export=/tmp/k6-rds-<shape>.json -e BASE_URL="$BASE_URL" [-e RATE=<rate>] \
-  infra/k6/tests/<shape>.js
-echo "exit: $?"        # 0 = every threshold held, 99 = one breached
+BASE_URL=$(terraform -chdir=infra/main output -json | jq -r '.base_url.value // empty')
+k6 cloud run -e BASE_URL="$BASE_URL" -e RATE=<knee> infra/k6/tests/constant.js
+echo "exit=$?"                     # 0 = the gates held, 99 = one breached
 ```
 
-For discovery, read a threshold's boolean the same inverted way: `true` = breached, `false` =
-satisfied. For `constant` at the knee, expect exit `0`. For `stress`, expect exit `99` with `slo_met`
-breached — the red half of the red/green loop this repo substitutes for unit tests on infrastructure:
-proof the assertion can fail before any knob is claimed to have fixed it.
+Capture that exit code on the k6 line itself — behind a pipe you get the pipe's status. Four
+thresholds decide it: `slo_met` (95% meet their class threshold), `slo_met_tail` (99% meet 3×),
+`http_req_failed` (< 0.1%), and `dropped_iterations` (zero — a run that ran out of VUs delivered less
+than `RATE`). For `constant` at the knee expect exit `0`; for `stress` expect `99` with `slo_met`
+breached — proof the SLO can fail.
 
-## Phase 6 — Read the result
+## Phase 3 — Read the result
 
-Two attainment columns, never one number in both:
+Set the dashboard time range to the run's window.
 
-| column | comes from | why it differs from the other |
-|---|---|---|
-| **k6 attainment** | the run's own `slo_met` rate | client-side: includes the client↔ALB round trip, which the server-side number excludes |
-| **service attainment** | the Grafana SLI query over the run's own window — the same PromQL the burn-rate alert rules use, restricted to classified traffic | server-side: handler entry to response finish only |
+| question | where |
+|---|---|
+| What rate did we reach, client-side? | [k6][k6] → **ecs-rds-postgres-pool** → the run |
+| Did the SLO hold, server-side? | [dashboard][dash] → row 6 → **SLI ratio**, and **Server p99 per class vs its threshold** |
+| **Was the pool queueing?** | [dashboard][dash] → row 3b → **Pool wait p99 by class** — read this first |
+| Was the database the constraint? | [dashboard][dash] → row 1 → **DBLoad relative to vCPUs** (above 1.0 = yes) |
+| How close to the connection ceiling? | [dashboard][dash] → row 3 → **Connections vs the connection ceiling** |
+| Did the burn-rate alerts fire? | [alert rules][alerts] |
+| How much budget did it cost? | [SLO app][slo] |
 
-Set the dashboard's time range to the run's window and read [§3](#3-what-is-the-bottleneck) beside
-it: was the pool queueing, was the database saturated, or was it both (in which case the run measured
-neither and should not be recorded as a result)? Compute `budget burn ×` from the **service** figure:
-observed miss rate ÷ the sustainable miss rate for that objective.
+Two attainment columns, never one number in both: **k6 attainment** (the run's own `slo_met`;
+client-side, includes the client↔ALB round trip) and **service attainment** (the Grafana SLI over the
+run's window; handler entry to response finish only). Compute `budget burn ×` from the service figure:
+observed miss rate ÷ the sustainable miss rate for that objective. If the pool queued **and** the
+database was saturated, the run measured neither and should not be recorded as a result.
 
-## Phase 7 — Record
+## Phase 4 — Improve: release the pool (knob 1)
+
+**One change per run, from the same commit.** Baseline is `pool_size = 5`, `desired_count = 1`,
+`proxy_enabled = false`. Set `pool_size = 25` in `infra/main/dev.tfvars` and apply — **approval
+gate.** The bottleneck should move from pool wait toward database CPU.
+
+## Phase 5 — Re-measure identically
+
+Check the run gate (credits full), re-run **B and C unchanged** — same `RATE`, same scripts, same
+thresholds — and re-read Phase 3.
+
+## Phase 6 — Improve: more tasks, then the proxy (knobs 2 and 3)
+
+Only one per run. **Knob 2:** `desired_count = 4` (25 × 4 = 100 connections against an estimated
+~112 ceiling) — first run `SHOW max_connections` and re-derive `max_connections_alert`, as in
+[The knob sequence](#the-knob-sequence). **Knob 3:** `proxy_enabled = true`, last, after setting
+`proxy_borrow_latency_threshold`; destroy it promptly (~40% of the idle bill). Each is an apply —
+**approval gate.** The class thresholds are a last resort and only when the number was wrong to begin
+with: changing one to make a run pass is moving the goalposts.
+
+## Phase 7 — Re-measure again
+
+Check the run gate, re-run B and C, read Phase 3. Record the new ceiling and the new $/hour.
+
+## Phase 8 — Record the results
 
 Append one row per run to `results.md` (`/loadtest` does this, including for UI-started runs). Every
 figure needs the run that produced it — the k6 summary JSON or the Grafana query. Record: what
@@ -505,15 +491,20 @@ distinguished this run (the single infra change), rate achieved, both attainment
 class, error rate, error budget burned, whether alerts fired, pool wait p99 and the waiting-gauge
 peak, `DBLoadCPU ÷ vCPUs` and `DBLoadRelativeToNumVCPUs`, `DatabaseConnections`, the credit balance,
 **`SELECT count(*) FROM posts` taken just before the run**, and the `$/hr` at the time (an estimate
-until `pricing.json` exists — see [Cost](#cost)).
+until `pricing.json` exists — see [Cost](#cost)). A result is never "N RPS": it is "N RPS at the
+55/15/25/5 mix".
 
-## Phase 8 — Tear down
+## Phase 9 — Tear down
 
 ```bash
-/env down ecs-rds-postgres-pool     # approval gate; slow -- an RDS instance takes several minutes
+terraform -chdir=infra/main destroy -var-file=dev.tfvars     # approval gate; an RDS instance takes minutes
+
+aws resourcegroupstaggingapi get-resources \
+  --tag-filters Key=Project,Values=ecs-rds-postgres-pool \
+  --query 'ResourceTagMappingList[].ResourceARN' --output table
 ```
 
-Then the billable-resource sweep the skill runs, and a manual check by name for anything the sweep
+Then the billable-resource sweep the `/env` skill runs, and a manual check by name for anything it
 might miss: the RDS **final snapshot** (`skip_final_snapshot = true` should prevent it), automated
 backups, the `/aws/rds/instance/ecs-rds-postgres-pool/postgresql` and `/ecs/ecs-rds-postgres-pool` log
 groups (and `/aws/rds/proxy/ecs-rds-postgres-pool` if knob 3 ran), the DB subnet and parameter groups,
@@ -560,9 +551,8 @@ sibling project carries.
 
 **Which knob to reach for when a class misses its threshold:** the pool first (knob 1 — this
 project's whole premise is that the pool binds before the database does), then task count (knob 2),
-then the proxy (knob 3). The class threshold itself is a last resort, and only when the calibration
-that produced it was wrong (a different instance class, a re-run of
-[Freeze the thresholds](#phase-4--freeze-the-thresholds)) — **changing a threshold to make a run pass
+then the proxy (knob 3). The class threshold itself is a last resort, and only when the number
+was wrong to begin with (a different instance class, a re-think) — **changing a threshold to make a run pass
 is moving the goalposts**, and it needs a recorded reason in the commit, not a silent edit.
 
 ---
