@@ -27,6 +27,7 @@ has been measured, because nothing has run.
 | `https://k0valchuk.grafana.net/dashboards` | folder `high-load-test / ecs-rds-postgres-pool` → dashboard **ecs-rds-postgres-pool — attribution**. Rows 1, 3, 3b, 4, 5, 6, 7; references below name the row and panel. |
 | `https://k0valchuk.grafana.net/alerting/list` | folder `high-load-test / ecs-rds-postgres-pool` → the burn-rate rules (generated), the SLI-absent rule (generated) and the five hand-written database-saturation rules — see [§6](#6-is-it-about-to-break) |
 | `https://k0valchuk.grafana.net/a/grafana-slo-app/slos` | the SLO entry for this project's `latency-classes` and `availability` objectives — error budget and 7-day attainment. Exists once `infra/grafana/slo.tf` is generated and applied |
+| [**Traces — all requests, last hour**](https://k0valchuk.grafana.net/explore?schemaVersion=1&orgId=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22grafanacloud-traces%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22grafanacloud-traces%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7B%20resource.service.name%20%3D%20%5C%22ecs-rds-postgres-pool%5C%22%20%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D%7D) | Grafana Cloud **Tempo**, opened straight in Explore with the TraceQL query pre-filled. Click a row to open the trace; how to read it is in [Reading a trace](#reading-a-trace) |
 | `https://k0valchuk.grafana.net/a/k6-app/projects` | the project named **ecs-rds-postgres-pool** → its k6 tests and the runs since the last `/env up` (the project is destroyed with the environment, so it is absent between runs) |
 
 ---
@@ -95,6 +96,42 @@ Four reading rules, in order of how often they get read backwards:
   any alert (one rule per metric, and computing the ratio would need a math expression across two —
   see [§6](#6-is-it-about-to-break)); read it directly from the CloudWatch console, filtered to this
   instance, alongside the dashboard's `DBLoadRelativeToNumVCPUs` panel.
+
+## Reading a trace
+
+**Where:** Grafana Cloud → Explore → data source **`grafanacloud-k0valchuk-traces`** (Tempo). Direct
+link, query pre-filled: [all requests, last hour](https://k0valchuk.grafana.net/explore?schemaVersion=1&orgId=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22grafanacloud-traces%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22grafanacloud-traces%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7B%20resource.service.name%20%3D%20%5C%22ecs-rds-postgres-pool%5C%22%20%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D%7D).
+
+**How to open a trace:**
+
+1. Open the link above (or Explore → pick the data source above → query type **TraceQL**).
+2. Set the time range to the run's window — traces are only as old as the run.
+3. Run a query (examples below) and click a row in the results table.
+4. The trace opens as a waterfall: the top bar is the whole request, the indented bars are its
+   children. Click `pg.query:…` and read the **Attributes** panel → `db.query.text` for the SQL.
+5. To find the worst case: query `duration > 1s`, sort the table by *Duration*, open the first row.
+
+Every request except `/healthz` is traced at `trace_sample_ratio` (default 1). Each trace is one server
+span named `<METHOD> <route template>` carrying `class`, with these children:
+
+| span | means |
+|---|---|
+| `pg-pool.connect` | time waiting for a pool connection — the pool queue, for this one request |
+| `pg.connect` | a *new* connection being opened (TCP + TLS + auth); absent when the pool reused one |
+| `pg.query:…` | one SQL statement; `db.query.text` is its text with `$1` placeholders, never the values |
+
+Gaps between children are Prisma's in-process work or event-loop delay — there is no span for them yet
+(manual spans are a planned second phase). Boot-time work (pool warm-up, seed, migrations' statements)
+also appears, as parentless `pg.connect` / `pg.query` traces. In Explore, with the Tempo data source:
+
+- slow requests: `{ resource.service.name = "ecs-rds-postgres-pool" && duration > 1s }`
+- slow heavy-class requests: `{ resource.service.name = "ecs-rds-postgres-pool" && span.class = "heavy" && duration > 500ms }`
+- the pool queue alone: `{ name = "pg-pool.connect" && duration > 100ms }`
+- one statement: `{ span.db.query.text =~ ".*WITH scanned.*" }`
+
+Tracing runs inside the task under test, so `trace_sample_ratio` is part of the configuration: it is in
+the `knobs` output and must be the same across runs you compare. The Grafana access-policy token needs
+`traces:write` as well as `metrics:write`.
 
 ## 6. Is it about to break?
 
@@ -178,7 +215,7 @@ skipping the precondition that checks it.
 | `rds.tf` | PostgreSQL 16 on `db.t4g.micro`, gp3, Performance Insights (free-tier retention), no final snapshot, no backups |
 | `proxy.tf` | RDS Proxy, its Secrets Manager secret and IAM role — all `count = proxy_enabled ? 1 : 0`, so it costs nothing until knob 3 |
 | `ecs.tf` `alb.tf` `ecr.tf` | the app service behind a public ALB (HTTP, no auth), its task definition and image repository |
-| `collector.tf` | the Grafana Alloy gateway collector the tasks export OTLP to |
+| `collector.tf` | the Grafana Alloy gateway collector the tasks export OTLP to — metrics and, since 2026-10-12, traces (spans from `tracing.js` go through the same collector to Tempo) |
 | `heartbeat.tf` | a Lambda on a one-minute schedule, so the SLI has a population between load tests |
 | `grafana.tf` | calls `../grafana` (dashboard, saturation and canary alert rules) and `../k6` (the Grafana Cloud k6 project) |
 
@@ -194,6 +231,7 @@ any network. The password is `DB_PASSWORD` in the root `.env`, a random value yo
 | **Service URL** | `terraform -chdir=infra/main output -json \| jq -r .base_url.value` — **deliberately not written here as a literal, and not in `.env` either.** This repo is public, the ALB is internet-facing with no auth, and a copied hostname is only ever the stale one after a rebuild. Terraform owns it |
 | **Terraform Cloud** | https://app.terraform.io/app/failwin/workspaces/ecs-rds-postgres-pool — org `failwin`, project `high-load-test`, workspace `ecs-rds-postgres-pool` |
 | **Grafana Cloud k6** | https://k0valchuk.grafana.net/a/k6-app/projects → **ecs-rds-postgres-pool**, in the `high-load-test / ecs-rds-postgres-pool` folder |
+| **Traces (Tempo)** | [Explore → all requests, last hour](https://k0valchuk.grafana.net/explore?schemaVersion=1&orgId=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22grafanacloud-traces%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22grafanacloud-traces%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7B%20resource.service.name%20%3D%20%5C%22ecs-rds-postgres-pool%5C%22%20%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D%7D) · [slow (> 1 s)](https://k0valchuk.grafana.net/explore?schemaVersion=1&orgId=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22grafanacloud-traces%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22grafanacloud-traces%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7B%20resource.service.name%20%3D%20%5C%22ecs-rds-postgres-pool%5C%22%20%26%26%20duration%20%3E%201s%20%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D%7D) · [heavy class](https://k0valchuk.grafana.net/explore?schemaVersion=1&orgId=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22grafanacloud-traces%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22grafanacloud-traces%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7B%20resource.service.name%20%3D%20%5C%22ecs-rds-postgres-pool%5C%22%20%26%26%20span.class%20%3D%20%5C%22heavy%5C%22%20%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D%7D). Data source `grafanacloud-k0valchuk-traces` (uid `grafanacloud-traces`) in the `k0valchuk` stack. Retention is the Grafana Cloud free tier's, not this project's |
 | **ECS service** | https://eu-central-1.console.aws.amazon.com/ecs/v2/clusters/ecs-rds-postgres-pool/services?region=eu-central-1 |
 | **RDS instance** | https://eu-central-1.console.aws.amazon.com/rds/home?region=eu-central-1#database:id=ecs-rds-postgres-pool |
 | **CloudWatch logs** | `/ecs/ecs-rds-postgres-pool` (app), `/ecs/ecs-rds-postgres-pool-collector` (Alloy collector), `/aws/rds/instance/ecs-rds-postgres-pool/postgresql` (database), `/aws/rds/proxy/ecs-rds-postgres-pool` (proxy, knob 3 only) — 1-day retention (`var.log_retention_days`, `ecs.tf`/`collector.tf`/`rds.tf`/`proxy.tf`) |
@@ -243,6 +281,7 @@ its default — so a change here is a change in both files.
 | `OTEL_SERVICE_NAME` | string | `ecs-rds-postgres-pool` | the project name |
 | `OTEL_SERVICE_INSTANCE_ID` | string | ECS task metadata supplies `service.instance.id` | **deliberately not set**: a constant would collapse every task onto one series. It is a manual override for when detection fails |
 | `OTLP_ENDPOINT` | string | no exporter; recorders are no-ops | the collector's Cloud Map name, port 4318 |
+| `TRACE_SAMPLE_RATIO` | number 0..1 | 1 (every request); out of range fails the boot | `trace_sample_ratio` |
 | `OTEL_EXPORT_INTERVAL_MS` | number | 15000 | not set |
 | `METRICS_NAMESPACE` | string | no CloudWatch publisher, no AWS client | the project name |
 | `METRICS_INTERVAL_MS` | number | 10000 | not set |
@@ -448,6 +487,7 @@ Set the dashboard time range to the run's window.
 | What rate did we reach, client-side? | [k6][k6] → **ecs-rds-postgres-pool** → the run |
 | Did the SLO hold, server-side? | [dashboard][dash] → row 6 → **SLI ratio**, and **Server p99 per class vs its threshold** |
 | **Was the pool queueing?** | [dashboard][dash] → row 3b → **Pool wait p99 by class** — read this first |
+| **Which request was slow, and which SQL statement was it waiting on?** | [Tempo][traces] → [Reading a trace](#reading-a-trace); open the slowest trace of the run's window |
 | Was the database the constraint? | [dashboard][dash] → row 1 → **DBLoad relative to vCPUs** (above 1.0 = yes) |
 | How close to the connection ceiling? | [dashboard][dash] → row 3 → **Connections vs the connection ceiling** |
 | Did the burn-rate alerts fire? | [alert rules][alerts] |
@@ -607,3 +647,4 @@ No runs yet — this plan produces the first numbers.
 [alerts]: https://k0valchuk.grafana.net/alerting/list
 [slo]: https://k0valchuk.grafana.net/a/grafana-slo-app/slos
 [k6]: https://k0valchuk.grafana.net/a/k6-app/projects
+[traces]: https://k0valchuk.grafana.net/explore?schemaVersion=1&orgId=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22grafanacloud-traces%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22grafanacloud-traces%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22%7B%20resource.service.name%20%3D%20%5C%22ecs-rds-postgres-pool%5C%22%20%7D%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-1h%22%2C%22to%22%3A%22now%22%7D%7D%7D

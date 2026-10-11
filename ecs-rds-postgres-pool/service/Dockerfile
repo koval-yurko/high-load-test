@@ -47,4 +47,4 @@ ADD --checksum=sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9d
     https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
     /app/certs/rds-global-bundle.pem
 USER node
-CMD ["node", "src/server.js"]
+CMD ["node", "--import", "./src/tracing.js", "src/server.js"]

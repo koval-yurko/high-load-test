@@ -132,6 +132,9 @@ export function buildSsl(config, readFile = readFileSync) {
   return { ca, secureContext: tls.createSecureContext({ ca }), rejectUnauthorized: true };
 }
 
+// Connections opened concurrently while warming; see warm() for why not all at once.
+const WARM_BATCH = 10;
+
 export function createPool({ config, onWait }) {
   const pool = new pg.Pool({
     connectionString: config.databaseUrl,
@@ -155,9 +158,16 @@ export function createPool({ config, onWait }) {
      * a TLS handshake as pool wait (spec 4.2).
      */
     async warm() {
-      const clients = await Promise.all(
-        Array.from({ length: config.poolMax }, () => pool.connect()),
-      );
+      // In batches, not all at once: the TLS handshakes are serialised on one
+      // event loop, and pool.connect() starts its connectionTimeoutMillis clock
+      // when it is CALLED. All poolMax at once on a 0.5 vCPU task put the last
+      // handshakes past the timeout (40 booted, 50 did not). Every client is held
+      // until the end so each batch really opens new connections.
+      const clients = [];
+      for (let opened = 0; opened < config.poolMax; opened += WARM_BATCH) {
+        const n = Math.min(WARM_BATCH, config.poolMax - opened);
+        clients.push(...(await Promise.all(Array.from({ length: n }, () => pool.connect()))));
+      }
       for (const c of clients) c.release();
     },
     stats: () => ({

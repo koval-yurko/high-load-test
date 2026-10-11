@@ -67,3 +67,19 @@ test('region defaults to eu-central-1 and AWS_REGION overrides it', () => {
   assert.equal(loadConfig(base).region, 'eu-central-1');
   assert.equal(loadConfig({ ...base, AWS_REGION: 'us-east-1' }).region, 'us-east-1');
 });
+
+test('TRACE_SAMPLE_RATIO defaults to 1 and treats empty as absent', () => {
+  assert.equal(loadConfig(base).traceSampleRatio, 1);
+  assert.equal(loadConfig({ ...base, TRACE_SAMPLE_RATIO: '' }).traceSampleRatio, 1);
+});
+
+test('TRACE_SAMPLE_RATIO is read as a fraction', () => {
+  assert.equal(loadConfig({ ...base, TRACE_SAMPLE_RATIO: '0.25' }).traceSampleRatio, 0.25);
+  assert.equal(loadConfig({ ...base, TRACE_SAMPLE_RATIO: '0' }).traceSampleRatio, 0);
+});
+
+test('TRACE_SAMPLE_RATIO outside 0..1 or non-numeric fails the boot by name', () => {
+  for (const bad of ['1.5', '-1', 'abc']) {
+    assert.throws(() => loadConfig({ ...base, TRACE_SAMPLE_RATIO: bad }), /TRACE_SAMPLE_RATIO/, bad);
+  }
+});

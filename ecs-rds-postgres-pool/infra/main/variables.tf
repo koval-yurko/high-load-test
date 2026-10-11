@@ -83,7 +83,7 @@ variable "grafana_otlp_username" {
 }
 
 variable "grafana_otlp_password" {
-  description = "Grafana Cloud access policy token, metrics:write scope only."
+  description = "Grafana Cloud access policy token. Needs the metrics:write AND traces:write scopes (traces:write added 2026-10-11 for service tracing)."
   type        = string
   sensitive   = true
 }
@@ -160,6 +160,17 @@ variable "pool_size" {
 variable "pool_connection_timeout_ms" {
   description = "How long a request waits for a connection before failing, so a saturated pool produces 5xx the availability objective catches rather than an unbounded queue visible only as latency. NO DEFAULT ON PURPOSE (plan decision D5): the right value is the heavy class threshold plus a margin, and that threshold does not exist until plan 3. dev.tfvars carries a labelled placeholder until then."
   type        = number
+}
+
+variable "trace_sample_ratio" {
+  description = "Fraction of requests traced, 0..1. 1 = every request, the default, chosen deliberately: slow requests are the point. Tracing runs inside the task under test, so it is part of the configuration being measured -- hold it constant across runs being compared; it is recorded in the knobs output."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.trace_sample_ratio >= 0 && var.trace_sample_ratio <= 1
+    error_message = "trace_sample_ratio must be between 0 and 1."
+  }
 }
 
 variable "proxy_enabled" {

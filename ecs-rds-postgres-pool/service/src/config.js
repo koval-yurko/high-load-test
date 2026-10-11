@@ -10,6 +10,13 @@ function num(env, key, dflt) {
   return n;
 }
 
+// A fraction: num() already rejects negatives and non-numbers; this adds the ceiling.
+function ratio(env, key, dflt) {
+  const n = num(env, key, dflt);
+  if (n > 1) throw new Error(`${key} must be between 0 and 1, got ${JSON.stringify(env[key])}`);
+  return n;
+}
+
 const flag = (env, key) => env[key] === '1';
 
 export function loadConfig(env = process.env) {
@@ -59,6 +66,9 @@ export function loadConfig(env = process.env) {
     // what lets every test run with no collector present.
     otlpEndpoint: env.OTLP_ENDPOINT || undefined,
     exportIntervalMs: num(env, 'OTEL_EXPORT_INTERVAL_MS', 15_000),
+    // Fraction of requests traced. 1 = every request (a deliberate choice: the
+    // slow ones are the point). Lower it with the Terraform knob, not by editing code.
+    traceSampleRatio: ratio(env, 'TRACE_SAMPLE_RATIO', 1),
     // Same pattern: absent => no CloudWatch publisher and no AWS client.
     metricsNamespace: env.METRICS_NAMESPACE || undefined,
     metricsIntervalMs: num(env, 'METRICS_INTERVAL_MS', 10_000),

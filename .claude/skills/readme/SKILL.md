@@ -31,8 +31,8 @@ place in the next.
    only where a reader needs it to act; when it changes, grep the README for the old number.
 7. **Terraform apply/destroy are approval gates.** Mark each one `approval gate` in the command's
    comment. No project script runs `terraform apply` or `destroy`.
-8. **Reference-style links** for the four Grafana/k6 URLs, defined once at the bottom: `[dash]`,
-   `[alerts]`, `[slo]`, `[k6]`.
+8. **Reference-style links** for the Grafana/k6 URLs, defined once at the bottom: `[dash]`,
+   `[alerts]`, `[slo]`, `[k6]` and, when the project emits traces, `[traces]` (the Explore deep link).
 9. **Use `they/them`** for anyone whose pronouns are not stated, and no first person.
 
 ## Structure (in this order)
@@ -41,15 +41,18 @@ place in the next.
 # <project>
   Intro: what it is, the question it answers, the method (one change at a time), idle cost.
   "Nothing is deployed yet" if true.
-## Where to look            table: open | then   (dashboard, alert rules, SLO app, k6 projects)
+## Where to look            table: open | then   (dashboard, alert rules, SLO app, traces if any, k6 projects)
 ---
 ## 1. Is the service up?          check | where, Good / Bad
 ## 2. Are we meeting the SLO?     the SLI panel, server- vs client-side, error budget, window
 ## 3. What is the bottleneck?     the two metrics read side by side, and the trap in each direction
+## Reading a trace              only if the service emits traces: where, how to open one, the span
+                                table, TraceQL examples, the sampling knob and what it costs
 ## 4. Is it about to break?       the alert rules table, burn rates, why SLI-absent exists
 ---
 # Runbook
-## Where everything lives         service URL (from terraform output, never in the repo), TFC, ECS, DB, logs
+## Where everything lives         service URL (from terraform output, never in the repo), TFC, ECS, DB, logs,
+                                 traces (Explore deep link + the Tempo data source name and uid)
 ## <Service endpoints | What it provisions | environment-variable contract>   as the scenario needs
 ## <The knob sequence>            only if the project turns more than one knob; table of phase -> tfvars change
 ## Configuration notes that bite   one bullet per trap; each says the symptom
@@ -80,6 +83,23 @@ renumber everything after, fixing every link to a renumbered anchor (`grep -n "p
 
 ## Section details that are easy to get wrong
 
+- **Traces (only when the service emits them).** Four things, each learned the hard way:
+  - *Where:* give the Tempo data source **name and uid** read from the Grafana API
+    (`GET /api/datasources`, `type == "tempo"`), not guessed, and an Explore deep link with the TraceQL
+    query pre-filled (a `panes` JSON in the URL: `datasource`, `queries[].queryType = "traceql"`).
+  - *How to open:* numbered steps a first-time reader can follow — open the link, set the time range
+    to the run's window, run a query, click a row, click the SQL span and read its attributes, sort by
+    duration to find the worst one.
+  - *Attribute names come from a real trace, never from library docs.* The pg instrumentation emits the
+    statement as `db.query.text` on current versions and `db.statement` on older ones; the first
+    README claimed the latter and its TraceQL example matched nothing. Query the deployed Tempo and
+    copy the key it returns.
+  - *What is not covered.* Auto-instrumentation gives the request, the pool wait and the SQL; it does
+    not give Prisma's in-process work, body parsing or response serialization. Say which gaps exist
+    so a gap in the waterfall is not read as an idle service.
+  - *Sampling is part of the configuration.* Name the ratio knob, its default, and that it must be
+    identical across runs being compared, because tracing runs inside the task under test.
+
 - **Phase 2 run gate.** State the condition under which a run is not recordable (DynamoDB: 6 minutes
   to drain the burst bucket; RDS T-class: `CPUCreditBalance` full and `CPUSurplusCreditBalance` zero)
   and that `SELECT count(*)` / table size is recorded before the run.
@@ -98,6 +118,8 @@ renumber everything after, fixing every link to a renumbered anchor (`grep -n "p
 - **Tear down.** `terraform destroy` then the tag query, then the survivors by name (final snapshots,
   log groups, EIPs, NAT, the Grafana k6 project).
 - **Service URL** comes from `terraform output`, never from the repo or `.env`.
+- **Phase 3 table.** When traces exist, add the row *which request was slow and which SQL was it
+  waiting on?* pointing at `[traces]`; it is the only place a per-request answer lives.
 
 ## Procedure
 
@@ -108,6 +130,8 @@ renumber everything after, fixing every link to a renumbered anchor (`grep -n "p
 3. Check every script, flag and output name mentioned actually exists (`ls scripts`,
    `grep -n 'output "' infra/main/outputs.tf`).
 4. Check every internal link: `grep -n "](#" README.md`, then confirm each anchor has its heading.
-5. Check the project name is spelled the same everywhere — it is the `Project` tag value and the
+5. If the service emits traces, open one real trace and confirm every span name and attribute key the
+   README mentions appears in it, and that the Explore link actually opens on the right data source.
+6. Check the project name is spelled the same everywhere — it is the `Project` tag value and the
    commit scope.
-6. Commit as `docs(<project>): ...` per the Conventional Commits table in CLAUDE.md.
+7. Commit as `docs(<project>): ...` per the Conventional Commits table in CLAUDE.md.
