@@ -16,27 +16,25 @@ instance_class    = "db.t4g.micro"
 allocated_storage = 20
 
 # --- the measurement parameters ---
-seed_rows  = 50000 # x ~1 KB must stay inside shared_buffers
-seed_feeds = 16
+seed_rows        = 50000 # x ~1 KB must stay inside shared_buffers
+seed_feeds       = 16
 
-# The heavy route's workload, fixed here and deployed with the service. Chosen, not
-# measured: ~25 ms of database CPU plus ~320 ms of wait gives a ~345 ms hold on a
-# 5% share of the mix, so the mean hold is ~20 ms and the pool of 5 binds near
-# 250 rps with the database around half its CPU. If the baseline run shows
-# otherwise (pool wait and DBLoadCPU on the dashboard), edit these two numbers --
-# and re-run the baseline, because every later row is compared against it.
+# The heavy route's workload, fixed here and deployed with the service: a pure CPU
+# scan, no wait. Chosen, not measured -- the hold is whatever 25000 rows cost, and
+# a longer one comes from more seed_rows plus a bigger scan, not from a sleep.
+# Check pool wait and DBLoadCPU on the dashboard, and re-run the baseline after
+# any change, because every later row is compared against it.
 report_scan_rows = 25000
-report_sleep_ms  = 320
 
-feed_page_size = 20
+feed_page_size   = 20
 
 # --- boot behaviour. seed_on_boot is one task, one shot: it is not idempotent. ---
 migrate_on_boot = true
 seed_on_boot    = false
 
 # --- the task ---
-task_cpu    = 256
-task_memory = 512
+task_cpu    = 512
+task_memory = 1024 # Fargate: 1024 CPU needs 2048-8192 MiB
 
 # --- the pool's wait limit (plan decision D5) ---
 # The heavy class threshold in slo.yaml (1000 ms) plus 100 ms: just above it, so an

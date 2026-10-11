@@ -97,22 +97,6 @@ export function validateSlo(doc, { requireCapacityMix = false } = {}) {
     }
   }
 
-  // cpu_saturation_ratio (renderQueries) divides by attribution.vcpu_per_task,
-  // and the CPU dashboard panel with it. A missing or non-positive value would
-  // either throw deep inside a renderer or -- worse -- render a ratio nobody
-  // can trust, so it is refused here, at the one entry point every caller goes
-  // through. Gated on the block existing at all: the in-memory fixtures used
-  // by the tests above have no attribution block and must keep validating.
-  // What this does NOT catch -- a value that no longer matches the task size
-  // Terraform actually allocates -- is a test, not a validateSlo rule: see
-  // "vcpu_per_task agrees with the task size Terraform allocates" below.
-  if (doc.attribution) {
-    const vcpu = doc.attribution.vcpu_per_task;
-    if (typeof vcpu !== 'number' || !Number.isFinite(vcpu) || vcpu <= 0) {
-      throw new Error(`attribution.vcpu_per_task must be a positive number, got ${JSON.stringify(vcpu ?? null)}`);
-    }
-  }
-
   for (const slo of doc.slos ?? []) {
     if (slo.sli !== 'class_threshold_ratio') continue;
     const seen = new Set();
@@ -654,17 +638,15 @@ const POOL_WAIT = promSeconds(POOL_WAIT_DURATION);
  * wraps the rate before the quantile, or the label being grouped on is gone.
  *
  * One key is conditional, and is omitted rather than rendered broken:
- * cpu_saturation_ratio divides by attribution.vcpu_per_task. A document
- * without that key gets no ratio -- inventing a vCPU number would be
- * inventing the denominator. cpu_seconds_per_second is always emitted.
- * validateSlo refuses a present-but-non-positive value, and
- * test/generate-slo.test.js cross-checks it against
- * infra/main/dev.tfvars task_cpu / 1024, since Terraform allocates it.
+ * cpu_saturation_ratio divides by vcpuPerTask, which the CLI reads from
+ * infra/main/dev.tfvars (task_cpu / 1024) -- Terraform allocates it, so
+ * slo.yaml does not carry a copy. Without it there is no ratio: inventing a
+ * vCPU number would be inventing the denominator. cpu_seconds_per_second is
+ * always emitted.
  */
-export function renderQueries(doc) {
+export function renderQueries(doc, { vcpuPerTask: vcpu } = {}) {
   const scope = SCOPE(doc);
   const job = `job="${doc.service}"`;
-  const vcpu = doc.attribution?.vcpu_per_task;
   const q = {};
 
   q.sli_ratio = ratioExpr(doc, { range: '$__rate_interval' });
@@ -759,9 +741,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   }
 
+  const taskCpu = /^task_cpu\s*=\s*(\d+)/m.exec(readFileSync(`${root}infra/main/dev.tfvars`, 'utf8'));
+  if (!taskCpu) { console.error('infra/main/dev.tfvars has no task_cpu'); process.exit(1); }
+  const vcpuPerTask = Number(taskCpu[1]) / 1024;
+
   let drifted = 0;
   for (const { path: rel, render } of OUTPUTS) {
-    const wanted = render(doc);
+    const wanted = render(doc, { vcpuPerTask });
     // A newly added output does not exist yet. That is drift, not a crash --
     // otherwise the run that is supposed to create the file dies reading it.
     let current = null;

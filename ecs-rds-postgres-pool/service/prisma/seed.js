@@ -33,18 +33,42 @@ export function buildPostBatch(feedId, offset, count) {
   }));
 }
 
-export async function seedAll(prisma, { rows, feeds }) {
+/**
+ * Tops `posts` up; it never starts from empty, so it is safe to run again.
+ *
+ * Rows are named by (feed, offset), and a feed's seeded rows are always offsets
+ * 0..n-1, so "what exists" is one count per feed and "what is missing" is the
+ * offsets after it. `rows` is the TARGET total (a re-run at the same number
+ * inserts nothing); `add` appends that many on top of whatever is there.
+ * Seeded rows are told apart from the heavy route's `u_...` inserts by the
+ * `seed_` author prefix, so load-test writes do not count as seed.
+ */
+export async function seedAll(prisma, { rows, feeds, add = 0, log = () => {} }) {
   // Feeds first: every post carries a foreign key into this table, so seeding
   // posts first fails on the constraint rather than on anything informative.
   await prisma.feed.createMany({ data: buildFeeds(feeds), skipDuplicates: true });
 
-  const perFeed = Math.ceil(rows / feeds);
+  const counts = await prisma.post.groupBy({
+    by: ['feedId'],
+    where: { author: { startsWith: 'seed_' } },
+    _count: { _all: true },
+  });
+  const have = new Map(counts.map((c) => [c.feedId, c._count._all]));
+  const before = [...have.values()].reduce((a, b) => a + b, 0);
+  const target = add > 0 ? before + add : rows;
+  const perFeed = Math.ceil(target / feeds);
+
+  let inserted = 0;
   for (let f = 1; f <= feeds; f += 1) {
-    for (let offset = 0; offset < perFeed; offset += BATCH) {
+    for (let offset = have.get(f) ?? 0; offset < perFeed; offset += BATCH) {
       const batch = buildPostBatch(f, offset, Math.min(BATCH, perFeed - offset));
       await prisma.post.createMany({ data: batch, skipDuplicates: true });
+      inserted += batch.length;
     }
   }
+  log(`seeded posts: ${before} before, ${inserted} inserted, ${before + inserted} after`);
+
+  if (inserted === 0) return { before, inserted, after: before };
 
   // Without this the planner has no statistics, and the first run of a session
   // measures a different query plan than the second (spec 5). VACUUM cannot run
@@ -52,6 +76,7 @@ export async function seedAll(prisma, { rows, feeds }) {
   // rather than part of a batch.
   await prisma.$executeRawUnsafe('VACUUM ANALYZE feeds');
   await prisma.$executeRawUnsafe('VACUUM ANALYZE posts');
+  return { before, inserted, after: before + inserted };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -61,7 +86,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const config = loadConfig();
   const { pool, close } = createPool({ config, onWait: () => {} });
   const prisma = createPrisma(pool);
-  await seedAll(prisma, { rows: config.seedRows, feeds: config.seedFeeds });
+  // SEED_ADD_ROWS (set by scripts/seed.sh --add / -i) appends; without it the
+  // seed tops posts up to SEED_ROWS, which is a no-op when already there.
+  const add = Number(process.env.SEED_ADD_ROWS ?? 0);
+  if (!Number.isInteger(add) || add < 0) throw new Error(`SEED_ADD_ROWS must be a non-negative integer, got ${process.env.SEED_ADD_ROWS}`);
+  await seedAll(prisma, { rows: config.seedRows, feeds: config.seedFeeds, add, log: console.log });
   await prisma.$disconnect();
   await close();
 }

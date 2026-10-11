@@ -196,12 +196,6 @@ variable "report_scan_rows" {
   default     = 0
 }
 
-variable "report_sleep_ms" {
-  description = "THE SECOND HALF OF THE CALIBRATED KNOB: how long the heavy route's single statement waits, in milliseconds, beside the CPU cost report_scan_rows sets. The two are separate because the pool must bind while the database still has CPU headroom, and a purely CPU-bound hold puts 5 connections at ~2.5x this instance's 2 vCPUs before the pool of 5 ever binds (plan 3, decision D1). 0 means uncalibrated: pg_sleep(0) returns immediately."
-  type        = number
-  default     = 0
-}
-
 variable "migrate_on_boot" {
   description = "Runs prisma migrate deploy at container start. Safe on every task: Prisma Migrate takes a Postgres advisory lock, so a rolling deploy does not race itself."
   type        = bool
@@ -209,7 +203,7 @@ variable "migrate_on_boot" {
 }
 
 variable "seed_on_boot" {
-  description = "Runs the seed at container start. NOT idempotent and NOT lock-guarded: posts has no unique constraint beyond its primary key, so two tasks booting with this set insert twice the rows and a redeploy doubles them again. One task, one shot, then back to false."
+  description = "Runs the seed at container start. Re-running is safe (it only inserts missing rows) but it is NOT lock-guarded: two tasks booting with this set count at the same moment and both insert, doubling the rows. One task, then back to false."
   type        = bool
   default     = false
 }

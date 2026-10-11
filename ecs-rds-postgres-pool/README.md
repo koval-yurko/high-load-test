@@ -185,15 +185,11 @@ to the rule group only while the proxy exists (`saturation.tf`'s `proxy_rules` l
 on nothing before knob 3 and disappear again once the proxy is destroyed.
 
 **A caveat on "Database CPU saturated":** it alerts on `DBLoadRelativeToNumVCPUs`, which counts every
-runnable session *and* every session actively waiting. A session inside `pg_sleep` — the heavy
-route's timed hold — is `active` in `pg_stat_activity` with wait event `Timeout: PgSleep`, so
-Performance Insights counts it too (decision D1); that part is documented behaviour, not a
-measurement. What follows from it is an expectation, not yet a result: **expect** the metric to read
-roughly `pool_size ÷ vCPUs` at the knee — well above what the database's CPU is actually doing — and
-write it as an expectation until a run confirms it. Read `DBLoadCPU ÷ vCPUs` from CloudWatch alongside
-it for the real CPU share; nothing here alerts on that ratio directly, because it is not a CloudWatch
-metric — computing it would mean a math expression across two queries, which the one-rule-per-metric
-rule above exists to avoid.
+runnable session *and* every session actively waiting, so lock or I/O wait inflates it above what
+the CPU is doing. Read `DBLoadCPU ÷ vCPUs` from CloudWatch alongside it for the real CPU share;
+nothing here alerts on that ratio directly, because it is not a CloudWatch metric — computing it
+would mean a math expression across two queries, which the one-rule-per-metric rule above exists to
+avoid.
 
 ---
 
@@ -276,6 +272,7 @@ its default — so a change here is a change in both files.
 | `SEED_ON_BOOT` | `"1"` \| unset | off | `seed_on_boot`, same encoding |
 | `SEED_ROWS` | number | 50000 | `seed_rows` |
 | `SEED_FEEDS` | number | 16 | `seed_feeds` |
+| `SEED_ADD_ROWS` | number | unset | none — set per run by `./scripts/seed.sh --add N`; appends N rows instead of topping up to `SEED_ROWS` |
 | `FEED_PAGE_SIZE` | number | 20 | `feed_page_size` |
 | `REPORT_SCAN_ROWS` | number | 0 — the heavy route's CPU cost; 0 makes it return immediately (`dev.tfvars` sets 25000) | `report_scan_rows` |
 | `OTEL_SERVICE_NAME` | string | `ecs-rds-postgres-pool` | the project name |
@@ -330,25 +327,25 @@ the idle bill while it exists (see [Cost](#cost)): run it last and destroy promp
 `write` and `report` routes both insert into `posts`, the table the heavy route scans, and the
 heartbeat inserts too (a `POST /posts` and a `POST /reports` every minute), so every run meets a
 bigger table than the last, and because the knobs run in a fixed order the growth correlates with
-the knob sequence. Nothing resets it — the seed does not truncate, and re-running it adds rows on
-top. **Record `SELECT count(*) FROM posts` on every `results.md` row, taken just before the run**,
+the knob sequence. Nothing resets it — the seed never deletes, and only `--add` appends rows
+(a plain re-run tops up to `seed_rows` and inserts nothing once it is there). **Record `SELECT count(*) FROM posts` on every `results.md` row, taken just before the run**,
 so the confound is visible in the ledger.
 
 ## Configuration notes that bite
 
 - **`dev.tfvars` is authoritative** for every sizing knob; `slo.yaml`'s `capacity` block is advisory
   and only computes.
-- **`slo.yaml`'s `attribution.vcpu_per_task` (0.25) must equal `task_cpu / 1024`** from
-  `dev.tfvars` (256 → 0.25). Change both together: the generated CPU-saturation ratio divides by
-  it, and `service/test/generate-slo.test.js` cross-checks the two.
-- **`seed_on_boot` is one task, one shot.** The seed is neither idempotent nor lock-guarded: two
-  tasks booting with it set insert twice the rows, and a redeploy doubles them again. Prefer
+- **The CPU-saturation ratio's denominator is `task_cpu / 1024` from `dev.tfvars`.** The generator
+  reads it from there, so change `task_cpu`, then re-run `npm run slo:generate` to rewrite
+  `infra/grafana/queries.json`.
+- **`seed_on_boot` is one task, one shot.** Re-running the seed is safe, but it is not lock-guarded: two
+  tasks booting with it set count at the same moment and both insert, doubling the rows. Prefer
   `./scripts/seed.sh` (below) — a one-off task that runs once regardless of
   `desired_count` and leaves no boot flag to remember to turn back off.
-- **`report_scan_rows = 0` means the heavy route does no work.** `dev.tfvars` sets 25000 and
-  `report_sleep_ms = 320`; both are chosen, not measured. If the baseline shows the pool is not what
-  binds first (pool wait near zero while `DBLoadCPU` is high, or the reverse), edit the two lines,
-  re-apply, and re-run the baseline.
+- **`report_scan_rows = 0` means the heavy route does no work.** `dev.tfvars` sets 25000, chosen not
+  measured, and it is the whole hold: the statement has no wait. If the baseline shows the pool is
+  not what binds first, raise `seed_rows` and `report_scan_rows` together (the scan cannot exceed
+  the seeded rows), re-apply, and re-run the baseline.
 - **`db_password` is not in any tfvars file on purpose.** It is `DB_PASSWORD` in the root `.env`
   (generate with `openssl rand -hex 24`); `.envrc` exports it as `TF_VAR_db_password` and
   `platform/` puts it in the shared HCP variable set, which is how remote runs receive it. After
@@ -389,18 +386,66 @@ cd ecs-rds-postgres-pool
 terraform -chdir=infra/main init
 ```
 
-Provision, deploy the service into it, then seed once:
+Provision, deploy the service into it, then seed (safe to repeat, see [Seeding](#seeding)):
 
 ```bash
 terraform -chdir=infra/main apply -var-file=dev.tfvars   # approval gate
 ./scripts/deploy-service.sh                              # build amd64 → push → force new deployment → health
-./scripts/seed.sh              # ONCE; not idempotent
+./scripts/seed.sh              # tops posts up to seed_rows; re-running inserts nothing
+./scripts/seed.sh --add 100000 # append 100000 more seeded rows
+./scripts/seed.sh -i           # asks how many, prints the estimated cost, confirms
+./scripts/seed.sh --measure    # times the heavy query on the rows already there (read-only)
 ```
 
-Re-run `./scripts/deploy-service.sh` after **every** change under `service/src/` — Terraform does not
-rebuild the image, and skipping it fails silently (the service stays healthy on old code).
-`--skip-build` only rolls the service. The seed runs inside the VPC on a throwaway Fargate task built
-from the service's own task definition; nothing truncates `posts` first, so a second run doubles it.
+Re-run `./scripts/deploy-service.sh` after **every** change under `service/src/` or `service/scripts/`
+— Terraform does not rebuild the image, and skipping it fails silently (the service stays healthy on
+old code, and `seed.sh` cannot find a new script). `--skip-build` only rolls the service.
+
+### Seeding
+
+`./scripts/seed.sh` starts **one standalone Fargate task** on the project's cluster. It reads the
+running service's task definition and network configuration (`describe-services`), then `run-task`s
+that same definition with a container override on `app`: the command becomes `node prisma/seed.js`
+(or `node scripts/measure-scan.js` for `--measure`) and `SEED_ADD_ROWS` is set. So it runs the same
+image, environment, IAM roles and security group as the service, inside the VPC, and exits when done.
+What differs from a service task: no ECS service manages it (no `desired_count`, no restart), it is
+not registered with the load balancer, it serves no traffic, and it is billed for about a minute.
+The script finishes when the container exits and prints that task's log stream; Fargate's
+`DEPROVISIONING` after exit (about a minute) is not waited for.
+
+| command | what it does | writes? |
+|---|---|---|
+| `seed.sh` | counts the `seed_` rows per feed and inserts the missing ones up to `seed_rows` | only if below target |
+| `seed.sh --add N` | appends N rows after the existing offsets | yes, N rows |
+| `seed.sh -i` | prompts for N, prints the estimate below, asks `y/N`, then does `--add` | after confirmation |
+| `seed.sh --measure` | times the heavy route's scan + aggregate at several sizes, median of 5 after a warm-up | no (no `INSERT`) |
+
+**Why re-running is safe.** A seeded row is named by `(feed, offset)` with author `seed_<offset>`, and
+a feed's seeded rows are always offsets `0..n-1`, so "what exists" is one count per feed and the seed
+inserts only the offsets after it. The load test's own inserts (`u_…` authors) are not counted. It is
+**not lock-guarded**: two seed tasks running at the same moment both count first and both insert.
+Nothing is deleted — to shrink the table, destroy and recreate the environment.
+
+**Do you need more data? Measure, do not estimate.** More rows do not slow any route by themselves:
+the heavy route reads `report_scan_rows` rows (`ORDER BY id LIMIT n`), so a longer request needs a
+larger `report_scan_rows`, and more seeded rows only matter once the scan wants more than the table
+holds. Run `./scripts/seed.sh --measure` and read the line marked "current setting" (what a heavy
+request holds a connection for today) and the "whole table" line (the most the data can give).
+
+Measured once on 2026-10-12, `db.t4g.micro`, 64,968 posts, scan + aggregate alone, no load:
+
+| scan rows | median | per 1000 rows |
+|---|---|---|
+| 25,000 (`report_scan_rows`) | 123.8 ms | 5.0 ms |
+| 50,000 | 249.0 ms | 5.0 ms |
+| 64,968 (whole table) | 876.6 ms | 13.5 ms |
+
+Linear at ~5 ms per 1000 rows up to 50,000, then about 2.7× worse per row at the whole table; the
+cause was not investigated, so do not extrapolate past ~50,000 rows. `-i` prices options at
+`MS_PER_1K_ROWS` (default 5, from this run) and warns past ~250,000 rows (`seed_rows` × ~1 KB against
+`shared_buffers`). It is an estimate for one statement alone, not under load; pool contention adds to
+it. Re-measure after changing `seed_rows`, `report_scan_rows` or the instance class.
+
 No script runs `terraform apply` or `destroy`: the `permissions.ask` rule matches command text, so an
 apply buried in a script would never reach the approval gate. Tool shells need
 `direnv exec <repo-root> <command>`; direnv itself is interactive-only.

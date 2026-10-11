@@ -31,8 +31,8 @@ slos:
       # TARGET THRESHOLDS, SERVER-SIDE (handler entry to response finish). Set by
       # decision on 2026-10-08, not probed: each is a round number comfortably
       # above what the route does unloaded (index lookup ~ a few ms; the heavy
-      # route holds its connection ~345 ms by design, see report_scan_rows and
-      # report_sleep_ms in infra/main/dev.tfvars), so jitter does not breach it
+      # route holds its connection for the scan, see report_scan_rows in
+      # infra/main/dev.tfvars), so jitter does not breach it
       # but pool queueing near the knee does. The k6 VU sizing is derived from
       # them. Change one and the baseline must be re-run: a threshold is only
       # comparable to itself. `npm run slo:check` fails while any is null.
@@ -74,7 +74,6 @@ capacity:
     max_connections_estimate: 112   # SHOW max_connections on the real instance
 
 attribution:
-  vcpu_per_task: 0.25
   # There is no server-side per-operation latency in Postgres to subtract, so
   # the sibling's queueing estimate has no analogue. Queue depth is measured
   # directly instead: db.pool.wait.duration, per class.

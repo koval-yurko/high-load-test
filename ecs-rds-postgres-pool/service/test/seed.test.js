@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildFeeds, buildPostBatch, EPOCH } from '../prisma/seed.js';
+import { buildFeeds, buildPostBatch, seedAll, EPOCH } from '../prisma/seed.js';
 
 test('feeds are numbered from 1, because a post id of 0 is not a valid FK target', () => {
   const feeds = buildFeeds(16);
@@ -34,4 +34,33 @@ test('every row carries the full body width and a valid feed id', () => {
     assert.equal(r.body.length, 940);
     assert.equal(r.feedId, 4);
   }
+});
+
+function fakePrisma(existingPerFeed) {
+  const inserted = [];
+  return {
+    inserted,
+    feed: { createMany: async () => {} },
+    post: {
+      groupBy: async () => existingPerFeed.map((n, i) => ({ feedId: i + 1, _count: { _all: n } })),
+      createMany: async ({ data }) => { inserted.push(...data); },
+    },
+    $executeRawUnsafe: async () => {},
+  };
+}
+
+test('seeding to a target tops up and a second run at the same target inserts nothing', async () => {
+  const first = fakePrisma([0, 0]);
+  assert.deepEqual(await seedAll(first, { rows: 10, feeds: 2 }), { before: 0, inserted: 10, after: 10 });
+  const again = fakePrisma([5, 5]);
+  assert.deepEqual(await seedAll(again, { rows: 10, feeds: 2 }), { before: 10, inserted: 0, after: 10 });
+  assert.equal(again.inserted.length, 0);
+});
+
+test('add appends after the existing offsets, so no seeded row is duplicated', async () => {
+  const prisma = fakePrisma([5, 5]);
+  const out = await seedAll(prisma, { rows: 10, feeds: 2, add: 6 });
+  assert.deepEqual(out, { before: 10, inserted: 6, after: 16 });
+  const feed1 = prisma.inserted.filter((r) => r.feedId === 1).map((r) => r.author);
+  assert.deepEqual(feed1, ['seed_0000000005', 'seed_0000000006', 'seed_0000000007']);
 });

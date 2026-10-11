@@ -63,7 +63,6 @@ export function createHandlers({ repo, config }) {
       const post = buildPost(feedId);
       const out = await timer.measure('db', () => repo.report({
         scanRows: config.reportScanRows,
-        sleepMs: config.reportSleepMs,
         post,
       }));
       return {

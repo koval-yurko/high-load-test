@@ -33,7 +33,12 @@ place in the next.
    comment. No project script runs `terraform apply` or `destroy`.
 8. **Reference-style links** for the Grafana/k6 URLs, defined once at the bottom: `[dash]`,
    `[alerts]`, `[slo]`, `[k6]` and, when the project emits traces, `[traces]` (the Explore deep link).
-9. **Use `they/them`** for anyone whose pronouns are not stated, and no first person.
+9. **A script that writes data states what a re-run does.** Seed, backfill and reset scripts get
+   one sentence on idempotency (safe / doubles rows / needs a lock) and, if the answer is "safe",
+   what makes it so. Any cost or timing figure the README quotes carries the date, the instance
+   class and the command that produced it, and says where it stops being valid. A figure that was
+   only chosen, not measured, is labelled that way.
+10. **Use `they/them`** for anyone whose pronouns are not stated, and no first person.
 
 ## Structure (in this order)
 
@@ -57,7 +62,8 @@ place in the next.
 ## <The knob sequence>            only if the project turns more than one knob; table of phase -> tfvars change
 ## Configuration notes that bite   one bullet per trap; each says the symptom
 ## Run it locally                  only if a local loop exists; else say there is none and why
-## Phase 0 — Setup (already done once)       env, direnv, platform apply, init; provision, deploy, seed;
+## Phase 0 — Setup (already done once)       env, direnv, platform apply, init; provision, deploy, seed (what the
+                                             seed task is, its modes, re-run behaviour);
                                              troubleshooting table: symptom | cause
 ## Phase 1 — Is it alive?                    curl /healthz and one real read
 ## Phase 2 — Run a load test                 shapes A discovery, B constant, C stress; upload-k6.sh;

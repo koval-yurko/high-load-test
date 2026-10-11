@@ -127,5 +127,5 @@ handoff "deploy" \
              ../../scripts/04-verify-setup.sh      # if anything looks wrong" \
   "a load test measures whatever image is running — deploy before every measured run"
 note "a fresh database needs one apply with seed_on_boot = true at desired_count = 1;"
-note "the seed is not idempotent, so set the flag back to false before scaling out,"
+note "two tasks seeding at once would double the rows, so set the flag back to false before scaling out,"
 note "or four tasks will insert four times the rows."
