@@ -1431,6 +1431,222 @@
           "mode": "multi"
         }
       }
+    },
+    {
+      "id": 35,
+      "type": "row",
+      "title": "8. RDS storage \u2014 is the disk the constraint?",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 71
+      },
+      "panels": []
+    },
+    {
+      "id": 36,
+      "type": "timeseries",
+      "title": "Disk queue depth",
+      "description": "Outstanding I/O requests on the instance's volume. A queue that climbs with the offered rate while CPU (row 1) and the pool (row 3b) are not saturated is a disk-bound database: every query slows, connections are held longer, and the pool queue and ALB latency follow. Maximum per 60s period, instance level.",
+      "datasource": {"type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}"},
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 72
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}"},
+          "namespace": "AWS/RDS",
+          "metricName": "DiskQueueDepth",
+          "statistic": "Maximum",
+          "dimensions": {
+            "DBInstanceIdentifier": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "DiskQueueDepth (max)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 37,
+      "type": "timeseries",
+      "title": "Read / Write IOPS",
+      "description": "I/O operations per second against the volume. Reads that rise under load mean the working set is not staying in memory (shared_buffers and the OS cache on a 1 GiB instance); writes are commits, WAL and checkpoints. Compare the plateau with the instance's EBS limit, which for small burstable classes is below the volume's provisioned IOPS. Maximum per 60s period.",
+      "datasource": {"type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}"},
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 72
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}"},
+          "namespace": "AWS/RDS",
+          "metricName": "ReadIOPS",
+          "statistic": "Maximum",
+          "dimensions": {
+            "DBInstanceIdentifier": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "ReadIOPS (max)"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}"},
+          "namespace": "AWS/RDS",
+          "metricName": "WriteIOPS",
+          "statistic": "Maximum",
+          "dimensions": {
+            "DBInstanceIdentifier": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "WriteIOPS (max)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "iops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 38,
+      "type": "timeseries",
+      "title": "Read / Write latency",
+      "description": "Seconds per I/O as seen by the instance. Rising latency together with a rising queue depth is the disk saturating; rising latency with a flat queue points at the storage layer instead. Maximum per 60s period.",
+      "datasource": {"type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}"},
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 72
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}"},
+          "namespace": "AWS/RDS",
+          "metricName": "ReadLatency",
+          "statistic": "Maximum",
+          "dimensions": {
+            "DBInstanceIdentifier": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "ReadLatency (max)"
+        },
+        {
+          "refId": "B",
+          "datasource": {"type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}"},
+          "namespace": "AWS/RDS",
+          "metricName": "WriteLatency",
+          "statistic": "Maximum",
+          "dimensions": {
+            "DBInstanceIdentifier": "${project}"
+          },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true,
+          "label": "WriteLatency (max)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "spanNulls": true
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
     }
   ]
 }

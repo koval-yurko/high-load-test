@@ -8,13 +8,16 @@ pool_size     = 5     # knob 1 releases this to 25
 desired_count = 1     # knob 2 raises this to 4
 proxy_enabled = false # knob 3 flips this to true
 
+# --- tracing ---
+trace_sample_ratio = 1 # 1 = every request. Hold constant across runs being compared.
+
 # --- the instance under test ---
 instance_class    = "db.t4g.micro"
 allocated_storage = 20
 
 # --- the measurement parameters ---
-seed_rows        = 50000 # x ~1 KB must stay inside shared_buffers
-seed_feeds       = 16
+seed_rows  = 50000 # x ~1 KB must stay inside shared_buffers
+seed_feeds = 16
 
 # The heavy route's workload, fixed here and deployed with the service. Chosen, not
 # measured: ~25 ms of database CPU plus ~320 ms of wait gives a ~345 ms hold on a
@@ -25,7 +28,7 @@ seed_feeds       = 16
 report_scan_rows = 25000
 report_sleep_ms  = 320
 
-feed_page_size   = 20
+feed_page_size = 20
 
 # --- boot behaviour. seed_on_boot is one task, one shot: it is not idempotent. ---
 migrate_on_boot = true

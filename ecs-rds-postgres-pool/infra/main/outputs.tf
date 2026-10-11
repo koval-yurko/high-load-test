@@ -54,13 +54,14 @@ output "service_name" {
 output "knobs" {
   description = "The knob positions and measurement parameters, recorded on every results.md row so a number can always be traced to the configuration that produced it."
   value = {
-    pool_size        = var.pool_size
-    desired_count    = var.desired_count
-    proxy_enabled    = var.proxy_enabled
-    instance_class   = var.instance_class
-    report_scan_rows = var.report_scan_rows
-    report_sleep_ms  = var.report_sleep_ms
-    seed_rows        = var.seed_rows
+    pool_size          = var.pool_size
+    desired_count      = var.desired_count
+    proxy_enabled      = var.proxy_enabled
+    instance_class     = var.instance_class
+    report_scan_rows   = var.report_scan_rows
+    report_sleep_ms    = var.report_sleep_ms
+    seed_rows          = var.seed_rows
+    trace_sample_ratio = var.trace_sample_ratio
   }
 }
 

@@ -110,6 +110,7 @@ locals {
     { name = "REPORT_SLEEP_MS", value = tostring(var.report_sleep_ms) },
 
     { name = "OTLP_ENDPOINT", value = "http://collector.${aws_service_discovery_private_dns_namespace.internal.name}:4318" },
+    { name = "TRACE_SAMPLE_RATIO", value = tostring(var.trace_sample_ratio) },
     { name = "METRICS_NAMESPACE", value = local.metrics_namespace },
     { name = "OTEL_SERVICE_NAME", value = local.metrics_service_name },
 
@@ -184,9 +185,13 @@ resource "aws_ecs_service" "app" {
 
   # A task that will not pass the ALB health check is retried forever by default,
   # and `terraform apply` returns success while the old task definition is still
-  # what is serving. The circuit breaker stops the deployment instead, and
-  # rollback puts the last known-good task definition back -- so a bad image is a
-  # failed apply, which is what it should look like.
+  # what is serving. The circuit breaker stops the deployment instead and rolls
+  # back to the last known-good task definition -- but ONLY wait_for_steady_state
+  # makes that a failed apply. Without it Terraform returns as soon as
+  # UpdateService is accepted, and a rollback (e.g. pool_size too large for the
+  # old and new task to overlap under max_connections) goes unreported.
+  wait_for_steady_state = true
+
   deployment_circuit_breaker {
     enable   = true
     rollback = true
