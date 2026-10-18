@@ -1,6 +1,6 @@
 # ecs-rds-postgres-pool tracing (phase 1) Implementation Plan
 
-Status: complete — Tasks 1–9 and 11 executed; **Task 10 (tracing overhead, ratio 1 vs 0) deliberately not run**, by the user's decision on 2026-10-12. Branch `feat/ecs-rds-postgres-pool-tracing`, not yet merged.
+Status: complete — Tasks 1–9 and 11 executed; **Task 10 (tracing overhead, ratio 1 vs 0) deliberately not run**, by the user's decision on 2026-10-12. Branch `feat/ecs-rds-postgres-pool-tracing` squash-merged to master as `270be10`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

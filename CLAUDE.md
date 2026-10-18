@@ -292,7 +292,7 @@ common failure, not wrong syntax.
 
 ## Project skills
 
-Three skills in `.claude/skills/` automate the loop and its documentation. Prefer them over ad-hoc commands — each encodes
+Four skills in `.claude/skills/` automate the loop and its documentation. Prefer them over ad-hoc commands — each encodes
 gotchas that cost real money or produce wrong numbers:
 
 - **`/env up|down|status <project>`** — Terraform lifecycle for `<project>/infra/main`, with an
@@ -304,6 +304,9 @@ gotchas that cost real money or produce wrong numbers:
   with the infra change that distinguishes the run. Encodes two verified k6 quirks (below).
 - **`/readme <project>`** — writes or restructures a project's `README.md` to the shared section
   order, phase numbering and evidence rules, so every scenario's runbook reads the same.
+- **`/new-project <project>`** — turns an approved spec into a project directory: what every project
+  must contain, the four repo-wide places that name it (`platform/tfc.tf` first), and the checks to
+  run before the first apply.
 
 ### k6 facts worth not re-learning
 
