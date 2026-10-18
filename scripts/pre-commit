@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# git pre-commit: terraform fmt -check on the staged .tf/.tfvars files, then validate every root
+# module they belong to (the same check .claude/hooks/terraform-check.sh runs after Claude's edits,
+# here for every commit, whoever writes it); and k6 inspect on every load profile whose directory
+# has a staged change. Installed as a symlink by scripts/03-wire-repo.sh —
+# git does not clone hooks. Bypass once with `git commit --no-verify`.
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+fail=0
+
+# --- k6 profiles -------------------------------------------------------------------------------
+# k6 inspect loads the real file with its ./lib imports and evaluates options and thresholds,
+# sending nothing. A change under lib/ can break any profile, so a staged change anywhere in a
+# tests/ directory re-inspects every profile in it. (mcp-k6's validate_script was tried instead:
+# it copies the script text to a temp file, so ./lib imports fail, and it runs a real iteration.)
+for t in $(git diff --cached --name-only --diff-filter=ACMR -- '*/infra/k6/tests/*' \
+           | sed 's#\(/infra/k6/tests\)/.*#\1#' | sort -u); do
+  for f in "$t"/*.js; do
+    [ -f "$f" ] || continue
+    out=$(k6 inspect "$f" 2>&1 >/dev/null) || {
+      printf 'pre-commit: k6 inspect failed for %s:\n%s\n' "$f" "$out" >&2
+      fail=1
+    }
+  done
+done
+
+# --- terraform ---------------------------------------------------------------------------------
+files=$(git diff --cached --name-only --diff-filter=ACMR -- '*.tf' '*.tfvars')
+[ -n "$files" ] || exit $fail
+
+# shortcut: checks the working-tree copy, so a partially staged file is judged by its unstaged
+# edits too; stash them first (git stash -k) if that ever gives a wrong verdict.
+if ! unformatted=$(terraform fmt -check -list=true $files 2>&1); then
+  printf 'pre-commit: not terraform-formatted (run: terraform fmt <file>):\n%s\n' "$unformatted" >&2
+  fail=1
+fi
+
+# Root that owns each file: a project's infra/* modules are all called from infra/main;
+# anything else from the nearest directory up whose .tf files declare a cloud {} block.
+roots=$(for f in $files; do
+  d=$(dirname "$f")
+  case "$d" in
+    */infra/*|*/infra) echo "${d%/infra*}/infra/main" ;;
+    *) until grep -qs 'cloud {' "$d"/*.tf || [ "$d" = . ]; do d=$(dirname "$d"); done; echo "$d" ;;
+  esac
+done | sort -u)
+
+for r in $roots; do
+  if [ ! -d "$r/.terraform" ]; then
+    echo "pre-commit: skipped validate in $r — not initialised (terraform -chdir=$r init)" >&2
+    continue
+  fi
+  if ! out=$(terraform -chdir="$r" validate -no-color 2>&1); then
+    printf 'pre-commit: terraform validate failed in %s:\n%s\n' "$r" "$(printf '%s\n' "$out" | sed -n '/^Error:/,$p')" >&2
+    fail=1
+  fi
+done
+
+exit $fail

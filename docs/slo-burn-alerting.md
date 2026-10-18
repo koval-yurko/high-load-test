@@ -307,7 +307,7 @@ else is generated from it:
                           └─►  DynamoDB capacity            provisioned to the same numbers
 ```
 
-`/slo --check` fails the build if any generated file was hand-edited or has fallen out of step.
+`npm run slo:check` (from `<project>/service`) fails the build if any generated file was hand-edited or has fallen out of step.
 
 The failure mode this prevents: the same objective typed in two places, the dashboard claiming one
 number while the load test enforces another, both green, neither meaning anything. Two shapes of it

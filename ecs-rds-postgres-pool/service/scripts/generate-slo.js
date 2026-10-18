@@ -160,7 +160,7 @@ export function renderK6(doc) {
   const slo = classRatio(doc);
   const map = Object.entries(slo.classes).map(([n, c]) => `${n}: ${c.threshold_ms}`).join(', ');
   const availability = doc.slos.find((s) => s.sli === 'success_rate');
-  return `// GENERATED from slo.yaml by /slo. Do not edit by hand.
+  return `// GENERATED from slo.yaml by npm run slo:generate. Do not edit by hand.
 export const CLASS_THRESHOLD_MS = { ${map} };
 export const TAIL_MULTIPLIER = ${slo.tail_multiplier};
 
@@ -413,7 +413,7 @@ export function renderLocals(doc) {
   const slo = classRatio(doc);
   const body = ratioExpr(doc, { range: '$__rate_interval', job: '${var.project}' })
     .split('\n').map((line) => `    ${line}`).join('\n');
-  return `# GENERATED from slo.yaml by /slo. Do not edit by hand.
+  return `# GENERATED from slo.yaml by npm run slo:generate. Do not edit by hand.
 #
 # The SLO object's inputs. objective and window come from slo.yaml so grafana_slo
 # and the burn rules in alerts.tf cannot state different numbers, and the query is
@@ -597,7 +597,7 @@ export function renderAlerts(doc) {
 }`);
     }
   }
-  return `# GENERATED from slo.yaml by /slo. Do not edit by hand.
+  return `# GENERATED from slo.yaml by npm run slo:generate. Do not edit by hand.
 #
 # Burn-rate alerting on error budget, not the raw SLI. Both the multipliers and
 # the ALERT WINDOWS are derived from slo.yaml's window (${doc.window}): the

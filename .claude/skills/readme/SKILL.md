@@ -73,7 +73,8 @@ place in the next.
 ## Phase 5 — Re-measure identically          same scripts, same RATE, same thresholds
 ## Phase 6 — Improve: <change 2>             only if phase 5 left the previous constraint
 ## Phase 7 — Re-measure again
-## Phase 8 — Record the results              what to put in a results.md row
+## Phase 8 — Record the results              what to put in a results.md row; link loadtest.md for the
+                                             columns rather than restating them
 ## Phase 9 — Tear down                       destroy (approval gate) + tag sweep + survivors
 ---
 ## How to move the infrastructure for the SLO   (when two distinct moves exist; else omit)
@@ -133,6 +134,9 @@ renumber everything after, fixing every link to a renumbered anchor (`grep -n "p
    `scripts/`, `infra/k6/tests/` and `infra/main/outputs.tf`. Document what exists; do not describe
    files that are not there.
 2. Draft in the order above. Take each number from a file you read, or label it.
+   If the project has load profiles but no `<project>/loadtest.md`, write that file too, by
+   "The project contract" section of `.claude/skills/loadtest/SKILL.md` — the README's Phase 2 run
+   gate and Phase 8 columns must match it.
 3. Check every script, flag and output name mentioned actually exists (`ls scripts`,
    `grep -n 'output "' infra/main/outputs.tf`).
 4. Check every internal link: `grep -n "](#" README.md`, then confirm each anchor has its heading.

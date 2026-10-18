@@ -124,7 +124,7 @@ Two levels, by design. Secrets are global; everything else is per-project.
 <project>/.env           ← per-project NON-SECRET runtime values (base URL, sizes)
 <project>/infra/main/<env>.tfvars
                          ← per-project Terraform inputs. committed. no secrets.
-<project>/slo.yaml       ← the project's SLO definition (see /slo skill)
+<project>/slo.yaml       ← the project's SLO definition (generated with `npm run slo:generate`)
 ```
 
 **Nothing secret ever goes in a `<project>/` file.** `.gitignore` covers `.env` and `*.auto.tfvars`,
@@ -216,12 +216,11 @@ k6 run -o experimental-prometheus-rw <project>/infra/k6/tests/constant.js   # st
 
 ## Daily workflow
 
-Three Claude Code skills automate the loop (see `CLAUDE.md` for the full rules):
+Two Claude Code skills automate the loop (see `CLAUDE.md` for the full rules):
 
 ```
 /env up <project>          provision, with an approval gate before apply
 /loadtest <project> <profile> [--compare]
-/slo <project> [--check]   regenerate k6 thresholds + Grafana alerts from slo.yaml
 /env down <project>         destroy, then sweep for surviving billable resources
 ```
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# 03 — wires this checkout to your shell: the direnv hook (so .env loads on cd) and direnv's
-# authorization for .envrc. Idempotent; backs up your shell rc before touching it.
+# 03 — wires this checkout: the direnv shell hook (so .env loads on cd), direnv's
+# authorization for .envrc, and the git pre-commit hook. Idempotent; backs up your shell rc first.
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-header "03" "wire repo" "Installs the direnv shell hook and authorizes .envrc."
+header "03" "wire repo" "Installs the direnv shell hook, authorizes .envrc, links the pre-commit hook."
 
 have direnv || require_step "direnv" "./scripts/01-install-tools.sh"
 [ -f "$REPO_ROOT/.env" ] || require_step ".env" "./scripts/02-create-env.sh"
@@ -31,6 +31,20 @@ echo
 step "direnv authorization for .envrc"
 ( cd "$REPO_ROOT" && direnv allow . )
 ok "allowed — re-run this script, or 'direnv allow', after any .env or .envrc edit"
+
+# --- 3. the git pre-commit hook ----------------------------------------------
+echo
+step "git pre-commit hook (terraform fmt + validate)"
+HOOK_PATH="$(git -C "$REPO_ROOT" rev-parse --git-common-dir)/hooks/pre-commit"
+case "$HOOK_PATH" in /*) ;; *) HOOK_PATH="$REPO_ROOT/$HOOK_PATH" ;; esac
+if [ -L "$HOOK_PATH" ] && [ "$(readlink "$HOOK_PATH")" = "$REPO_ROOT/scripts/pre-commit" ]; then
+  ok "already linked"
+elif [ -e "$HOOK_PATH" ]; then
+  warn "$HOOK_PATH exists and is not ours — left alone; link scripts/pre-commit by hand"
+else
+  ln -s "$REPO_ROOT/scripts/pre-commit" "$HOOK_PATH"
+  ok "linked $HOOK_PATH -> scripts/pre-commit"
+fi
 
 # --- what direnv now exports -------------------------------------------------
 echo

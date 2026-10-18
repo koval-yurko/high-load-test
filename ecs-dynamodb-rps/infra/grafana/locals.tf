@@ -1,4 +1,4 @@
-# GENERATED from slo.yaml by /slo. Do not edit by hand.
+# GENERATED from slo.yaml by npm run slo:generate. Do not edit by hand.
 #
 # The SLO object's inputs. objective and window come from slo.yaml so grafana_slo
 # and the burn rules in alerts.tf cannot state different numbers, and the query is

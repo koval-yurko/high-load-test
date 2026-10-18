@@ -1,6 +1,6 @@
 ---
 name: loadtest
-description: Run a k6 load profile against a deployed project environment, parse the summary JSON, and append a dated result record with SLO attainment to the project's results file. Use for any load test run, RPS measurement, or before/after comparison in this repo.
+description: Run a k6 load profile against a deployed project environment, parse the summary JSON, and append a dated result record with SLO attainment to the project's results file. Use for any load test run, RPS measurement, or before/after comparison in this repo, and when creating or updating a project's loadtest.md contract.
 ---
 
 # Load test and record
@@ -8,6 +8,12 @@ description: Run a k6 load profile against a deployed project environment, parse
 Usage: `/loadtest <project> <profile> [--compare]`
 
 Profiles live in `<project>/infra/k6/tests/<profile>.js`. Results are appended to `<project>/results.md`.
+
+**This skill is the procedure; `<project>/loadtest.md` is the project.** Everything that differs
+between projects — the results-table columns, the run gate, the load-generator sizing and the
+server-side metric commands — lives in that file, never here. Read it before step 1. If it does not
+exist, write it first (see "The project contract" at the end) — do not improvise the
+project-specific parts from memory or from a sibling project.
 
 ## The rule that makes results meaningful
 
@@ -18,74 +24,47 @@ it happens.
 
 ## Steps
 
-1. **Confirm the target is up** and get its URL — from `terraform output`, not from memory of an
+1. **Read `<project>/loadtest.md`.**
+2. **Confirm the target is up** and get its URL — from `terraform output`, not from memory of an
    earlier session. If nothing is deployed, stop; run `/env up <project>` first.
-2. **Record the infrastructure delta** *before* running: what changed since the last recorded run
-   (task count, instance class, reserved concurrency, pool size)? If nothing changed, this is a repeat
-   run — say so; two identical rows are how you measure variance, but label them.
-3. **Get the run's numbers.** Two paths, and which one you are on depends on how the run started:
+3. **Record the infrastructure delta** *before* running: what changed since the last recorded run?
+   If nothing changed, this is a repeat run — say so; two identical rows are how you measure
+   variance, but label them.
+4. **Pass the run gate** in `loadtest.md` "Before the run", and take the pre-run readings it lists.
+   A run that skipped the gate is not recordable.
+5. **Get the run's numbers.** Two paths, depending on how the run started:
    - **Started from a terminal** — `k6 cloud run --summary-export=…`, then read that JSON. See
-     "Cloud runs" below. This is the path to prefer, because the exit code is a free verdict.
+     "Cloud runs" below. Prefer this path: the exit code is a free verdict.
    - **Started from the Grafana Cloud k6 UI** — there is no local file. Read the run from the k6
-     Cloud API instead; see "Reading a UI-started run from the API" below. A UI run is still
-     recordable, but you must fetch the test run id from the user or the project listing.
-     **A UI run executes the archive stored in the cloud, not the file on disk** — a profile edited
-     since its last upload measures the old script while the diff in front of you says otherwise.
-     Confirm freshness before recording: the project's upload script reports it
-     (`ecs-dynamodb-rps/scripts/upload-k6.sh --check` compares each archive's upload time against
-     the sources under `infra/k6/tests/`). **After every `/env up` the project holds no tests at
-     all** — the k6 project is destroyed and recreated with the environment (since 2026-09-14), so
-     run `upload-k6.sh` before any UI run; `--check` reports an empty project rather than a stale one.
+     Cloud API; see "Reading a UI-started run from the API". **A UI run executes the archive stored
+     in the cloud, not the file on disk**, so confirm freshness first with
+     `<project>/scripts/upload-k6.sh --check`. After every `/env up` the k6 project is new and holds
+     no tests, so run `upload-k6.sh` before any UI run.
 
-   Either way, load must originate from Grafana Cloud's Frankfurt zone, not a laptop, so plain
-   `k6 run` never belongs in this step.
-4. **Capture the exit code immediately** — `echo $?` on the k6 line itself, not after a pipe (a pipe
-   reports the last command's status, not k6's). A UI run has no exit code; use `result_status`
-   from the API instead.
-5. **Check `rate_source` before recording.** The B and C profiles no longer throw when `RATE` is
-   unset — they fall back to the default in `infra/k6/tests/lib/env.js` and tag every sample
-   `rate_source=default`. **A run tagged `default` is not a capacity measurement.** Record it only as
-   a smoke test, never as a knee or a baseline.
+   Either way, load comes from Grafana Cloud's Frankfurt zone, not a laptop: plain `k6 run` never
+   belongs in this step.
+6. **Capture the exit code immediately** — `echo $?` on the k6 line itself, not after a pipe. A UI
+   run has no exit code; use `result_status` from the API instead.
+7. **Check `rate_source` before recording.** Profiles fall back to the default `RATE` in
+   `infra/k6/tests/lib/env.js` when it is unset, and tag every sample `rate_source=default`. **A run
+   tagged `default` is not a capacity measurement** — record it only as a smoke test.
+8. **Read the server-side numbers** — Grafana (below) and the project's own metrics from
+   `loadtest.md` "Server-side metrics".
+9. **Record** the row (below), then run the completeness check.
 
 ## Reading the results — verified against k6 v1.4.0
 
-Two things about this JSON are counterintuitive and will invert your conclusions if you get them wrong:
+Two things about this JSON are counterintuitive and will invert your conclusions:
 
 - **`thresholds` booleans are "was it breached", not "did it pass".**
   `true` = **crossed = FAILED**. `false` = satisfied = passed.
 - **`http_req_failed.passes`/`.fails` do not mean pass/fail of the test.** For a rate metric, `passes`
   counts requests that *were* failures. Use `.value` (0..1) for the error rate.
 
-Exit code: **0** = all thresholds satisfied, **99** = at least one breached. Since 2026-09-02 only
-four thresholds can breach: `slo_met`, `slo_met_tail`, `http_req_failed` and `dropped_iterations`.
-The per-class `http_req_duration{class:…}` entries are `p(99)>=0` — present so the sub-metric is
-printed, unable to fail — so read their `p(99)` values for the row but never treat them as a verdict.
-
-### Reading a discovery run (shape A)
-
-Discovery is twenty scenarios, `rps_100` … `rps_2000`, 60 s each, and every one has its own
-threshold `slo_met{scenario:rps_N}`. **The knee is the lowest `rps_N` whose threshold reads
-`true` (breached); `RATE` for shapes B and C is the step before it.** Do not compute the knee from
-elapsed time or from the cumulative `slo_met` — that cumulative threshold is only an abort so a
-broken service does not run all twenty steps, and it lags the real knee by design.
-
-```bash
-# Verified against k6 v1.4.0 output on 2026-09-02. Each metric is {passes, fails, thresholds, value},
-# so after to_entries the threshold booleans are under .value.thresholds, not .thresholds.
-#
-# Read the threshold by POSITION, not by name. The key is the threshold's own source text --
-# "rate>0.95" today, "rate>0.99" before the 2026-09-09 relaxation -- so a literal ["rate>0.99"]
-# lookup returns null for every step the moment slo.yaml's objective moves, and null prints as
-# "breached=null" rather than failing. Each per-step metric carries exactly one threshold.
-jq -r '.metrics | to_entries[] | select(.key | startswith("slo_met{scenario:rps_"))
-       | "\(.key)  breached=\(.value.thresholds | to_entries | .[0].value)  rate=\(.value.value)"' "$S" \
-  | sort -t_ -k3 -n
-```
-
-If no step breached, the ceiling is above `MAX_RATE`; raise it and re-run. If `dropped_iterations`
-breached during discovery, note which step it started at — past the knee it is expected (a step
-that breaches also starves), but a drop *before* the knee means the 100-VU cap bit first and that
-step measured the generator.
+Exit code: **0** = all thresholds satisfied, **99** = at least one breached. Only four thresholds can
+breach: `slo_met`, `slo_met_tail`, `http_req_failed` and `dropped_iterations`. The per-class
+`http_req_duration{class:…}` entries are `p(99)>=0` — present so the sub-metric is printed, unable to
+fail — so read their values for the row but never treat them as a verdict.
 
 ```bash
 S=/tmp/k6-<project>-<profile>.json
@@ -106,30 +85,48 @@ jq -r '.metrics | to_entries[] | select(.value.thresholds) | .key as $m
 ```
 
 `http_reqs.rate` is the average over the whole run — including ramp-up. For a stages-based profile
-that average understates the plateau; when the number that matters is sustained RPS at peak, say which
-one you are quoting.
+it understates the plateau; when the number that matters is sustained RPS at peak, say which one you
+are quoting.
 
-## Read the server-side numbers from Grafana
+### Reading a discovery run
 
-k6 records only what a client can observe. `service attainment` does not come from the k6 summary at
-all — it comes from the SLO query and the queries in `<project>/infra/grafana/queries.json`,
-evaluated over the run's own window, **after** the run finishes. (The `throttles` column is
-server-side too, but it is read straight from CloudWatch — see the next section.)
+Discovery is one 60 s scenario per step, `rps_<START_RATE>` … `rps_<MAX_RATE>` in `STEP_RPS`
+increments (defaults 100 … 2000 by 100), and every step has its own threshold
+`slo_met{scenario:rps_N}`. **The knee is the lowest `rps_N` whose threshold reads `true`
+(breached); `RATE` for `constant` and `stress` is the step before it.** Do not compute the knee from
+elapsed time or from the cumulative `slo_met` — that one is only an abort, and it lags the real knee
+by design.
+
+```bash
+# Each metric is {passes, fails, thresholds, value}, so after to_entries the threshold booleans are
+# under .value.thresholds. Read the threshold by POSITION, not by name: the key is the threshold's
+# source text ("rate>0.95"), so a literal lookup returns null the moment slo.yaml's objective moves.
+jq -r '.metrics | to_entries[] | select(.key | startswith("slo_met{scenario:rps_"))
+       | "\(.key)  breached=\(.value.thresholds | to_entries | .[0].value)  rate=\(.value.value)"' "$S" \
+  | sort -t_ -k3 -n
+```
+
+If no step breached, the ceiling is above `MAX_RATE`; raise it and re-run. If `dropped_iterations`
+breached, note the step it started at — past the knee it is expected, but a drop *before* the knee
+means the VU cap bit first and that step measured the generator.
+
+## Read the server-side SLO from Grafana
+
+k6 records only what a client can observe. `service attainment` comes from the SLO query in
+`<project>/infra/grafana/queries.json`, evaluated over the run's own window, **after** the run.
 
 `queries.json` is generated from `slo.yaml`; do not hand-write PromQL against it. `GRAFANA_AUTH` is
-**required**, not optional, for this step — it is the read-capable Grafana service-account token.
-`K6_PROMETHEUS_RW_*` is write-scoped: querying with it returns `invalid scope requested`, which a
-naive parser reads as "no data" rather than "wrong credential".
+**required** — the read-capable service-account token. `K6_PROMETHEUS_RW_*` is write-scoped:
+querying with it returns `invalid scope requested`, which a naive parser reads as "no data".
 
-`sli_ratio` (and only `sli_ratio`) contains `$__rate_interval`, a macro the Grafana SLO API expands
-but a raw Prometheus query does not understand. Substitute the run's own window — e.g. `sed
-'s/\$__rate_interval/5m/g'` — or the query 400s.
+`sli_ratio` contains `$__rate_interval`, a macro the Grafana SLO API expands but a raw Prometheus
+query does not. Substitute the run's own window or the query returns 400.
 
 ```bash
 set -a && . .env && set +a
 P="$GRAFANA_URL/api/datasources/proxy/uid/grafanacloud-prom/api/v1"
 Q=<project>/infra/grafana/queries.json
-for k in sli_ratio cpu_saturation_ratio; do
+for k in sli_ratio cpu_saturation_ratio; do   # plus any query loadtest.md names
   EXPR=$(jq -r --arg k "$k" '.[$k]' "$Q" | sed "s/\$__rate_interval/${RUN_WINDOW:-5m}/g")
   printf '%-24s ' "$k"
   curl -s -H "Authorization: Bearer $GRAFANA_AUTH" --get \
@@ -137,229 +134,77 @@ for k in sli_ratio cpu_saturation_ratio; do
 done
 ```
 
-Verified live against this repo's stack (2026-09-01, idle service — expect `0`/`1`, not a live-run
-number): `sli_ratio` → `"1"`, `cpu_saturation_ratio` → `"0"`. Each returns a **value**, not an empty
-result — the collector emits the zero rather than omitting the series.
-
-## Read the throttle counts from CloudWatch (`ecs-dynamodb-rps`)
-
-The two throttle readings no longer come from Grafana. Alloy's DynamoDB block was trimmed to
-`SuccessfulRequestLatency`, so `read_throttle_events` / `write_throttle_events` are gone from
-`queries.json` and from Prometheus — read the source instead, over the run's own window, per-60s
-`Sum`, peak of each:
-
-```bash
-TABLE=$(terraform -chdir=<project>/infra/main output -raw table_name)
-for m in ReadThrottleEvents WriteThrottleEvents; do
-  printf '%-20s ' "$m"
-  aws cloudwatch get-metric-statistics --namespace AWS/DynamoDB --metric-name "$m" \
-    --dimensions Name=TableName,Value="$TABLE" --statistics Sum --period 60 \
-    --start-time "$RUN_START" --end-time "$RUN_END" \
-    --query 'max(Datapoints[].Sum) || `0`' --output text
-done
-```
-
-`RUN_START` / `RUN_END` are the run's own timestamps in UTC ISO-8601 (e.g.
-`2026-09-04T10:00:00Z`). `aws cloudwatch get-metric-statistics` is already on the permission
-allowlist.
-
-**CloudWatch publishes these two metrics sparsely: a minute with no throttling produces no
-datapoint at all, not a zero.** So an empty `Datapoints` list means "nothing was throttled", which
-is why the JMESPath query ends in a ``|| `0` `` fallback — a missing datapoint is zero, not
-missing data. (The zeros
-that used to come back from Prometheus were the Alloy exporter filling gaps, not CloudWatch.) The
-same sparseness is why the throttle alert in `infra/grafana/throttles.tf` is two rules rather than
-one summed rule.
-
-**Nothing derives a bound resource.** The four-row attribution table this skill used to reference
-was deleted on 2026-09-01 — it named the service while DynamoDB was rejecting 5,588 reads per
-minute, because SDK retry backoff inflates every service-side signal. Record `throttles` as **`read/write`** — the peak
-per-minute value of `ReadThrottleEvents`, a slash, then the peak per-minute value of
-`WriteThrottleEvents`, both over the run window: e.g. `5588/0`. Two numbers, not the larger of the
-two, mirroring the `RCU/WCU` column's convention — separating reads from writes is the entire reason
-these two metrics were chosen over `ThrottledRequests` (which is published only per
-`TableName`+`Operation` and reads 0 at instants during sustained throttling). Then let whoever reads
-the row draw the conclusion from that plus the latency columns.
-
-## Read the pool and instance metrics from CloudWatch (`ecs-rds-postgres-pool`)
-
-This project has no `table_name` output and no throttle metrics — it reads `AWS/RDS` instead, over
-the run's own window, with `DBInstanceIdentifier=ecs-rds-postgres-pool`:
-
-```bash
-for m in DatabaseConnections:Maximum DBLoadCPU:Average CPUCreditBalance:Minimum CPUSurplusCreditBalance:Maximum; do
-  METRIC="${m%%:*}"; STAT="${m##*:}"
-  printf '%-24s ' "$METRIC"
-  aws cloudwatch get-metric-statistics --namespace AWS/RDS --metric-name "$METRIC" \
-    --dimensions Name=DBInstanceIdentifier,Value=ecs-rds-postgres-pool --statistics "$STAT" \
-    --period 60 --start-time "$RUN_START" --end-time "$RUN_END" \
-    --query "$STAT(Datapoints[].$STAT)" --output text
-done
-```
-
-- `connections` = `DatabaseConnections`, **Maximum** over the window.
-- `DBLoadCPU/vCPU` = `DBLoadCPU`, **Average** over the window, divided by the instance class's vCPU
-  count — record the division, not the raw `DBLoadCPU` value, since `DBLoadCPU` is a count of active
-  sessions, not a percentage.
-- `credit balance` = `CPUCreditBalance`, **Minimum** over the window — the low point, because that is
-  the point closest to running out.
-- `CPUSurplusCreditBalance`, **Maximum** over the window, is not its own column — it is a run
-  validity check. **Any value above zero disqualifies the run**: the instance spent past its burst
-  budget, so its CPU during that run does not represent the CPU of the next one. Note the
-  disqualification in `infra change` or skip recording the row rather than let a burst-inflated
-  number stand as a measurement.
-
-**Same sparseness as the DynamoDB metrics: a quiet minute produces no datapoint, not a zero.**
-`DatabaseConnections`, `DBLoadCPU`, `CPUCreditBalance` and `CPUSurplusCreditBalance` are all
-published on this cadence — an empty `Datapoints` list means "no sample", never "zero load". Unlike
-the throttle counts, do not default a missing datapoint to 0 here: a missing `CPUCreditBalance` or
-`DatabaseConnections` sample means the window needs widening, not that credits or connections were
-zero.
-
-`pool wait p95` and `waiting peak` come from the service's own pool metrics (client-side, not
-CloudWatch) — read them the same way as the other k6/service-observed columns, from whatever the
-service exposes over the run window; they are not part of this CloudWatch read.
-
-`posts rows` is `SELECT count(*) FROM posts`, taken immediately **before** the run starts, not
-computed from CloudWatch at all — see "Recording" below for why.
+An idle service returns `"1"` / `"0"`, not an empty result — the collector emits the zero rather
+than omitting the series. An empty result therefore means a wrong query or credential.
 
 ## Recording
 
-Append to `<project>/results.md` — create it with a header row if absent. The table is a shared
-spine plus columns each project adds after `EL lag p99`:
+Append to `<project>/results.md`; create it with the header from `loadtest.md` if absent. Every
+project's header starts with the same spine:
 
 ```markdown
 | date | profile | infra change | RPS | k6 attainment | service attainment | budget burn x | p95 fast/std/heavy | db ms | cpu ms | EL lag p99 | <project columns> | $/hr |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
 ```
 
-Per-project columns between `EL lag p99` and `$/hr`:
+Never carry one project's columns into another's `results.md`: an empty cell for a metric that does
+not apply is not a result.
 
-```markdown
-`ecs-rds-postgres-pool`: | pool wait p95 | waiting peak | DBLoadCPU/vCPU | connections | pool size | credit balance | posts rows |
-`ecs-dynamodb-rps`:      | throttles | RCU/WCU |
-```
-
-Never carry one project's columns into the other's `results.md` — an empty cell for a metric that
-does not apply to that project is not a result, so each project's table has only its own columns.
-
-**Two attainment columns, because two different numbers both legitimately answer "did it meet the
-SLO", and they are not interchangeable:**
+**Two attainment columns, and they are not interchangeable:**
 
 | column | source | what it includes |
 |---|---|---|
 | `k6 attainment` | the k6 run's `slo_met` rate — the run **gate** | client-side: load-zone RTT, ALB queueing, the client's own scheduling |
 | `service attainment` | the Grafana SLO query over the run window — the **SLO** | server-side only: callback start to response finish |
 
-The service figure is the one that means "SLO". The k6 figure is a pass/fail gate for the run.
-Expect the k6 number to be lower; if it is *higher*, something is wrong with one of them. **Never
-record one number in both columns, and never leave a bare "attainment"** — an unlabelled pair is how
-a deliverable stops being trusted.
+The service figure is the one that means "SLO". Expect the k6 number to be lower; if it is *higher*,
+something is wrong with one of them. **Never record one number in both columns, and never a bare
+"attainment".** The SLO population is classified traffic only (`class=~"fast|standard|heavy"`), so
+scanner 404s on the public ALB do not count as violations.
 
-Read `service attainment` from the same PromQL the alert rules use, over the run's own window. Note
-the SLO population is restricted to classified traffic (`class=~"fast|standard|heavy"`); an
-internet-facing ALB collects scanner 404s that would otherwise count as violations.
+`infra change` is the most important column. A row whose infra change is blank is not a result, it
+is a number.
 
-`infra change` is the most important column — it is what makes the row mean something. A row whose
-infra change is blank is not a result, it is a number.
+`budget burn x` is observed miss rate ÷ sustainable miss rate. A run is minutes and the SLO window is
+days, so a raw "0.03% of budget" does not travel between runs; the multiple does. Compute it from
+`service attainment`, not the k6 figure — the budget belongs to the SLO.
 
 ### Completeness check
 
-Before writing up results, confirm every row carries the columns that make it a result rather than a
-number. `$4` (infra change), `$6` (k6 attainment) and `$7` (service attainment) are spine columns —
-they sit before any per-project column, so they land on the same field number in every project's
-`results.md`:
+Every row must carry `infra change` (`$4`), `k6 attainment` (`$6`) and `service attainment` (`$7`).
+These are spine columns, so they land on the same field number in every project:
 
 ```bash
 awk -F'|' 'NR>2 && NF>3 && ($4 ~ /^ *$/ || $6 ~ /^ *$/ || $7 ~ /^ *$/) \
   { print "INCOMPLETE ROW:", $0 }' <project>/results.md
 ```
 
-**Do not assume those indices survive a schema change — spine or not.** `awk -F'|'` on a
-leading-pipe Markdown row makes `$1` the empty string before the first column, so the field number
-is never the column number. After touching this table again, re-derive every index by piping the
-header row through `awk -F'|'` and printing the fields — never by counting pipes by eye. Counting
-is how the previous version of this check ended up validating the wrong columns while documenting
-itself as validating the right ones.
-
-A project may extend the check with its own distinguishing column — the one that tells you *why* a
-bad row was bad, the way `throttles` does for `ecs-dynamodb-rps`. Re-derive that index from that
-project's own header; it is **not** portable between projects even when the number happens to
-match:
+Then check the project's own completeness column, whose field number `loadtest.md` gives. **Never
+count pipes by eye**: `awk -F'|'` on a leading-pipe row makes `$1` the empty string, so the field
+number is never the column number. After any header change, re-derive every index:
 
 ```bash
-# ecs-dynamodb-rps:      $13 = throttles
-# ecs-rds-postgres-pool: $14 = waiting peak
+grep -m1 '^| date' <project>/results.md | awk -F'|' '{ for (i = 1; i <= NF; i++) print i": "$i }'
 ```
 
-For `ecs-dynamodb-rps`'s current 15-field header `$13` is `throttles`; for
-`ecs-rds-postgres-pool`'s 20-field header, `$13` is `pool wait p95`, not `throttles` — the same
-field number means a different column in each project's table, which is exactly why this addendum
-check must be re-derived per project rather than copied.
+## Cloud runs
 
-`budget burn x` is the burn-rate multiple: observed miss rate / sustainable miss rate. A k6 run is
-minutes and the SLO window is days, so a raw "0.03% of budget" figure does not travel between runs.
-The multiple does. Compute it from `service attainment`, not the k6 figure — the budget belongs to
-the SLO.
+The command is `k6 cloud run`, not `k6 run`, so the generator is not the bottleneck and RTT is not
+charged against the latency budget. Verified against k6 v1.4.0:
 
-### Cloud runs
-
-This repo's projects run from Grafana Cloud so the generator is not the bottleneck and RTT is not
-charged against the latency budget. The command is `k6 cloud run`, not `k6 run`.
-
-Verified against the installed k6 v1.4.0:
-
-- **`--summary-export` IS supported on `k6 cloud run`.** `k6 cloud run --help` lists
-  `--summary-export string   output the end-of-test summary report to JSON file`, and — unlike
-  `--linger`, `--no-usage-report` and `--no-archive-upload` — it carries no "only in local-execution
-  mode" caveat. So this is the favourable case: everything in "Reading the results" above (the
-  `jq` parsing, the inverted-threshold-boolean gotcha, the `passes`/`.value` gotcha) applies to
-  `k6 cloud run --summary-export=...` unchanged.
-- **`k6 cloud load-zone list` does not exist in this k6 version.** `k6 cloud --help` lists exactly
-  three subcommands: `login`, `run`, `upload`. There is no CLI command to enumerate or confirm load
-  zones. Do not chase this command — it cannot work on the installed k6. If you need to *see* the
-  zone catalog, that lives in the Grafana Cloud UI/API, not the k6 binary.
-- **Zone validity is confirmed at test submission, not by a separate lookup.** Grafana Cloud
-  validates `options.cloud.distribution.<name>.loadZone` (e.g. `amazon:de:frankfurt`) when the test
-  is submitted, before any load is generated and before VU-hours are spent. An invalid zone fails
-  fast and free on the first `k6 cloud run` — so the practical verification step is: submit the run
-  and watch for an immediate rejection, not a pre-flight `load-zone list` call.
-
-Capture the exit code on the k6 line itself — behind a pipe you get the pipe's status. `99` means
-one of the four gating thresholds was breached (`slo_met`, `slo_met_tail`, `http_req_failed`,
-`dropped_iterations`); `0` means all passed.
-
-- **The project caps virtual users, and the cap bites at upload time.** Verified 2026-09-01 against
-  the hand-made k6 project `8474786`, and the cap is an organization/subscription one rather than a
-  property of the project object — so it applies unchanged to every k6 project a project's
-  `infra/k6` creates, and survives the project being recreated on each `/env up` (the limits resource
-  sets `vu_max_per_test` to 25000, which is not the cap that bites). Any test asking for more than
-  **100 VUs** is rejected with
+- **`--summary-export` works on `k6 cloud run`**, so everything in "Reading the results" applies.
+- **There is no `k6 cloud load-zone list`.** `k6 cloud` has exactly `login`, `run` and `upload`. An
+  invalid `loadZone` is rejected at submission, before any VU-hours are spent.
+- **The subscription caps a test at 100 VUs**, checked against `preAllocatedVUs` at upload:
   `(400/E2004) The Virtual User (VU) count for this test (400 VUs) exceeds the maximum allowed for
-  your project (100 VUs)`. `preAllocatedVUs` is what the check reads. Since 2026-09-02 the scripts
-  derive it as `min(100, ceil(rate × 0.125))` — 125 ms is the frozen mix's mean latency at the SLO
-  boundary — so a run that meets the SLO never starves and the cap is only reached from 800 rps up.
-  This is a **generator** limit, not a service limit: at 100 VUs the achievable rate is roughly
-  `100 / mean_iteration_seconds`, so it collapses exactly where the service slows down — near the
-  knee. `dropped_iterations` is now a **gating threshold** (`count==0`): a run that ran out of VUs
-  exits 99 and the summary shows the breach. Such a run delivered less than `RATE` and **measured
-  the generator, not the service**; record it as a failed run, never as a pass at a lower rate.
-
-- **`BASE_URL` never appears in a command line in git, and never in `.env` either.** The endpoint is
-  per-project while `.env` is global, and it is a value Terraform already owns — a copy anywhere else
-  can only ever be the stale one. Ask Terraform at the moment of use. (Removed from `.env` on
-  2026-09-10, after a run measured a dead ALB: the copy still named the load balancer from two
-  applies and one project rename earlier.)
-
-  Use `output -json` piped through `jq`, never `output -raw`: against an empty state `-raw` prints a
-  multi-line warning **to stdout** and still exits 0, so `-e BASE_URL=` would carry that warning text
-  as the hostname and every request would fail for a reason that looks nothing like the cause.
-
-- **The k6 project id is the same kind of value, since 2026-09-14.** Each project's `infra/k6` creates
-  its k6 project and `/env down` destroys it, so the id changes on every rebuild and there is no
-  `K6_CLOUD_PROJECT_ID` in `.env` any more. Read it the same way, and pass it to `k6 cloud run`
-  **explicitly**: no test script sets `options.cloud.projectID`, so without it the run lands in the
-  stack's default project.
+  your project (100 VUs)`. It is an organization limit, so it survives the k6 project being
+  recreated. How each project sizes VUs under it is in `loadtest.md`. `dropped_iterations` is a
+  gating threshold (`count==0`): a run that ran out of VUs exits 99, delivered less than `RATE` and
+  **measured the generator, not the service** — record it as failed, never as a pass at a lower rate.
+- **`BASE_URL` and the k6 project id come from `terraform output` at the moment of use**, never from
+  `.env` or a committed command. Both change on every rebuild. Use `output -json` with `jq`, never
+  `output -raw`: against empty state `-raw` prints a warning **to stdout** and exits 0, and that text
+  becomes the hostname. Pass the project id explicitly — no script sets `options.cloud.projectID`,
+  so without it the run lands in the stack's default project.
 
 ```bash
 OUT=$(terraform -chdir=<project>/infra/main output -json)
@@ -374,69 +219,82 @@ echo "exit: $?"
 
 ## Reading a UI-started run from the API
 
-A run started from the Grafana Cloud k6 UI writes no local file. Everything the results row needs is
-in the k6 Cloud API instead. Auth is `Authorization: Token $K6_CLOUD_TOKEN` from the root `.env`.
-
-**Endpoints, verified 2026-09-01 against the live API** (shapes taken from the service's own OData
-schema at `https://api.k6.io/cloud/v5/$metadata`, not guessed):
+Auth is `Authorization: Token $K6_CLOUD_TOKEN` from the root `.env`. Endpoints verified 2026-09-01
+against the live API (shapes from `https://api.k6.io/cloud/v5/$metadata`):
 
 ```bash
 source .env
-# The project id is not in .env — it is per environment. Ask Terraform (json, never -raw):
 PROJECT_ID=$(terraform -chdir=<project>/infra/main output -json | jq -r '.k6_project_id.value // empty')
-
-# 1. Find the run. Tests in the project:
-curl -sS -H "Authorization: Token $K6_CLOUD_TOKEN" \
-  "https://api.k6.io/cloud/v5/projects/$PROJECT_ID/load_tests"
-
-# 2. That test's runs, newest last:
-curl -sS -H "Authorization: Token $K6_CLOUD_TOKEN" \
-  "https://api.k6.io/cloud/v5/load_tests/<test_id>/test_runs"
-
-# 3. The numbers:
-curl -sS -H "Authorization: Token $K6_CLOUD_TOKEN" \
-  "https://api.k6.io/cloud/v5/test_runs/<run_id>/result_summary"
+curl -sS -H "Authorization: Token $K6_CLOUD_TOKEN" "https://api.k6.io/cloud/v5/projects/$PROJECT_ID/load_tests"
+curl -sS -H "Authorization: Token $K6_CLOUD_TOKEN" "https://api.k6.io/cloud/v5/load_tests/<test_id>/test_runs"
+curl -sS -H "Authorization: Token $K6_CLOUD_TOKEN" "https://api.k6.io/cloud/v5/test_runs/<run_id>/result_summary"
 ```
 
-`result_summary` returns `{result_status, metrics_summary, baseline_test_run_details}`, where
-`metrics_summary.http_metric_summary` carries the fields the results row is built from:
+`result_summary` returns `{result_status, metrics_summary, baseline_test_run_details}`;
+`metrics_summary.http_metric_summary` carries:
 
 | API field | results column |
 |---|---|
 | `rps_mean`, `rps_max` | RPS achieved |
-| `duration.p95`, `duration.p99` | p95 / p99 (a `TrendSummary`: `count, min, mean, max, p95, p99, stdev`) |
-| `duration_median` | median |
+| `duration.p95`, `duration.p99` | p95 / p99 (`count, min, mean, max, p95, p99, stdev`) |
 | `failures_count` / `requests_count` | error rate — **divide them yourself**; there is no rate field |
 | `thresholds_summary.successes` / `.total` | how many thresholds held |
 | `result_status` (top level) | the run's verdict, as a **string** |
 
-**Three traps, and they are not the same traps as the local file's.**
+Three traps, different from the local file's:
 
-- **`result_status` is a string here, not the inverted boolean of the summary JSON.** In
-  `--summary-export` a threshold's boolean means *was it breached* (`true` = failed). In the API it
-  is a word — an unexecuted run reads `"Error"`. Do not carry the inversion habit across; do not
-  carry a raw integer either, since `test_runs/<id>` also exposes a numeric `result_status` that is
-  a different encoding of the same thing.
-- **There is no error-rate field.** `http_req_failed.value` has no API equivalent — compute
-  `failures_count / requests_count` and say so in the row.
-- **An archived-but-never-run test returns `metrics_summary: null`.** That is not an API failure and
-  not a zero-result run; it means the test was uploaded and never executed. Report it as "no run",
-  never as a measurement.
+- **`result_status` is a string, not the inverted boolean** of the summary JSON; an unexecuted run
+  reads `"Error"`. `test_runs/<id>` also has a numeric `result_status` — a different encoding.
+- **No error-rate field.** Compute `failures_count / requests_count` and say so in the row.
+- **`metrics_summary: null`** means uploaded but never run. Report "no run", never a measurement.
 
-**`slo_met` is not in `http_metric_summary`.** It is a custom `Rate` metric, so the client-side SLO
-attainment — the gate — comes from `test_runs/<run_id>/metrics`, not from `result_summary`. Fetch
-that list and find the `slo_met` and `slo_met_tail` entries. If the shape there is not yet documented
-in this skill, print it once and write down what you found rather than assuming it matches
-`TrendSummary`.
+**`slo_met` is not in `http_metric_summary`.** It is a custom `Rate`, so the k6 attainment comes from
+`test_runs/<run_id>/metrics`: find the `slo_met` and `slo_met_tail` entries. If their shape is not
+documented here yet, print it once and write down what you found.
 
 ## `--compare`
 
 Read the previous row for the same profile and present a before/after table: RPS, p95, error rate,
-SLO attainment, and the one infrastructure change between them. If the previous row used a different
-profile or an edited script, refuse to compare and explain why.
+both attainments, and the one infrastructure change between them. If the previous row used a
+different profile or a script that has changed since (check `git log -- <project>/infra/k6/tests/`
+against the row's date), refuse to compare and say why.
 
 ## Reporting
 
 Per CLAUDE.md, an SLO or RPS figure may only be stated with the output that produced it, from this
 session. Quote the numbers with the run they came from; never carry a figure over from an earlier
 conversation.
+
+## The project contract: `<project>/loadtest.md`
+
+Write this file when a project gets its first load profile, and update it in the same commit as any
+change to the results header, the run gate or a server-side metric. Copy the structure of the
+nearest sibling (`ecs-dynamodb-rps/loadtest.md`, `ecs-rds-postgres-pool/loadtest.md`); keep these
+four sections, in this order, and nothing generic — what is in this skill is not repeated there:
+
+1. **`## Results table`** — the full `results.md` header: the spine above, then the project's
+   columns before `$/hr`. Drop a spine column only if the platform cannot produce it (a Lambda has
+   no event loop that outlives a request, so `EL lag p99` has no meaning there) and say why. Name the
+   **completeness column** — the one that says *why* a bad row was bad — with its field number,
+   derived with the `awk` one-liner above.
+2. **`## Before the run`** — the run gate (the condition that makes a run not comparable, e.g. a
+   drained burst bucket or full CPU credits) and every pre-run reading a column needs, with the
+   command or the `dev.tfvars` key it comes from.
+3. **`## Load-generator sizing`** — how the profiles set `preAllocatedVUs` under the 100-VU cap, and
+   the `-e` overrides.
+4. **`## Server-side metrics (after the run)`** — the exact commands over `RUN_START`..`RUN_END`, then
+   a `column | source | rule` table mapping every project column to its metric and statistic. For
+   each metric say what an empty result means: some CloudWatch metrics publish nothing in a quiet
+   minute (an empty list is then 0), others mean "widen the window" (never 0).
+
+Rules for the commands in that file:
+
+- **JMESPath functions are lowercase** — `max`, `min`, `avg`, `sum`. The CloudWatch statistic names
+  (`Maximum`, `Minimum`, `Average`, `Sum`) are not JMESPath functions; `--query 'Maximum(...)'` is
+  rejected.
+- **The statistic in a column name must match the query.** A column called `p95` fed by a
+  `histogram_quantile(0.99, …)` query records a p99 under a p95 label.
+- Resource names come from `terraform output -json` or the Terraform source, never typed from
+  memory; read every query key against `infra/grafana/queries.json` before writing it down.
+- Run each command once against a live environment before calling the file done, and note the date
+  it was verified.

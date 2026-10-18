@@ -63,6 +63,7 @@ the tag therefore pointed at nothing — see
   scripts/            every script this project owns: deploy-service.sh, upload-k6.sh
   slo.yaml            SLO source of truth; generates the k6 thresholds and the Grafana rules
   results.md          the run ledger (/loadtest appends here)
+  loadtest.md         the project side of /loadtest: results columns, run gate, server-side metrics
   README.md           what it provisions, how to run it, measured results
 ```
 
@@ -171,7 +172,13 @@ Two skills need translation, because superpowers assumes an application codebase
   infrastructure, then change the infrastructure until it passes.** Same discipline (see the failure
   first, or you don't know the assertion is real), applied to the thing that can actually fail.
   Terraform's own feedback loop — `fmt -check`, `validate`, then a reviewed `plan` — is the per-task
-  verification step, and it belongs in every plan task that touches HCL.
+  verification step, and it belongs in every plan task that touches HCL. The first two are
+  automatic: a `PostToolUse` hook (`.claude/hooks/terraform-check.sh`) formats every `.tf`/`.tfvars`
+  Claude edits and validates the root that owns it, returning any error to the session; the git
+  `pre-commit` hook (`scripts/pre-commit`, linked into `.git/hooks` by `scripts/03-wire-repo.sh`,
+  because git does not clone hooks) runs `fmt -check` on the staged `.tf`/`.tfvars` files and
+  `validate` on their roots, for every commit whoever writes it — plus `k6 inspect` on every load
+  profile whose `infra/k6/tests/` has a staged change. Both skip a root that was never `init`ed. The `plan` stays manual.
 - **`subagent-driven-development`** says to execute all tasks without pausing, stopping only for
   irreversible or destructive operations. In this repo `terraform apply` and `terraform destroy` are
   exactly that — they create and delete billable AWS resources. **Every plan must put apply/destroy in
@@ -285,7 +292,7 @@ common failure, not wrong syntax.
 
 ## Project skills
 
-Four skills in `.claude/skills/` automate the loop and its documentation. Prefer them over ad-hoc commands — each encodes
+Three skills in `.claude/skills/` automate the loop and its documentation. Prefer them over ad-hoc commands — each encodes
 gotchas that cost real money or produce wrong numbers:
 
 - **`/env up|down|status <project>`** — Terraform lifecycle for `<project>/infra/main`, with an
@@ -295,8 +302,6 @@ gotchas that cost real money or produce wrong numbers:
   `terraform -chdir=platform apply`.
 - **`/loadtest <project> <profile> [--compare]`** — runs k6, parses the summary, appends a result row
   with the infra change that distinguishes the run. Encodes two verified k6 quirks (below).
-- **`/slo <project> [--check]`** — one `slo.yaml` generates both the k6 thresholds and the Grafana
-  alert rules, so they cannot drift apart.
 - **`/readme <project>`** — writes or restructures a project's `README.md` to the shared section
   order, phase numbering and evidence rules, so every scenario's runbook reads the same.
 

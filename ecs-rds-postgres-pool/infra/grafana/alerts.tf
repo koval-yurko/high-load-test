@@ -1,4 +1,4 @@
-# GENERATED from slo.yaml by /slo. Do not edit by hand.
+# GENERATED from slo.yaml by npm run slo:generate. Do not edit by hand.
 #
 # Burn-rate alerting on error budget, not the raw SLI. Both the multipliers and
 # the ALERT WINDOWS are derived from slo.yaml's window (7d): the

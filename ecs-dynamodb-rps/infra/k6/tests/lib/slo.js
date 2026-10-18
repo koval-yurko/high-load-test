@@ -1,4 +1,4 @@
-// GENERATED from slo.yaml by /slo. Do not edit by hand.
+// GENERATED from slo.yaml by npm run slo:generate. Do not edit by hand.
 export const CLASS_THRESHOLD_MS = { fast: 50, standard: 200, heavy: 800 };
 export const TAIL_MULTIPLIER = 3;
 

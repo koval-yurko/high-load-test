@@ -16,8 +16,8 @@ instance_class    = "db.t4g.micro"
 allocated_storage = 20
 
 # --- the measurement parameters ---
-seed_rows        = 50000 # x ~1 KB must stay inside shared_buffers
-seed_feeds       = 16
+seed_rows  = 50000 # x ~1 KB must stay inside shared_buffers
+seed_feeds = 16
 
 # The heavy route's workload, fixed here and deployed with the service: a pure CPU
 # scan, no wait. Chosen, not measured -- the hold is whatever 25000 rows cost, and
@@ -26,7 +26,7 @@ seed_feeds       = 16
 # any change, because every later row is compared against it.
 report_scan_rows = 25000
 
-feed_page_size   = 20
+feed_page_size = 20
 
 # --- boot behaviour. seed_on_boot is one task, one shot: it is not idempotent. ---
 migrate_on_boot = true

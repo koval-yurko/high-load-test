@@ -373,7 +373,7 @@ re-read Phase 3. Expect throttles to become non-zero: the database is now the co
 
 Only if Phase 5 left throttles non-zero. Raise `read_capacity` / `write_capacity` in
 `infra/main/dev.tfvars`, and say in a comment what the new number is for. Keep the model honest
-alongside it: raising `target_rps` in `slo.yaml` and re-running `/slo` makes its advisory line agree
+alongside it: raising `target_rps` in `slo.yaml` and re-running `npm run slo:generate` makes its advisory line agree
 with the value you set, so the difference the next reader sees is a real one. Confirm the plan
 is an **in-place** change — if it proposes to *replace* the table, stop, the seeded data is lost.
 Then apply — **approval gate.**
