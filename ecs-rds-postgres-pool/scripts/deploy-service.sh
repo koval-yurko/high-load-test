@@ -19,6 +19,8 @@
 # reach it. (.claude/hooks/guard-terraform.sh would match more spellings, but it is not registered
 # in any settings file, so nothing runs it.) Provision first, by hand:
 #     terraform -chdir=infra/main apply -var-file=dev.tfvars
+# First provision: apply only the ECR repo (-target=aws_ecr_repository.app), run this script to push
+# the image, then apply the rest. Later changes: just this script.
 #
 # Terraform does not rebuild the container image, so every change under service/src/ needs this
 # script. Skipping it fails silently: the service stays healthy while running the old code.
@@ -64,15 +66,15 @@ REPO=$(tfout ecr_repository_url)
 CL=$(tfout cluster_name)
 SV=$(tfout service_name)
 
-if [ -z "$REPO" ] || [ -z "$CL" ] || [ -z "$SV" ]; then
+# Only the ECR repo is required: on a first provision the image must be pushed BEFORE the service
+# exists, or the apply fails ("No rollback candidate was found": tasks cannot pull :latest).
+if [ -z "$REPO" ]; then
   blocked "deploy" \
-    "$PROJECT has no applied infrastructure (terraform outputs are empty)" \
-    "terraform -chdir=infra/main apply -var-file=dev.tfvars   # approval gate, on purpose" \
+    "$PROJECT has no ECR repository yet (terraform outputs are empty)" \
+    "terraform -chdir=infra/main apply -var-file=dev.tfvars -target=aws_ecr_repository.app   # approval gate, on purpose" \
     "./scripts/deploy-service.sh"
 fi
 ok "ecr      $REPO"
-ok "cluster  $CL"
-ok "service  $SV"
 
 # --- 2. build and push -------------------------------------------------------
 if [ "$SKIP_BUILD" -eq 1 ]; then
@@ -98,6 +100,15 @@ else
 fi
 
 # --- 3. roll the service -----------------------------------------------------
+if [ -z "$CL" ] || [ -z "$SV" ]; then
+  echo
+  info "no ECS service yet: image pushed, nothing to roll"
+  note "terraform -chdir=infra/main apply -var-file=dev.tfvars   # approval gate, creates the service"
+  exit 0
+fi
+ok "cluster  $CL"
+ok "service  $SV"
+
 echo
 step "Rolling the ECS service"
 d aws ecs update-service --cluster "$CL" --service "$SV" --force-new-deployment >/dev/null

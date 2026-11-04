@@ -386,10 +386,18 @@ cd ecs-rds-postgres-pool
 terraform -chdir=infra/main init
 ```
 
-Provision, deploy the service into it, then seed (safe to repeat, see [Seeding](#seeding)):
+First provision: push the image before the service exists, or the apply fails with
+`No rollback candidate was found` (the tasks cannot pull `:latest`).
 
 ```bash
+terraform -chdir=infra/main apply -var-file=dev.tfvars -target=aws_ecr_repository.app   # approval gate
+./scripts/deploy-service.sh                               # no service yet: build amd64 → push only
 terraform -chdir=infra/main apply -var-file=dev.tfvars   # approval gate
+```
+
+Then seed (safe to repeat, see [Seeding](#seeding)). Later code changes need only `deploy-service.sh`:
+
+```bash
 ./scripts/deploy-service.sh                              # build amd64 → push → force new deployment → health
 ./scripts/seed.sh              # tops posts up to seed_rows; re-running inserts nothing
 ./scripts/seed.sh --add 100000 # append 100000 more seeded rows
