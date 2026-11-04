@@ -42,11 +42,15 @@ export function doRequest(baseUrl) {
   const tags = { class: cls, kind };
   const postId = 1 + (i % SEED_ROWS);
 
+  // A `name` tag groups URLs that differ only by an id, and k6 copies it into the `url` tag too. Without
+  // it every distinct /posts/<id> is a new metric series, and every discovery run since 2026-11-04 was
+  // ended by Grafana Cloud's "Mimir active series limit exceeded" after 27,000 to 33,000 requests. The
+  // load, the thresholds and the slo_met series are unchanged: `tags` below still feeds slo_met alone.
   let res;
   if (kind === 'read') {
-    res = http.get(`${baseUrl}/posts/${postId}`, { tags });
+    res = http.get(`${baseUrl}/posts/${postId}`, { tags: { ...tags, name: 'GET /posts/:id' } });
   } else if (kind === 'feed') {
-    res = http.get(`${baseUrl}/feeds/${nextFeed(SEED_FEEDS)}/posts`, { tags });
+    res = http.get(`${baseUrl}/feeds/${nextFeed(SEED_FEEDS)}/posts`, { tags: { ...tags, name: 'GET /feeds/:id/posts' } });
   } else if (kind === 'write') {
     res = http.post(`${baseUrl}/posts`, '{}', { headers: JSON_HEADERS, tags });
   } else {

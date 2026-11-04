@@ -6,14 +6,15 @@ What `/loadtest` needs to know about this project and nothing else does. The gen
 
 ## Results table
 
-`results.md` header — the shared spine, then this project's columns before `$/hr`:
+`results.md` header — the shared spine, then this project's columns. `EL lag p99` and `$/hr` are dropped from the spine on purpose (2026-11-04): they do not explain this project's results.
 
 ```markdown
-| date | profile | infra change | RPS | k6 attainment | service attainment | budget burn x | p95 fast/std/heavy | db ms | cpu ms | EL lag p99 | pool wait p99 | waiting peak | DBLoadCPU/vCPU | connections | pool size | credit balance | posts rows | $/hr |
+| date | profile | infra change | RPS | k6 attainment | service attainment | budget burn x | p95 fast/std/heavy | db ms | DBLoadCPU/vCPU | connections | pool size | posts rows | disk MB/s peak min (r+w) | disk queue max |
 ```
 
-Completeness column: `$14` = `waiting peak` — the column that says why a bad row was bad (requests
-queued for a connection). Re-derive it from the header with `awk -F'|'` after any header change.
+Completeness column: `$15` = `disk MB/s peak min (r+w)` — the column that says why a bad row was bad (the
+disk is the bottleneck: the heavy query spills a temp file per call and the 20 GB gp3 volume stops at
+125 MiB/s, about 131 MB/s). Re-derive it from the header with `awk -F'|'` after any header change.
 
 ## Before the run
 
@@ -52,7 +53,13 @@ rds DatabaseConnections     Maximum max
 rds DBLoadCPU               Average avg
 rds CPUCreditBalance        Minimum min
 rds CPUSurplusCreditBalance Maximum max
+rds ReadThroughput          Average max   # bytes per second; busiest minute
+rds WriteThroughput         Average max   # bytes per second; busiest minute
+rds DiskQueueDepth          Maximum max
 ```
+
+For `disk MB/s peak min`, read `ReadThroughput` and `WriteThroughput` for the **same minute** (print the
+datapoints, not the maximum of each) and add them: the two maxima can fall in different minutes.
 
 The CloudWatch statistic (`Maximum`) and the JMESPath function (`max`) are different names for the
 same idea, and only the lowercase one is a JMESPath function — `Maximum(...)` is rejected.
@@ -61,10 +68,10 @@ same idea, and only the lowercase one is a JMESPath function — `Maximum(...)` 
 |---|---|---|
 | `connections` | `DatabaseConnections`, max | |
 | `DBLoadCPU/vCPU` | `DBLoadCPU`, avg, ÷ the vCPU count of `instance_class` | record the quotient; `DBLoadCPU` counts active sessions, it is not a percentage |
-| `credit balance` | `CPUCreditBalance`, min | the low point is the one closest to running out |
+| — | `CPUCreditBalance`, min | **run-gate reading, no longer a column.** Record it in `infra change` or the notes when it was not full |
 | — | `CPUSurplusCreditBalance`, max | **validity check, not a column.** Above zero disqualifies the run: note it in `infra change` or do not record the row |
-| `pool wait p99` | `pool_wait_p99_by_class` in `infra/grafana/queries.json` | per class, over the run window |
-| `waiting peak` | `pool_waiting` in `infra/grafana/queries.json`, max over the run window | |
+| `disk MB/s peak min (r+w)` | `ReadThroughput` + `WriteThroughput`, Average per 60 s, busiest minute | bytes per second divided by 1e6; show read and write in brackets |
+| `disk queue max` | `DiskQueueDepth`, max over the run window | |
 
 **A quiet minute publishes no datapoint, not a zero.** An empty list prints `None`. Do not record it
 as 0: widen the window instead. (The DynamoDB throttle counts are the opposite case.)

@@ -3,6 +3,7 @@
 # A bug fixed here does not reach the sibling copy; fix both.
 #
 # upload-k6.sh [--rate N] [--base-url URL] [--only NAME] [--check] [--dry-run]
+#              [--start-rate N] [--max-rate N] [--step-rps N] [--step-seconds N] [--run]
 #
 # Puts this project's three load profiles into the Grafana Cloud k6 project, with BASE_URL and RATE
 # baked into each archive, and reads back what the project now holds.
@@ -10,6 +11,15 @@
 #     ./scripts/upload-k6.sh --check              # what is uploaded, and is it stale?
 #     ./scripts/upload-k6.sh                      # discovery only -- the knee is not known yet
 #     ./scripts/upload-k6.sh --rate <knee>        # all three, constant/stress pinned to the knee
+#     ./scripts/upload-k6.sh --start-rate 300 --step-rps 100 --max-rate 900 --run
+#                                                 # discovery from 300 to 900 rps, then start it from here
+#
+# --start-rate, --max-rate, --step-rps and --step-seconds set the discovery steps (defaults 100, 2000,
+# 100, 60 in infra/k6/tests/discovery.js). They are frozen into the archive like BASE_URL. Fewer steps does
+# NOT avoid "Mimir active series limit exceeded": runs with 20 and with 7 steps were all ended after about
+# 27,000 to 33,000 requests, which points at the per-post URL tag, not at the step count. --run starts the one profile from
+# this terminal (`k6 cloud run --summary-export`) after the upload, and prints k6's exit code
+# (0 = every threshold held, 99 = at least one breached). It still never applies Terraform.
 #
 # WHY THIS EXISTS. A run started from the k6 app executes the ARCHIVE STORED IN THE CLOUD, never the
 # file on disk. Every edit under infra/k6/tests/ (or tests/lib/, which all three import) is invisible
@@ -51,6 +61,11 @@ BASE_URL_ARG=""
 ONLY=""
 CHECK=0
 DRY=0
+RUN=0
+START_RATE=""
+MAX_RATE=""
+STEP_RPS=""
+STEP_SECONDS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --rate)     RATE="${2:-}";          shift 2 ;;
@@ -58,11 +73,23 @@ while [ $# -gt 0 ]; do
     --only)     ONLY="${2:-}";          shift 2 ;;
     --check)    CHECK=1;                shift ;;
     --dry-run)  DRY=1;                  shift ;;
-    *) die "unknown flag '$1' (usage: ./scripts/upload-k6.sh [--rate N] [--base-url URL] [--only discovery|constant|stress] [--check] [--dry-run])" ;;
+    --run)      RUN=1;                  shift ;;
+    --start-rate)   START_RATE="${2:-}";   shift 2 ;;
+    --max-rate)     MAX_RATE="${2:-}";     shift 2 ;;
+    --step-rps)     STEP_RPS="${2:-}";     shift 2 ;;
+    --step-seconds) STEP_SECONDS="${2:-}"; shift 2 ;;
+    *) die "unknown flag '$1' (usage: ./scripts/upload-k6.sh [--rate N] [--base-url URL] [--only discovery|constant|stress] [--start-rate N] [--max-rate N] [--step-rps N] [--step-seconds N] [--run] [--check] [--dry-run])" ;;
   esac
 done
 [ -z "$RATE" ] || [[ "$RATE" =~ ^[0-9]+$ ]] || die "--rate takes a whole number of requests per second, got '$RATE'"
 case "${ONLY:-discovery}" in discovery|constant|stress) ;; *) die "--only takes discovery, constant or stress, got '$ONLY'" ;; esac
+for pair in "start-rate:$START_RATE" "max-rate:$MAX_RATE" "step-rps:$STEP_RPS" "step-seconds:$STEP_SECONDS"; do
+  [ -z "${pair#*:}" ] || [[ "${pair#*:}" =~ ^[1-9][0-9]*$ ]] || die "--${pair%%:*} takes a positive whole number, got '${pair#*:}'"
+done
+[ -z "$START_RATE" ] || [ -z "$MAX_RATE" ] || [ "$START_RATE" -le "$MAX_RATE" ] || die "--start-rate ($START_RATE) is above --max-rate ($MAX_RATE)"
+# --run starts ONE profile; with --rate three are uploaded, so say which one to run.
+[ "$RUN" -eq 0 ] || [ -z "$RATE" ] || [ -n "$ONLY" ] || die "--run with --rate needs --only discovery|constant|stress"
+[ "$RUN" -eq 0 ] || [ "$CHECK" -eq 0 ] || die "--run and --check do not go together"
 
 # Every credential lives in the root .env, so each call goes through direnv. Its `direnv: loading …`
 # banner on stderr is left in on purpose -- it is the same proof the README asks for, and
@@ -249,6 +276,11 @@ fi
 cd "$K6_DIR"
 E_ARGS=(-e "BASE_URL=$BASE_URL")
 [ -n "$RATE" ] && E_ARGS+=(-e "RATE=$RATE")
+[ -n "$START_RATE" ] && E_ARGS+=(-e "START_RATE=$START_RATE")
+[ -n "$MAX_RATE" ] && E_ARGS+=(-e "MAX_RATE=$MAX_RATE")
+[ -n "$STEP_RPS" ] && E_ARGS+=(-e "STEP_RPS=$STEP_RPS")
+[ -n "$STEP_SECONDS" ] && E_ARGS+=(-e "STEP_SECONDS=$STEP_SECONDS")
+true  # the lines above end on `[ ] &&`; a false test must not trip set -e
 
 for t in "${TESTS[@]}"; do
   echo
@@ -287,7 +319,7 @@ done
 if [ "$DRY" -eq 1 ]; then
   handoff "k6 upload (--dry-run)" \
     "nothing — the cloud project is untouched" \
-    "./scripts/upload-k6.sh${RATE:+ --rate $RATE}${ONLY:+ --only $ONLY}" \
+    "./scripts/upload-k6.sh${RATE:+ --rate $RATE}${ONLY:+ --only $ONLY}${START_RATE:+ --start-rate $START_RATE}${MAX_RATE:+ --max-rate $MAX_RATE}${STEP_RPS:+ --step-rps $STEP_RPS}${STEP_SECONDS:+ --step-seconds $STEP_SECONDS}${RUN:+$([ "$RUN" -eq 1 ] && echo ' --run')}" \
     "the env / tags / scenarios blocks above are what the archive would carry"
   exit 0
 fi
@@ -301,10 +333,31 @@ if [ "$FAILED" -gt 0 ]; then
   exit 1
 fi
 
+# --- 6. optionally start the run from here ------------------------------------
+# Capture k6's exit code off the k6 command itself, never behind a pipe: 0 = every threshold held,
+# 99 = at least one breached (a normal outcome for discovery, not a script failure).
+if [ "$RUN" -eq 1 ]; then
+  RUN_T="${ONLY:-discovery}"
+  SUMMARY="/tmp/k6-$PROJECT-$RUN_T.json"
+  echo
+  step "Starting $RUN_T from this terminal (load comes from Grafana Cloud, Frankfurt)"
+  info "k6 cloud run ${E_ARGS[*]} tests/$RUN_T.js"
+  RC=0
+  d env K6_CLOUD_PROJECT_ID="$PROJECT_ID" k6 cloud run --summary-export="$SUMMARY" "${E_ARGS[@]}" "tests/$RUN_T.js" || RC=$?
+  echo
+  case "$RC" in
+    0)  ok "k6 exit 0 — every threshold held" ;;
+    99) warn "k6 exit 99 — at least one threshold breached (expected past the knee)" ;;
+    *)  bad "k6 exit $RC — the run did not complete normally"; note "an API error 8060 (Mimir active series limit) is reached after about 30,000 requests; fewer steps do not avoid it (README, Phase 2)" ;;
+  esac
+  note "summary: $SUMMARY (may be missing if the run was aborted by the platform)"
+  [ "$RC" -eq 0 ] || [ "$RC" -eq 99 ] || exit "$RC"
+fi
+
 # The settings page cannot be written from here, so the closing block states what it must NOT
 # contradict. Neither value there can override the archive (measured 2026-09-10, see the header) --
 # an out-of-date page is a reader trap rather than a live risk, which is why the line says EMPTY.
 handoff "k6 upload" \
-  "${TESTS[*]} archived in k6 project $PROJECT_ID with BASE_URL=$BASE_URL${RATE:+ RATE=$RATE}" \
+  "${TESTS[*]} archived in k6 project $PROJECT_ID with BASE_URL=$BASE_URL${RATE:+ RATE=$RATE}${START_RATE:+ START_RATE=$START_RATE}${MAX_RATE:+ MAX_RATE=$MAX_RATE}${STEP_RPS:+ STEP_RPS=$STEP_RPS}${STEP_SECONDS:+ STEP_SECONDS=$STEP_SECONDS}" \
   "https://k0valchuk.grafana.net/a/k6-app/projects/$PROJECT_ID   # start the run (wait 6 min first)" \
   "Settings -> Environment variables must be EMPTY or match the values above — it is browser-only"

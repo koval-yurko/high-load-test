@@ -507,6 +507,21 @@ It takes `BASE_URL` from `terraform output` and bakes it and `RATE` into the arc
 `--rate`, `constant` and `stress` are not uploaded: archived at the placeholder rate and tagged
 `rate_source=default`, they would not be a capacity measurement.
 
+**Narrow the discovery steps.** The default is 20 steps from 100 to 2000 requests per second. When you
+already know the lower steps are clean, start higher. The values are baked into the archive like
+`BASE_URL`, so a run started from the k6 app uses them too. This does **not** avoid
+`Mimir active series limit exceeded`: that error ended every earlier run after about 27,000 to 33,000
+requests, whatever the number of steps. It was caused by a per-post URL tag, now fixed (see [Known gaps](#known-gaps)).
+
+```bash
+./scripts/upload-k6.sh --start-rate 300 --step-rps 100 --max-rate 900    # 7 steps: 300 … 900
+./scripts/upload-k6.sh --start-rate 300 --step-rps 100 --max-rate 900 --dry-run   # show what would be stored
+```
+
+The other flags are `--step-seconds N` (default 60) and `--only discovery|constant|stress`. Step
+names and thresholds stay `rps_N`, so the result still compares with an earlier run that reached the
+same steps.
+
 **2. Check the run gate before every run.** This instance runs in unlimited burst-credit mode: record
 `CPUCreditBalance` and `CPUSurplusCreditBalance` first — a run does not start until the balance is
 full, and a run that makes `CPUSurplusCreditBalance > 0` is disqualified and re-run. Also record
@@ -517,7 +532,18 @@ finishes, open its thresholds: each step has one named `slo_met{scenario:rps_N}`
 threshold as breached, not passed — the boolean is `true` when it was crossed.** The knee is the
 lowest step that breached; `RATE` for B and C is the step before it.
 
-**From a terminal instead** — no upload needed, `-e` wins over everything:
+**From a terminal, in one command** — upload, then start the profile and print k6's exit code:
+
+```bash
+./scripts/upload-k6.sh --start-rate 300 --step-rps 100 --max-rate 900 --run
+./scripts/upload-k6.sh --rate <knee> --only constant --run      # --run needs --only when --rate is given
+```
+
+The summary is written to `/tmp/k6-ecs-rds-postgres-pool-<profile>.json`. Exit `99` means a threshold
+breached, which is normal past the knee. A platform abort (for example error 8060) exits with its own
+code and leaves no summary.
+
+**Or by hand** — no upload needed, `-e` wins over everything:
 
 ```bash
 BASE_URL=$(terraform -chdir=infra/main output -json | jq -r '.base_url.value // empty')
@@ -581,10 +607,10 @@ Check the run gate, re-run B and C, read Phase 3. Record the new ceiling and the
 Append one row per run to `results.md` (`/loadtest` does this, including for UI-started runs). Every
 figure needs the run that produced it — the k6 summary JSON or the Grafana query. Record: what
 distinguished this run (the single infra change), rate achieved, both attainment columns, p95/p99 per
-class, error rate, error budget burned, whether alerts fired, pool wait p99 and the waiting-gauge
-peak, `DBLoadCPU ÷ vCPUs` and `DBLoadRelativeToNumVCPUs`, `DatabaseConnections`, the credit balance,
-**`SELECT count(*) FROM posts` taken just before the run**, and the `$/hr` at the time (an estimate
-until `pricing.json` exists — see [Cost](#cost)). A result is never "N RPS": it is "N RPS at the
+class, error rate, error budget burned, whether alerts fired, `DBLoadCPU ÷ vCPUs` and `DBLoadRelativeToNumVCPUs`, `DatabaseConnections`, the
+**disk throughput** (read plus write MB/s in the busiest minute, and the disk queue), and
+**`SELECT count(*) FROM posts` taken just before the run**. The full column list is in
+[`loadtest.md`](loadtest.md). A result is never "N RPS": it is "N RPS at the
 55/15/25/5 mix".
 
 ## Phase 9 — Tear down
@@ -689,12 +715,37 @@ risk** — an idle instance left running over a weekend outweighs any single mea
 - **There is no local Postgres, so TLS and migrations fail first in AWS.** Unlike the sibling's full
   DynamoDB Local loop, this project's integration path is exercised for the first time against the
   real instance.
-- **`results.md` is empty until the first run** — this README describes the procedure that produces
-  the first row, not a result.
+- **Every discovery run up to 2026-11-04 ended with `Mimir active series limit exceeded`** (k6 Cloud error 8060), after
+  about 27,000 to 33,000 requests, with 20 steps and with 7. The cause was the `url` tag: `lib/request.js` requested
+  `/posts/<id>` with a different id each time and set no `name` tag, so each id added metric series. Now fixed with
+  `name` tags on the read and feed requests. A local k6 run of 400 iterations produced 4 distinct `url` values instead of
+  hundreds, and `k6 inspect` passes for all three profiles. Not yet confirmed in Grafana Cloud: the first cloud run after the
+  change is the test. The load and thresholds are the same, but the profile file changed, so treat the first row after it as
+  the check that earlier rows still compare.
 
 ## Measured results
 
-No runs yet — this plan produces the first numbers.
+### Instance size vs RPS
+
+Same `discovery` profile and service each time (RDS Proxy on). Add one line per DB instance class, pool size or task count.
+"Peak RPS" is the busiest minute of the ALB `RequestCount` divided by 60, measured at the load balancer, not by k6.
+"Last clean step" is the highest `rps_N` whose `slo_met{scenario:rps_N}` rate stayed above 0.95. Full rows and
+caveats are in [`results.md`](results.md).
+
+| class | vCPU | memory | pool size | peak RPS (ALB) | last clean step | first breached step | heavy p95 | run |
+|---|---|---|---|---|---|---|---|---|
+| db.t4g.micro | 2 | 1 GiB | 40 | 79 | 100 | 200 | 9.9 s | 8950516 |
+| db.t4g.small | 2 | 2 GiB | 40 | 167 | 200 | 300 | 5.5 s | 8950832 |
+| db.t4g.small | 2 | 2 GiB | 120 | 186 | 200 | 300 | 5.4 s | 8951051 |
+| db.t4g.small | 2 | 2 GiB | 85 x 2 tasks | 179 | 200 | 300 | 5.5 s | 8951259 |
+| db.t4g.medium | 2 | 4 GiB | 85 x 2 tasks | 235 | 200 | 300 | 2.0 s | 8951436 |
+| db.m7g.xlarge | 4 | 16 GiB | 85 x 2 tasks | 270 | 300 or more | not reached | 0.088 s | 8951616 |
+| db.m7g.xlarge | 4 | 16 GiB | 85 x 2 tasks | 765 | 400 | 500 | 0.195 s | 8951737 |
+
+On micro and small the limit was the heavy query writing a 23 MB temp file per call until the gp3 volume's 125 MiB/s
+was full; neither pool size nor task count removed it. On medium (4 GiB) the disk no longer saturated (52 MB/s peak) and
+the database CPU became the likely limit (79%, `DBLoadCPU` 4.5 against 2 vCPUs). That reading comes from the last two
+minutes of a run that stopped early. On db.m7g.xlarge (4 vCPUs, 16 GiB) the first run stopped inside step 300 with nothing saturated. The full run (8951737, steps 300 to 900) found the knee at step 500: service CPU reached 79% there and 93 to 96% at 765 requests per second, with database CPU at 59%, then 83 to 94%. The two tasks (0.5 vCPU each) are the first thing to run out, and the database follows.
 
 [dash]: https://k0valchuk.grafana.net/dashboards
 [alerts]: https://k0valchuk.grafana.net/alerting/list

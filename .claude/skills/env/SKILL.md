@@ -32,6 +32,24 @@ block, so nothing needs to be set or unset in the shell first. (Before 2026-09-0
 exported one repo-wide `TF_WORKSPACE` and this command needed `env -u TF_WORKSPACE` to escape it.)
 See `platform/README.md`.
 
+## Before changing a setting on an AWS resource
+
+Applies to every `.tf` edit that sets or changes an argument on an AWS resource, whether or not
+`/env` is running. Do this **before** proposing the change, not after an apply error:
+
+1. Read the provider documentation and the AWS API documentation for that argument. Use the context7
+   tool for the Terraform provider. Look for what it conflicts with, what it needs, and what it
+   defaults to.
+2. List the resource's current values (the state, or the full plan output) and check the new value
+   against the ones you are not changing. A default you did not write can still conflict. Example, from
+   2026-11-04: `deployment_maximum_percent = 100` on an ECS service was rejected because
+   `availability_zone_rebalancing` was `ENABLED` by default and needs a maximum above 100.
+3. `validate` and `plan` do not prove the change works. AWS checks many rules only when the API call
+   is made, at `apply`. Say so in the plan summary for any behavior setting (deployment, networking,
+   IAM), and do not report such a change as verified before it has been applied.
+4. Do not bundle several behavior changes on one resource into one apply: a failure hides what the
+   others would do.
+
 ## `up`
 
 1. **Preflight — assert the account before anything else.**

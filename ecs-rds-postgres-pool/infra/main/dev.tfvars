@@ -4,8 +4,8 @@
 # preventing them.
 
 # --- the knob sequence. One line changes per phase. ---
-pool_size     = 40   # knob 1 releases this to 25
-desired_count = 1    # knob 2 raises this to 4
+pool_size     = 85   # knob 1 releases this to 25
+desired_count = 2    # knob 2 raises this to 4
 proxy_enabled = true # knob 3 flips this to true
 # PROVISIONAL: 100 ms assuming the metric is in MICROSECONDS (100000). No proxy exists yet, so the
 # unit cannot be confirmed. After the apply, read DatabaseConnectionsBorrowLatency in the CloudWatch
@@ -16,7 +16,10 @@ proxy_borrow_latency_threshold = 100000
 trace_sample_ratio = 1 # 1 = every request. Hold constant across runs being compared.
 
 # --- the instance under test ---
-instance_class    = "db.t4g.micro"
+# instance_class    = "db.t4g.micro"  # 1 vCPU 1 GiB
+# instance_class    = "db.t4g.small"  # 1 vCPU 2 GiB  260.6 MB/s
+# instance_class    = "db.t4g.medium" # 2 vCPU 4 GiB  260.6 MB/s
+instance_class    = "db.m7g.xlarge" # 4 vCPU 16 GiB 1,250 MB/s
 allocated_storage = 20
 
 # --- the measurement parameters ---

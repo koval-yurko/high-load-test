@@ -1647,6 +1647,177 @@
           "mode": "multi"
         }
       }
+    },
+    {
+      "id": 41,
+      "type": "row",
+      "title": "6. Database root cause — CPU, waiting, memory, disk",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 88 },
+      "panels": []
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "DB load: on CPU vs waiting (average active sessions)",
+      "description": "DBLoadCPU (sessions running or queued for a vCPU) stacked on DBLoadNonCPU (sessions waiting on something else: disk reads, locks, the client). The red line is 2 = the vCPUs of db.t4g.micro; change it with instance_class. Total above the line means more sessions want to run than the instance can serve. Mostly CPU: scan cost or too small an instance. Mostly non-CPU: look at disk and memory next. Wait-event names are only in RDS Performance Insights.",
+      "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 89 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+          "namespace": "AWS/RDS",
+          "metricName": "DBLoadCPU",
+          "statistic": "Average",
+          "dimensions": { "DBInstanceIdentifier": "${project}" },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+          "namespace": "AWS/RDS",
+          "metricName": "DBLoadNonCPU",
+          "statistic": "Average",
+          "dimensions": { "DBInstanceIdentifier": "${project}" },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "min": 0, "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 40, "pointSize": 5, "spanNulls": true, "stacking": { "mode": "normal", "group": "A" }, "thresholdsStyle": { "mode": "line" } }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 2 } ] } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "id": 43,
+      "type": "timeseries",
+      "title": "Instance CPUUtilization",
+      "description": "CPU use of the instance, Average and Maximum per 60s. Read it next to the DB load panel: high load with low CPU means the sessions are waiting, not computing.",
+      "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 89 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+          "namespace": "AWS/RDS",
+          "metricName": "CPUUtilization",
+          "statistic": "Average",
+          "dimensions": { "DBInstanceIdentifier": "${project}" },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+          "namespace": "AWS/RDS",
+          "metricName": "CPUUtilization",
+          "statistic": "Maximum",
+          "dimensions": { "DBInstanceIdentifier": "${project}" },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "min": 0, "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "spanNulls": true }, "unit": "percent" },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "id": 44,
+      "type": "timeseries",
+      "title": "Freeable memory (cache pressure)",
+      "description": "FreeableMemory, Minimum per 60s. A falling line means less room for cached table pages, so the heavy scan reads from disk. The posts table grows between runs.",
+      "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 97 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+          "namespace": "AWS/RDS",
+          "metricName": "FreeableMemory",
+          "statistic": "Minimum",
+          "dimensions": { "DBInstanceIdentifier": "${project}" },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "min": 0, "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "spanNulls": true }, "unit": "bytes" },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "id": 45,
+      "type": "timeseries",
+      "title": "Disk throughput",
+      "description": "ReadThroughput and WriteThroughput, Average per 60s. Compare with the instance's EBS limit: a flat top means the disk path is the ceiling. Read it with Read / Write IOPS and Disk queue depth above.",
+      "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 97 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+          "namespace": "AWS/RDS",
+          "metricName": "ReadThroughput",
+          "statistic": "Average",
+          "dimensions": { "DBInstanceIdentifier": "${project}" },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+          "namespace": "AWS/RDS",
+          "metricName": "WriteThroughput",
+          "statistic": "Average",
+          "dimensions": { "DBInstanceIdentifier": "${project}" },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "min": 0, "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "spanNulls": true }, "unit": "Bps" },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi" }
+      }
     }
 %{ if proxy_enabled ~}
     ,
