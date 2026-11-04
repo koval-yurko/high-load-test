@@ -42,9 +42,9 @@ export const RATE = Number(__ENV.RATE || DEFAULT_RATE);
 export const RATE_SOURCE = __ENV.RATE ? 'explicit' : 'default';
 
 // traffic_source in the service keys on a `k6/` PREFIX (trafficSource() in
-// src/otel.js). k6 v1.4.0's own default user-agent is "Grafana k6/1.4.0", which
+// src/otel.js). k6's own default user-agent is "Grafana k6/<version>" (still so in v2.3.0), which
 // contains `k6/` without starting with it, so both 2026-09-01 runs landed under
 // `other` and selecting traffic_source="k6" returned an empty series that reads
 // exactly like a healthy silence. This must be an OPTION rather than the
 // --user-agent CLI flag: a run started from the Grafana Cloud UI passes no flags.
-export const USER_AGENT = 'k6/1.4.0';
+export const USER_AGENT = 'k6/2.3.0';

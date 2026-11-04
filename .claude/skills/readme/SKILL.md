@@ -111,7 +111,7 @@ renumber everything after, fixing every link to a renumbered anchor (`grep -n "p
   to drain the burst bucket; RDS T-class: `CPUCreditBalance` full and `CPUSurplusCreditBalance` zero)
   and that `SELECT count(*)` / table size is recorded before the run.
 - **k6 facts.** A threshold's boolean in `--summary-export` is *was it breached*: `true` = failed.
-  `http_req_failed` uses `.value`. k6 exits 99 on a breach and the code must be captured on the k6
+  `http_req_failed` uses `.value`. k6 exits 99 on a breach, 97 on any other cloud abort, and the code must be captured on the k6
   line, not behind a pipe.
 - **Uploading profiles.** A UI run executes the archive stored in the cloud, not the file on disk;
   `upload-k6.sh --check` first, `upload-k6.sh` (discovery only) before the knee is known,

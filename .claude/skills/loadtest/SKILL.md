@@ -52,7 +52,7 @@ it happens.
    `loadtest.md` "Server-side metrics".
 9. **Record** the row (below), then run the completeness check.
 
-## Reading the results — verified against k6 v1.4.0
+## Reading the results — verified against k6 v2.3.0 (unchanged from v1.4.0)
 
 Two things about this JSON are counterintuitive and will invert your conclusions:
 
@@ -61,7 +61,9 @@ Two things about this JSON are counterintuitive and will invert your conclusions
 - **`http_req_failed.passes`/`.fails` do not mean pass/fail of the test.** For a rate metric, `passes`
   counts requests that *were* failures. Use `.value` (0..1) for the error rate.
 
-Exit code: **0** = all thresholds satisfied, **99** = at least one breached. Only four thresholds can
+Exit code: **0** = all thresholds satisfied, **99** = at least one breached, **97** = a cloud run
+aborted for another reason (user, system, timeout, script error — exited 0 before k6 v2, so such
+a run must never be recorded as a pass). Only four thresholds can
 breach: `slo_met`, `slo_met_tail`, `http_req_failed` and `dropped_iterations`. The per-class
 `http_req_duration{class:…}` entries are `p(99)>=0` — present so the sub-metric is printed, unable to
 fail — so read their values for the row but never treat them as a verdict.
@@ -189,11 +191,13 @@ grep -m1 '^| date' <project>/results.md | awk -F'|' '{ for (i = 1; i <= NF; i++)
 ## Cloud runs
 
 The command is `k6 cloud run`, not `k6 run`, so the generator is not the bottleneck and RTT is not
-charged against the latency budget. Verified against k6 v1.4.0:
+charged against the latency budget. Verified against k6 v1.4.0; the two items marked (k6 v2) against v2.3.0:
 
 - **`--summary-export` works on `k6 cloud run`**, so everything in "Reading the results" applies.
-- **There is no `k6 cloud load-zone list`.** `k6 cloud` has exactly `login`, `run` and `upload`. An
-  invalid `loadZone` is rejected at submission, before any VU-hours are spent.
+- **Every `k6 cloud` command needs a stack** (k6 v2). `.envrc` sets `K6_CLOUD_STACK_ID` from
+  `GRAFANA_STACK_ID`; without it k6 fails with `stack ID not configured`.
+- **`k6 cloud` has `login`, `run`, `upload`, `load-zone`, `project` and `test`** (k6 v2; v1.4.0 had only
+  the first three). An invalid `loadZone` is rejected at submission, before any VU-hours are spent.
 - **The subscription caps a test at 100 VUs**, checked against `preAllocatedVUs` at upload:
   `(400/E2004) The Virtual User (VU) count for this test (400 VUs) exceeds the maximum allowed for
   your project (100 VUs)`. It is an organization limit, so it survives the k6 project being

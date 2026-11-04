@@ -17,7 +17,7 @@
 #
 # WHY -e AT UPLOAD TIME. `k6 archive` evaluates the init context, so the env given here is frozen
 # into the stored archive: metadata.json carries env {BASE_URL, RATE}, the executor's `rate`, the
-# derived `preAllocatedVUs`, and the rate_source tag. Verified locally against k6 v1.4.0 --
+# derived `preAllocatedVUs`, and the rate_source tag. Verified locally against k6 v1.4.0 and v2.3.0 --
 # `k6 archive -e RATE=700 tests/constant.js` stored rate 700 / preAllocatedVUs 88 /
 # tags.rate_source=explicit. That is what makes a UI-started run reproducible without anyone
 # remembering to visit a settings page.

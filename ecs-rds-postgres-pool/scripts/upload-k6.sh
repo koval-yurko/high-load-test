@@ -30,7 +30,7 @@
 #
 # WHY -e AT UPLOAD TIME. `k6 archive` evaluates the init context, so the env given here is frozen
 # into the stored archive: metadata.json carries env {BASE_URL, RATE}, the executor's `rate`, the
-# derived `preAllocatedVUs`, and the rate_source tag. Verified against k6 v1.4.0 in the sibling
+# derived `preAllocatedVUs`, and the rate_source tag. Verified against k6 v1.4.0 and v2.3.0 in the sibling
 # project (ecs-dynamodb-rps), with that project's rate: an archive made with `-e RATE=<n>` stored
 # rate <n>, the preAllocatedVUs derived from it, and tags.rate_source=explicit. No archive of this
 # project's profiles has been checked yet. That is what makes a UI-started run reproducible without

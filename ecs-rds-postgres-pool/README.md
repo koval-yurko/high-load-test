@@ -540,15 +540,15 @@ lowest step that breached; `RATE` for B and C is the step before it.
 ```
 
 The summary is written to `/tmp/k6-ecs-rds-postgres-pool-<profile>.json`. Exit `99` means a threshold
-breached, which is normal past the knee. A platform abort (for example error 8060) exits with its own
-code and leaves no summary.
+breached, which is normal past the knee. A platform abort (for example error 8060) exits `97` (k6 v2)
+and leaves no summary.
 
 **Or by hand** — no upload needed, `-e` wins over everything:
 
 ```bash
 BASE_URL=$(terraform -chdir=infra/main output -json | jq -r '.base_url.value // empty')
 k6 cloud run -e BASE_URL="$BASE_URL" -e RATE=<knee> infra/k6/tests/constant.js
-echo "exit=$?"                     # 0 = the gates held, 99 = one breached
+echo "exit=$?"                     # 0 = the gates held, 99 = one breached, 97 = aborted
 ```
 
 Capture that exit code on the k6 line itself — behind a pipe you get the pipe's status. Four

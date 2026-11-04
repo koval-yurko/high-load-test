@@ -209,7 +209,7 @@ direnv exec . terraform -chdir=platform plan
 ```
 
 ```bash
-k6 run -o experimental-prometheus-rw <project>/infra/k6/tests/constant.js   # still `experimental-` in k6 1.4
+k6 run -o experimental-prometheus-rw <project>/infra/k6/tests/constant.js   # still `experimental-` in k6 2.3
 ```
 
 ---

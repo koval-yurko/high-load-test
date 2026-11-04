@@ -310,12 +310,13 @@ gotchas that cost real money or produce wrong numbers:
 
 ### k6 facts worth not re-learning
 
-Verified against the installed k6 v1.4.0:
+Verified against the installed k6 v2.3.0 (and v1.4.0 before it):
 
 - In `--summary-export` JSON, a threshold's boolean is **"was it breached"**, not "did it pass":
   `true` = **crossed = FAILED**, `false` = satisfied. Reading it the intuitive way inverts every verdict.
 - `http_req_failed.passes` counts requests that *were* failures. Use `.value` (0..1) for error rate.
-- k6 exits **99** when a threshold is breached, **0** when all pass. Capture the code off the k6
+- k6 exits **99** when a threshold is breached, **0** when all pass, and — v2, cloud runs only —
+  **97** when the run was aborted for any other reason (user, system, timeout, script error). Capture the code off the k6
   command itself — behind a pipe you get the pipe's status instead.
 
 `.claude/settings.json` allows Bash broadly (`"allow": ["Bash"]`), but `terraform apply` and
@@ -373,7 +374,7 @@ is `node --test`, so a single test is `node --test test/<file>.test.js` — a **
 The full local loop (DynamoDB Local, seeding, load profile) needs no AWS account and no `.env` —
 `ecs-dynamodb-rps/README.md`, "Run it locally".
 
-Verified locally: Node 22.13, npm 10.9, Terraform 1.14, AWS CLI 2.23, k6 1.4, Docker 27.4.
+Verified locally: Node 22.13, npm 10.9, Terraform 1.14, AWS CLI 2.23, k6 2.3, Docker 27.4.
 
 ## Load-testing conventions
 
