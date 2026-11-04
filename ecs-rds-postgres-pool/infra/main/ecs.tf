@@ -170,6 +170,23 @@ resource "aws_ecs_service" "app" {
   desired_count = var.desired_count
   launch_type   = "FARGATE"
 
+  # Stop the old task BEFORE starting the new one: a short outage instead of two tasks at once.
+  # With the default 100/200 the old and new pool overlap, and a large pool_size can exceed the
+  # database's max_connections during the rollout. Fixed capacity is also what keeps a run's
+  # configuration deterministic. Cost: the service is down until the new task is healthy.
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
+
+  # ECS rebalances tasks across AZs by default, and rejects that with maximumPercent <= 100
+  # (it needs to start a task in the new AZ before stopping the old one). This service runs
+  # 1 to 4 fixed tasks and must not move them mid-run anyway.
+  availability_zone_rebalancing = "DISABLED"
+
+  # A fresh RDS Proxy takes minutes to serve connections. The task waits for it (src/migrate.js,
+  # up to 8 min) and fails the ALB health check meanwhile; without a grace period ECS would stop
+  # it as unhealthy. Keep this above the retry timeout.
+  health_check_grace_period_seconds = 600
+
   network_configuration {
     subnets          = aws_subnet.public[*].id
     security_groups  = [aws_security_group.task.id]

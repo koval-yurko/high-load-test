@@ -81,8 +81,7 @@ locals {
     },
   ]
 
-  # No proxy panel exists on the dashboard, so these link to the dashboard
-  # alone (panel_id = null drops __panelId__ below).
+  # Panels 39 and 40 on the dashboard exist only while proxy_enabled, like these rules.
   proxy_rules = [
     {
       name        = "Proxy borrow latency high"
@@ -92,7 +91,7 @@ locals {
       period      = "60"
       lookback    = 300
       threshold   = var.proxy_borrow_latency_threshold
-      panel_id    = null
+      panel_id    = "39"
       summary     = "RDS Proxy borrow latency is above proxy_borrow_latency_threshold: requests are waiting on the proxy for a backend connection."
     },
     {
@@ -103,7 +102,7 @@ locals {
       period      = "60"
       lookback    = 300
       threshold   = 0
-      panel_id    = null
+      panel_id    = "40"
       summary     = "RDS Proxy has pinned sessions. A proxy with everything pinned is a passthrough measuring nothing -- the knob 3 run is not measuring multiplexing."
     },
   ]

@@ -1648,5 +1648,76 @@
         }
       }
     }
+%{ if proxy_enabled ~}
+    ,
+    {
+      "id": 39,
+      "type": "timeseries",
+      "title": "Proxy borrow latency (unit TBC)",
+      "description": "DatabaseConnectionsBorrowLatency, Average per 60s. Time a request waits for a backend connection. The unit is NOT confirmed (AWS documents a sibling metric in microseconds; reports say milliseconds): read it in the CloudWatch console on the real proxy before trusting the axis. Exists only while proxy_enabled.",
+      "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 80 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+          "namespace": "AWS/RDS",
+          "metricName": "DatabaseConnectionsBorrowLatency",
+          "statistic": "Average",
+          "dimensions": { "ProxyName": "${project}" },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "spanNulls": true },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "id": 40,
+      "type": "timeseries",
+      "title": "Proxy sessions pinned",
+      "description": "DatabaseConnectionsCurrentlySessionPinned, Maximum per 60s. Above 0 means the proxy cannot multiplex those sessions; if everything is pinned the knob 3 run measures nothing. Exists only while proxy_enabled.",
+      "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 80 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "cloudwatch", "uid": "${cloudwatch_datasource_uid}" },
+          "namespace": "AWS/RDS",
+          "metricName": "DatabaseConnectionsCurrentlySessionPinned",
+          "statistic": "Maximum",
+          "dimensions": { "ProxyName": "${project}" },
+          "region": "eu-central-1",
+          "period": "60",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "matchExact": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "spanNulls": true },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi" }
+      }
+    }
+%{ endif ~}
   ]
 }

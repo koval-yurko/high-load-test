@@ -141,8 +141,8 @@ export async function main() {
   // is why this is safe to do on every task rather than in a one-off job that
   // would need a NAT gateway to reach the VPC.
   if (config.migrateOnBoot) {
-    const { execFileSync } = await import('node:child_process');
-    execFileSync('npx', ['prisma', 'migrate', 'deploy'], { stdio: 'inherit' });
+    const { migrateWithRetry } = await import('./migrate.js');
+    await migrateWithRetry();
   }
 
   // SEED_ON_BOOT IS ONE TASK, ONE SHOT. The advisory-lock argument above is

@@ -10,7 +10,11 @@ function block(ms) {
   while (Date.now() < end) { /* spin */ }
 }
 
-test('a deliberately blocked loop reads close to 1', () => {
+test('a deliberately blocked loop reads close to 1', async () => {
+  // Node's ELU reads 0/0 until the loop has run one iteration, so a block in the very first
+  // tick of the process is not counted. As the first test in the file this one hit that; the
+  // others run after an await. Let the loop turn once before measuring.
+  await sleep(10);
   const elu = createEluSampler();
   block(200);
   const u = elu.sample();

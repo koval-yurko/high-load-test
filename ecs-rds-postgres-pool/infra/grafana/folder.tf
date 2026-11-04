@@ -43,6 +43,7 @@ resource "grafana_dashboard" "attribution" {
         alb_arn_suffix          = var.alb_arn_suffix
         target_group_arn_suffix = var.target_group_arn_suffix
         project                 = var.project
+        proxy_enabled           = var.proxy_enabled
       }
     )
   )

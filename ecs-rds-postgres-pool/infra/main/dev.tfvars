@@ -4,9 +4,13 @@
 # preventing them.
 
 # --- the knob sequence. One line changes per phase. ---
-pool_size     = 5     # knob 1 releases this to 25
-desired_count = 1     # knob 2 raises this to 4
-proxy_enabled = false # knob 3 flips this to true
+pool_size     = 40   # knob 1 releases this to 25
+desired_count = 1    # knob 2 raises this to 4
+proxy_enabled = true # knob 3 flips this to true
+# PROVISIONAL: 100 ms assuming the metric is in MICROSECONDS (100000). No proxy exists yet, so the
+# unit cannot be confirmed. After the apply, read DatabaseConnectionsBorrowLatency in the CloudWatch
+# console; if it is milliseconds, set 100 and re-apply. Until then this alert can be 1000x wrong.
+proxy_borrow_latency_threshold = 100000
 
 # --- tracing ---
 trace_sample_ratio = 1 # 1 = every request. Hold constant across runs being compared.
