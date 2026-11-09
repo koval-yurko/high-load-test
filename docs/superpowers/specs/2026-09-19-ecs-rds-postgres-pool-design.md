@@ -1,10 +1,12 @@
 # ecs-rds-postgres-pool — the connection pool as the binding constraint
 
 - **Date:** 2026-09-19
-- **Status:** **approved** (2026-09-20, by the user). Its four open decisions were answered on the
-  page cited below; the workload it deliberately left open was designed and approved in
-  `docs/superpowers/plans/2026-09-20-ecs-rds-postgres-pool-service.md`, which is plan 1 of 4 and is
-  ready to execute. Plans 2–4 are written as the work reaches them.
+- **Status:** **complete** — closed by the user's decision on 2026-11-08. Plans 1–3 executed;
+  plan 4 (the knob sequence, phases 5–8 of §12) was not written. **The deliverable in §1 was not
+  reached:** the pool never became the binding constraint, so there is no before/after knob table.
+  What was measured instead is an instance-size series (seven `discovery` runs, 2026-11-04, from
+  79 to 765 peak RPS) in `ecs-rds-postgres-pool/results.md`; see the forward-pointer at §7.2.
+  Approved 2026-09-20 by the user, with its four open decisions answered on the page cited below.
 - **Project directory:** `ecs-rds-postgres-pool/` (new; nothing is deployed and nothing carries the
   `Project = ecs-rds-postgres-pool` tag yet)
 - **Amends:** `docs/research/ecs-rds-postgres-pool.md` (researched 2026-09-11). That document's
@@ -425,6 +427,12 @@ the proxy endpoint.
 
 `db.t4g.micro`, single-AZ, with credits handled procedurally because §3.4 proved they cannot be
 handled in HCL.
+
+> **Did not hold in practice (2026-11-04).** On `db.t4g.micro` and `db.t4g.small` the disk, not
+> the pool, was the limit: the heavy `report` query wrote a 23 MB temp file per call and filled the
+> gp3 volume. The instance was raised step by step to `db.m7g.xlarge` to find the knee. Runs and
+> reasoning: `ecs-rds-postgres-pool/results.md` and the status block of
+> `docs/superpowers/plans/2026-09-24-ecs-rds-postgres-pool-calibrate-baseline.md`.
 
 - `CPUCreditBalance` and `CPUSurplusCreditsCharged` are recorded as columns on **every** ledger row.
   **Amended 2026-09-21** in `docs/superpowers/plans/2026-09-21-ecs-rds-postgres-pool-infrastructure.md` (Task 11, and its section "Amended

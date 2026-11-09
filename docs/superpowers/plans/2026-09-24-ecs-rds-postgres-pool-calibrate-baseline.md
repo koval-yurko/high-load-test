@@ -2,20 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-- **Status:** **in progress** (2026-09-24). Approval covers the plan, not its gates: Tasks 1, 7, 10
-  and 12 (`terraform apply`) and Task 17 (`terraform destroy`) each still stop and ask before they
-  run.
-  - **Done:** Tasks 3, 4, 5, 6 and 13 — every task that needs no AWS — each committed and reviewed.
-    Task 1 is done through Step 3 (its plan is exactly the three additions it predicts).
-  - **Blocked on the first apply:** Tasks 1 Step 4, 2, 7–10, 12, 14–17. By the user's decision on
-    2026-09-24, nothing is deployed until the pre-deploy code work below is finished, so that a
-    session with a live instance spends itself on measurement and `dev.tfvars` edits only.
-  - **Pre-deploy work added after the plan was written, and now complete:** Task 18 (the calibrator
-    could not run in the image as built), Task 19 (the parts of Task 11 that need no measurement) and
-    Task 20 (the README as a runbook). They are below, after Task 17.
-  - **Every task that does not need AWS is therefore done.** What remains is the apply gate and the
-    measurement that follows it, plus the four steps of Task 11 that bake in threshold values only the
-    real instance can produce.
+- **Status:** **complete** — closed by the user's decision on 2026-11-08, not by executing every
+  task. The project is marked done; plan 4 (the knob sequence) will not be written.
+  - **Done as written:** Tasks 3, 4, 5, 6, 13, 18, 19 and 20 (all pre-deploy work), and the applies.
+  - **Not done as written:** the calibration on `db.t4g.micro`, the frozen thresholds and the
+    baseline at `pool_size = 5`. On 2026-11-04 seven `discovery` runs replaced them. They showed
+    that the disk, not the pool, was the limit on micro and small instances: the heavy `report`
+    query wrote a 23 MB temp file per call (`work_mem` 4 MB) until the gp3 volume was full, and pool
+    sizes 40, 120 and 85 x 2 did not move the knee. The series ended on `db.m7g.xlarge` (knee near
+    step 500, app tasks out of CPU first). Rows: `ecs-rds-postgres-pool/results.md`.
+  - **Environment:** destroyed. On 2026-11-08 the tagged-resource query found only an `INACTIVE`
+    ECS cluster and inactive task definitions, and no RDS instance.
 - **Plan 3 of 4** (the spec's "Execution shape", §12). This is spec phases 3 and 4: apply, deploy,
   calibrate on the real instance, freeze the class thresholds, regenerate everything derived from
   them, then run the baseline at `pool_size = 5` and record the first rows of `results.md`.

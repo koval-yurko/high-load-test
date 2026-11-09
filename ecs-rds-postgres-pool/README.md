@@ -14,11 +14,10 @@ Full design: `docs/superpowers/specs/2026-09-19-ecs-rds-postgres-pool-design.md`
 `docs/superpowers/plans/2026-09-21-ecs-rds-postgres-pool-infrastructure.md`. Calibration and baseline
 plan: `docs/superpowers/plans/2026-09-24-ecs-rds-postgres-pool-calibrate-baseline.md`.
 
-**Nothing is deployed yet.** This README is written before the first apply, deliberately — the first
-live session is meant to spend itself on measurement and `dev.tfvars` edits, not on reconstructing the
-procedure from four plan documents. Every number below that looks like a figure is arithmetic (an
-objective, a burn multiplier, a connection count) or a spec estimate labelled as such — nothing here
-has been measured, because nothing has run.
+**Status: done (closed 2026-11-08), and destroyed.** The pool never became the binding
+constraint: on micro and small instances the disk was the limit, so the knob sequence below was not
+run. The measured result is the instance-size series in "Measured results" at the end of this
+file. The runbook below still describes the original design.
 
 ## Where to look
 

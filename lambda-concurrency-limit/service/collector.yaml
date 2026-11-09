@@ -1,0 +1,25 @@
+# OTel collector extension (opentelemetry-collector-arm64 layer). The Node layer sends
+# spans to localhost; this forwards them to Grafana Cloud Tempo.
+# decouple must be LAST: it lets the response return before the export. The export is
+# still billed and still occupies the concurrency slot (PostRuntimeExtensionsDuration).
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: localhost:4317
+      http:
+        endpoint: localhost:4318
+processors:
+  batch: {}
+  decouple: {}
+exporters:
+  otlphttp:
+    endpoint: ${env:GRAFANA_OTLP_ENDPOINT}
+    headers:
+      Authorization: ${env:GRAFANA_OTLP_AUTH}
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, decouple]
+      exporters: [otlphttp]

@@ -27,8 +27,9 @@ Planned projects:
 
 - **`ecs-document-db`** — Node.js service on AWS ECS + DocumentDB. Measure sustained RPS, add
   autoscaling 1→4 tasks, compare SLO attainment under peak vs. constant load.
-- **`lambda-concurrency-limit`** — Lambda + a database, exploring concurrency limits. Same
-  measure/break/improve/re-measure loop.
+- **`lambda-concurrency-limit`** — Lambda behind an API Gateway REST API, reading DynamoDB; reserved
+  concurrency is the limit. Knobs: per-user rate limit, reserved concurrency 20 → 100, provisioned
+  concurrency. Spec: `docs/superpowers/specs/2026-11-09-lambda-concurrency-limit-design.md`.
 
 ## Layout
 
@@ -59,7 +60,7 @@ the tag therefore pointed at nothing — see
     grafana/          dashboards, SLO definitions, alert rules as code
     k6/               the project's k6 project + limits (destroyed with the env); tests/ holds the load profiles
   service/            the Node.js service: src/ test/ scripts/, package.json, Dockerfile
-  heartbeat/          small side pieces managed separately from the service (ECS: the idle-load Lambda)
+  heartbeat/          small side pieces managed separately from the service (ECS: the idle-load Lambda) — a Lambda project has none
   scripts/            every script this project owns: deploy-service.sh, upload-k6.sh
   slo.yaml            SLO source of truth; generates the k6 thresholds and the Grafana rules
   results.md          the run ledger (/loadtest appends here)
@@ -74,7 +75,9 @@ profiles belongs to the project.
 
 **Deployment is per-project, and stays per-project.** Each project owns a
 `scripts/deploy-service.sh`: what "deploy" means is a property of the platform under test — ECS
-builds and pushes an image then forces a new deployment, Lambda will publish a version, the next
+builds and pushes an image then forces a new deployment; Lambda: a script publishes a
+version and moves the alias, Terraform ignores both, and a setting frozen into a version
+(environment, memory, layers) needs `deploy-service.sh --config-only` after the apply; the next
 scenario something else again. Sharing one script across projects would mean a flag per platform,
 which is exactly the coupling the rest of this section forbids. Only the output helpers are shared,
 from the root `scripts/lib.sh` (sourced as `../../scripts/lib.sh`). No project script may run
@@ -386,6 +389,9 @@ Verified locally: Node 22.13, npm 10.9, Terraform 1.14, AWS CLI 2.23, k6 2.3, Do
   **peak/spike** that deliberately breaches the SLO. Autoscaling only proves itself against the spike.
 - Record for each run: RPS achieved, p95/p99 latency, error rate, SLO attainment, error budget
   burned, and what infra change distinguished it from the previous run.
+- A Lambda project sends random arrivals by thinning a `constant-arrival-rate` executor (4 × the
+  rate, each iteration sends with p = 0.25), so throttles match Erlang B; even arrivals understate
+  them.
 
 ## Database notes
 

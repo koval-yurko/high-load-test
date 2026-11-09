@@ -1,0 +1,22 @@
+{
+  "name": "lambda-concurrency-limit",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "test": "node --test",
+    "seed": "node scripts/seed.js",
+    "capacity": "node scripts/capacity.js",
+    "slo:generate": "node scripts/generate-slo.js",
+    "slo:check": "node scripts/generate-slo.js --check"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.716.0",
+    "@aws-sdk/lib-dynamodb": "^3.716.0"
+  },
+  "devDependencies": {
+    "aws-sdk-client-mock": "^4.1.0",
+    "yaml": "^2.6.0"
+  }
+}

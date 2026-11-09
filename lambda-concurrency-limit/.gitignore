@@ -1,0 +1,6 @@
+# written by service/scripts/seed.js; describes the live table, not the repo
+service/seed-manifest.json
+# built by scripts/deploy-service.sh (plan 2)
+service/dist/
+# built by archive_file at plan time (infra/main/lambda.tf)
+infra/main/placeholder.zip

@@ -1,0 +1,24 @@
+{
+  "availability_objective": 0.99,
+  "latency_objective": 0.95,
+  "class_threshold_ms": {
+    "fast": 300,
+    "standard": 400,
+    "heavy": 1000
+  },
+  "class_route": {
+    "fast": "/items/{pk}/{sk}",
+    "standard": "/feeds/{pk}",
+    "heavy": "/reports/{pk}"
+  },
+  "burn": {
+    "fast": {
+      "factor": 14.4,
+      "window_seconds": 3600
+    },
+    "slow": {
+      "factor": 6,
+      "window_seconds": 21600
+    }
+  }
+}

@@ -18,8 +18,9 @@ A project that provisions cleanly but has no recorded before/after numbers is no
 | directory | what it demonstrates | status |
 |---|---|---|
 | `ecs-dynamodb-rps/` | Node.js on ECS + DynamoDB, sustained RPS ceiling | restructured 2026-09-03, first apply pending |
+| `ecs-rds-postgres-pool/` | Node.js on ECS + RDS PostgreSQL, connection pool as the limit | done 2026-11-08 without the knob comparison: the disk limited first, instance-size series recorded |
 | `ecs-document-db/` | Node.js on ECS + DocumentDB, autoscaling 1→4 tasks | not built yet |
-| `lambda-concurrency-limit/` | Lambda + DB, concurrency limits under load | not built yet |
+| `lambda-concurrency-limit/` | Lambda + API Gateway + DynamoDB, reserved concurrency as the limit; per-user rate limit, reserved and provisioned concurrency as knobs | built (plans 1–2), not deployed |
 
 Project directories are named for **the scenario**, not the platform — `<platform>-<scenario>` in
 kebab-case. There will be several scenarios per platform, so a bare `ecs/` or `lambda/` leaves the

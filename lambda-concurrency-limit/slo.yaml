@@ -1,0 +1,32 @@
+service: lambda-concurrency-limit
+
+# Run-scoped attainment over a load run's own window is authoritative. The 7d window
+# exists because Grafana's SLO API refuses anything shorter.
+window: 7d
+
+# Fixed for the life of the project: changing it voids every recorded run.
+mix: { fast: 0.70, standard: 0.25, heavy: 0.05 }
+
+slos:
+  - name: latency-classes
+    # GOOD = status 2xx AND latency <= the class threshold. 429 is never a miss; only
+    # judged users count (load, or normal-* in noisy-neighbour).
+    sli: class_threshold_ratio
+    objective: 95.0
+    # PROVISIONAL. Frozen in plan 3, phase 0: threshold = API Gateway overhead + warm
+    # p99 latency with OTel on, plus a margin, rounded up. Then `npm run slo:generate`.
+    frozen: false
+    classes:
+      fast:     { threshold_ms: 300,  route: "GET /items/{pk}/{sk}" }
+      standard: { threshold_ms: 400,  route: "GET /feeds/{pk}" }
+      heavy:    { threshold_ms: 1000, route: "GET /reports/{pk}" }
+  - name: availability
+    # GOOD = status < 500. A Lambda throttle reaches the client as API Gateway's 500.
+    sli: success_rate
+    objective: 99.0
+    # Burn-rate alerts (infra/grafana/alerts.tf), on API Gateway 5XXError Average = the 5xx
+    # fraction. Alert when the fraction passes factor × (1 − objective) over the window.
+    # factor × (1 − objective) must stay below 1, or the alert can never fire.
+    burn:
+      fast: { factor: 14.4, window: 1h }
+      slow: { factor: 6, window: 6h }

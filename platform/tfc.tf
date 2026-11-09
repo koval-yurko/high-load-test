@@ -28,8 +28,9 @@ locals {
   # which creates its TFC workspace. It no longer creates the k6 project: that is in
   # the project's own infra/k6 module, created and destroyed with the environment.
   projects = {
-    "ecs-dynamodb-rps"      = { working_directory = "infra/main" }
-    "ecs-rds-postgres-pool" = { working_directory = "infra/main" }
+    "ecs-dynamodb-rps"         = { working_directory = "infra/main" }
+    "ecs-rds-postgres-pool"    = { working_directory = "infra/main" }
+    "lambda-concurrency-limit" = { working_directory = "infra/main" }
   }
 }
 
