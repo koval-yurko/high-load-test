@@ -29,7 +29,9 @@ function createHandler({ repo, config }) {
   };
 
   return async (event) => {
-    const route = routes[`${event.httpMethod} ${event.resource}`];
+    // /public/* is the keyless copy of each route (tiered rate limits spec); same handlers.
+    const resource = event.resource.replace(/^\/public(?=\/)/, '');
+    const route = routes[`${event.httpMethod} ${resource}`];
     if (!route) return NOT_FOUND;
     try {
       return await route(event.pathParameters ?? {});

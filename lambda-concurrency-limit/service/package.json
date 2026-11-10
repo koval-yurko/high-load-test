@@ -7,7 +7,6 @@
   "scripts": {
     "test": "node --test",
     "seed": "node scripts/seed.js",
-    "capacity": "node scripts/capacity.js",
     "slo:generate": "node scripts/generate-slo.js",
     "slo:check": "node scripts/generate-slo.js --check"
   },

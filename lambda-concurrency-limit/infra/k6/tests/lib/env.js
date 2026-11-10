@@ -5,7 +5,7 @@ export const BASE_URL = __ENV.BASE_URL || 'http://localhost:1';
 export const USER_AGENT = 'k6/2.3.0';
 
 // A run on default rates is not a capacity measurement; /loadtest refuses to record rate_source=default.
-export const RATE_SOURCE = ['RATE', 'START_RATE', 'MAX_RATE', 'STEP_RPS', 'PEAK_RATE', 'NORMAL_RATE', 'NOISY_RATE'].some((k) => __ENV[k]) ? 'explicit' : 'default';
+export const RATE_SOURCE = ['RATE', 'START_RATE', 'MAX_RATE', 'STEP_RPS', 'PEAK_RATE', 'NORMAL_RATE', 'NOISY_RATE', 'ANON_RATE', 'NORMAL_CALLERS', 'ANON_CALLERS'].some((k) => __ENV[k]) ? 'explicit' : 'default';
 
 // The seed shape, from seed-manifest.json via upload-k6.sh. Defaults are the seed's.
 export const SEED = {

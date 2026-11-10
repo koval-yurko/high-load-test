@@ -47,6 +47,42 @@ variable "user_rate_limit_rps" {
   }
 }
 
+variable "anonymous_enabled" {
+  description = "Creates the anonymous tier: /public/* routes without an API key, and a WAF rate-based rule per caller address. The WAF bills while it exists, so leave it false except while measuring."
+  type        = bool
+  default     = false
+}
+
+variable "anonymous_rate_limit" {
+  description = "Anonymous tier: requests per address per anonymous_window_seconds before WAF blocks with 429. WAF minimum is 10."
+  type        = number
+  default     = 100
+  validation {
+    condition     = var.anonymous_rate_limit >= 10 && floor(var.anonymous_rate_limit) == var.anonymous_rate_limit
+    error_message = "anonymous_rate_limit must be a whole number >= 10 (the WAF rate-based rule minimum)."
+  }
+}
+
+variable "anonymous_window_seconds" {
+  description = "Anonymous tier: the WAF evaluation window. WAF allows 60, 120, 300 or 600."
+  type        = number
+  default     = 60
+  validation {
+    condition     = contains([60, 120, 300, 600], var.anonymous_window_seconds)
+    error_message = "anonymous_window_seconds must be 60, 120, 300 or 600."
+  }
+}
+
+variable "anonymous_ip_source" {
+  description = "Which address the WAF rule counts. \"forwarded\" = the first address in X-Forwarded-For, which THE CLIENT CONTROLS: a real client can dodge the limit by changing the header. It exists only so k6 can act as many callers. \"source\" = the real source address."
+  type        = string
+  default     = "forwarded"
+  validation {
+    condition     = contains(["forwarded", "source"], var.anonymous_ip_source)
+    error_message = "anonymous_ip_source must be forwarded or source."
+  }
+}
+
 variable "otel_enabled" {
   description = "OTel layers and wrapper on or off. Frozen into the published version: run deploy-service.sh --config-only after the apply."
   type        = bool

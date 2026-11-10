@@ -32,6 +32,10 @@ output "knobs" {
     reserved_concurrency    = var.reserved_concurrency
     provisioned_concurrency = var.provisioned_concurrency
     user_rate_limit_rps     = var.user_rate_limit_rps
+    anonymous_enabled       = var.anonymous_enabled
+    anonymous_rate_limit    = var.anonymous_rate_limit
+    anonymous_window_secs   = var.anonymous_window_seconds
+    anonymous_ip_source     = var.anonymous_ip_source
     otel_enabled            = var.otel_enabled
     trace_sample_ratio      = var.trace_sample_ratio
     memory_size             = var.memory_size

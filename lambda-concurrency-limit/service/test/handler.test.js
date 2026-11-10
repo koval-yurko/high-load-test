@@ -55,3 +55,19 @@ test('a repo error is a 500 with a fixed body and one log line naming the error'
   assert.equal(JSON.parse(logged[0]).error, 'ProvisionedThroughputExceededException');
   assert.doesNotMatch(r.body, /secret detail/);
 });
+
+test('public prefix routes like the keyed route', async () => {
+  const r = await handle(ev('/public/items/{pk}/{sk}', { pk: 'feed-0001', sk: 'item-0002' }));
+  assert.equal(r.statusCode, 200);
+  assert.equal(JSON.parse(r.body).sk, 'item-0002');
+});
+
+test('a resource that only starts with public is not stripped', async () => {
+  const r = await handle(ev('/publicity/{pk}', { pk: 'feed-0001' }));
+  assert.equal(r.statusCode, 404);
+});
+
+test('an unknown public route is 404', async () => {
+  const r = await handle(ev('/public/nothing', {}));
+  assert.equal(r.statusCode, 404);
+});

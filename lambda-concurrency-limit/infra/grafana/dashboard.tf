@@ -11,7 +11,7 @@ locals {
   # A section is a Grafana row; each inner list is one line of panels that share the full width.
   # Panel ids count up through the data panels in this order. alerts.tf links to id 2 ("4xx and 5xx"),
   # so keep that panel second.
-  sections = [
+  sections = concat([
     { title = "1 · Traffic and API Gateway latency", lines = [[
       { title = "1 · Requests", unit = "short", threshold = null, targets = [
         { ns = "AWS/ApiGateway", metric = "Count", stat = "Sum", dims = tomap(local.api) },
@@ -78,7 +78,18 @@ locals {
         { ns = "AWS/DynamoDB", metric = "SuccessfulRequestLatency", stat = "Average", dims = tomap(merge(local.table, { Operation = "Query" })) },
       ] },
     ]] },
-  ]
+    ], [for _ in range(var.anonymous_enabled ? 1 : 0) : {
+      # Last, so the panel ids above (alerts.tf links to id 2) do not move.
+      title = "7 · Rate limiting", lines = [[
+        { title = "7 · WAF blocked requests (anonymous tier)", unit = "short", threshold = null, targets = [
+          { ns = "AWS/WAFV2", metric = "BlockedRequests", stat = "Sum", dims = tomap({ WebACL = var.web_acl_name, Rule = "anonymous-per-ip", Region = local.region }) },
+        ] },
+        { title = "7 · WAF allowed vs blocked (whole web ACL; blocked share = limit working)", unit = "short", threshold = null, targets = [
+          { ns = "AWS/WAFV2", metric = "AllowedRequests", stat = "Sum", dims = tomap({ WebACL = var.web_acl_name, Rule = "ALL", Region = local.region }) },
+          { ns = "AWS/WAFV2", metric = "BlockedRequests", stat = "Sum", dims = tomap({ WebACL = var.web_acl_name, Rule = "ALL", Region = local.region }) },
+        ] },
+      ]]
+  }])
 
   # One entry per row header (panels = []) and per line of panels, top to bottom.
   entries = flatten([for s in local.sections : concat(

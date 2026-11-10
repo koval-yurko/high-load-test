@@ -33,8 +33,11 @@ it happens.
 4. **Pass the run gate** in `loadtest.md` "Before the run", and take the pre-run readings it lists.
    A run that skipped the gate is not recordable.
 5. **Get the run's numbers.** Two paths, depending on how the run started:
-   - **Started from a terminal** — `k6 cloud run --summary-export=…`, then read that JSON. See
-     "Cloud runs" below. Prefer this path: the exit code is a free verdict.
+   - **Started from a terminal** — if the project has `scripts/upload-k6.sh`, run
+     `<project>/scripts/upload-k6.sh --only <profile> [rate flags]`: it uploads the archive with the
+     API keys and seed shape, runs it with `k6 cloud run --summary-export` and prints the exit code.
+     **Never type a bare `k6 cloud run` for such a project** (see "Cloud runs"). Then read the JSON.
+     Prefer this path: the exit code is a free verdict.
    - **Started from the Grafana Cloud k6 UI** — there is no local file. Read the run from the k6
      Cloud API; see "Reading a UI-started run from the API". **A UI run executes the archive stored
      in the cloud, not the file on disk**, so confirm freshness first with
@@ -189,6 +192,13 @@ grep -m1 '^| date' <project>/results.md | awk -F'|' '{ for (i = 1; i <= NF; i++)
 ```
 
 ## Cloud runs
+
+**A bare `k6 cloud run` sends only the `-e` values you type.** API keys, the seed shape and rates reach
+a run through the archive that `upload-k6.sh` builds, so a hand-typed command with just `BASE_URL`
+sends an empty `x-api-key` and API Gateway answers 403 to every request (seen 2026-11-10,
+lambda-concurrency-limit). Use the project script. The snippet below is only for a project with no
+upload script. A run whose API Gateway `4XXError` equals `Count` and whose Lambda `Invocations` is
+empty is this mistake: stop it, do not record it.
 
 The command is `k6 cloud run`, not `k6 run`, so the generator is not the bottleneck and RTT is not
 charged against the latency budget. Verified against k6 v1.4.0; the two items marked (k6 v2) against v2.3.0:

@@ -15,6 +15,8 @@ module "grafana" {
   table_name                = aws_dynamodb_table.items.name
   reserved_concurrency      = var.reserved_concurrency
   provisioned_concurrency   = var.provisioned_concurrency
+  anonymous_enabled         = var.anonymous_enabled
+  web_acl_name              = "${var.project}-anonymous"
 }
 
 # Creates this project's k6 project, so /env down destroys it with its uploaded tests and run

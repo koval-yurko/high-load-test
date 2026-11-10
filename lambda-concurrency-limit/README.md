@@ -39,7 +39,7 @@ URLs come from `terraform output`, never from this file.
 | Is traffic arriving? | Grafana dashboard → row 1 → **Requests** |
 | What is answered, and how? | Grafana dashboard → row 1 → **4xx and 5xx** |
 
-**Good:** almost all 2xx. A 429 is the per-user limit working (knob 1); it is never a miss.
+**Good:** almost all 2xx. A 429 with the header `x-throttle` is a rate limit working (knob 1); it is never a miss. A 429 without it is a failure.
 
 **Bad:** a run of 5xx. Check [3. What is the bottleneck?](#3-what-is-the-bottleneck) first: a
 throttled Lambda answers 500 for a capacity reason, not a code bug.
@@ -133,20 +133,66 @@ profile to chase a passing run.
 |---|---|---|---|---|
 | 0. Calibrate | two edits: `otel_enabled = false`, apply, `--config-only`, run; then `true`, apply, `--config-only`, run. Then freeze thresholds and rates | `otel_enabled = false`, then `true` | **yes**, after each apply | `constant`, low rate, once per edit |
 | 1. Baseline | none; reserved 20, no per-user limit | — | no | `discovery`, `constant`, `noisy-neighbour` |
-| 2. Knob 1 | per-user rate limit | `user_rate_limit_rps = <L>` | no | `noisy-neighbour` |
+| 2. Knob 1 | rate limits per tier | `user_rate_limit_rps = <requests per second per key>`, `anonymous_enabled = true` with `anonymous_rate_limit = <requests per address per window>` | no | `noisy-neighbour`, `tiers` |
 | 3. Knob 2 | reserved concurrency | `reserved_concurrency = 100` | no | `constant` at about 300 RPS (not C = 100's 404 RPS capacity), then `discovery` |
-| 4. Knob 3 | provisioned concurrency | `provisioned_concurrency = <N>` | no | `spike` |
+| 4. Knob 3 | provisioned concurrency | `provisioned_concurrency = <warm instances>` | no | `spike` |
+| 5. Knob 4 | DynamoDB read capacity | `max_read_request_units = <reads per second>` (on-demand cap), or `billing_mode = "PROVISIONED"` with `read_capacity = <reads per second>` | no | `discovery`: the RPS where `ddb throttles` first rises |
 
-`L` and `N` come from the capacity model (`npm run capacity` in `service/`), not from guessing. `N` is
-the Erlang B concurrency for the spike peak at B ≤ 0.5%, and at most `reserved_concurrency`.
+The rate limits and the warm-instance count come from measured runs, not from guessing. Run
+`discovery` and take the highest RPS where the SLO still holds; set the limits below it. The warm-instance count is the number of requests in flight at the spike peak, and at most
+`reserved_concurrency`.
 **Knob 3 barely moves attainment.** It buys the cold-start tail (p99 and max), not the average, and the
 spike is not a scaling-rate test: the AWS-documented scaling rate of 1,000 environments per 10 seconds
 (AWS "Lambda scaling behavior", from the spec's sources; not measured here) cannot show at a ceiling
 of 252. Set `provisioned_concurrency` back to 0 right after phase 4.
 
-DynamoDB capacity (provisioned RCU, `max_read_request_units`, `sdk_max_attempts`) is **exploration**,
-outside this sequence. Every comparison runs on-demand; exploration rows say `exploration` and are
-never compared with knob rows.
+**Knob 4 shows where DynamoDB, not Lambda, sets the RPS ceiling.** The ceiling is about the read cap divided
+by the read units one request uses (`consumed RCU` divided by the request count of a run gives that
+cost; `/reports` costs the most). Below it the cap changes nothing. Above it requests fail with 500 and
+`ReadThrottleEvents` rises. Fix: raise the cap, or set `max_read_request_units = null` (on-demand, no cap).
+Rows with a cap or `PROVISIONED` say `exploration` and are compared only with each other, never with
+the knob 1 to 3 rows, which run on-demand with no cap. `sdk_max_attempts` stays exploration.
+
+## What each test proves
+
+Knobs live in `infra/main/dev.tfvars`. A 429 **with** `x-throttle` means a rate limit worked. A bare
+429 and every 5xx are failures. Apply a knob first, then run the profile.
+
+| knob | variable | what it limits | client sees |
+|---|---|---|---|
+| normal user limit | `user_rate_limit_rps` | requests per second per normal key | 429 + `x-throttle: apigw` |
+| anonymous limit | `anonymous_enabled`, `anonymous_rate_limit`, `anonymous_window_seconds` | requests per address per window (WAF) | 429 + `x-throttle: waf` |
+| Lambda concurrency | `reserved_concurrency` | parallel executions | 500; CloudWatch `Throttles` |
+| DynamoDB capacity | `billing_mode`, `read_capacity`, `max_read_request_units` | reads per second | 500; CloudWatch `ReadThrottleEvents` |
+| warm Lambdas | `provisioned_concurrency` | cold starts only | none, only slower |
+
+**Authorised limit (normal keys).** Set `user_rate_limit_rps = 20`, apply, then
+`./scripts/upload-k6.sh --only tiers --tiers normal,noisy --normal-rate 10 --noisy-rate 60 --run`.
+Pass: `rate_limited{tier:noisy}` is high, `rate_limited{tier:normal}` is 0, the normal SLO holds. Each key has its own limit.
+
+**Anonymous limit.** Set `anonymous_enabled = true`, `anonymous_rate_limit = 60`, window 60 (1 request
+per second per address). Run `--tiers anonymous --anon-rate 2`: expect `rate_limited{tier:anonymous}`
+and 429 with `waf`. Run `--anon-rate 0.5`: expect about 0. Blocking starts about 27 requests late
+(measured 2026-11-10), so do not use a limit under 60 for a precise test. Set `anonymous_enabled =
+false` afterwards: the WAF bills while it exists.
+
+**DynamoDB as the bottleneck.** Set `max_read_request_units = 10` in `dev.tfvars` (a cap on on-demand
+reads, not tested yet; `null` means no cap) and apply. Run `constant` above what the cap allows. Expect `ReadThrottleEvents`
+above 0 and 500 responses; `/reports` reads the most. Fix: raise or remove the cap, or use
+`PROVISIONED` with a higher `read_capacity`. A recordable run needs 0 DynamoDB throttles, so this is an
+exploration row.
+
+**Reserved concurrency as the bottleneck.** Set `reserved_concurrency = 20`, apply, run `constant` or
+`discovery` above about 90 RPS (20 slots at about 0.22 s mean duration). Expect `Throttles` above 0 and
+500 responses, not 429. Fix: set it back to 100.
+
+**Choosing the callers.** `tiers.js` takes a rate per caller, not a VU count. Choose who sends:
+- `--tiers normal,noisy,anonymous` (a comma list): authorised users are `normal` and `noisy`, keyless
+  callers are `anonymous`. `--tiers anonymous` sends only keyless requests.
+- `--normal-callers N` (1 to 4 keyed users) and `--anon-callers N` (keyless addresses, default 20).
+  One address at a high rate (`--anon-callers 1 --anon-rate 5`) shows the WAF limit most clearly.
+- `--normal-rate` (10), `--noisy-rate` (60) and `--anon-rate` (1) are per caller.
+The VUs come from the rate, with caps 20, 20 and 30 (at most 100 in total).
 
 ## Configuration notes that bite
 
@@ -160,6 +206,13 @@ never compared with knob rows.
   `dropped_iterations` fails the run and the service did not cause it. So knob 2 runs at about
   300 RPS, not C = 100's 404 RPS capacity, and the spike peak is at most about 80 RPS (each request
   in the cold-start head holds a VU for about 1 s, against the surge scenario's 80 VUs). Details in [`loadtest.md`](loadtest.md).
+- **`anonymous_ip_source = "forwarded"` is a test setting.** The WAF rule then counts the first address
+  in `X-Forwarded-For`, and the client controls that address: a real client can dodge the limit by
+  changing the header. It stays on only so k6 can act as 20 callers. `"source"` counts the real address.
+- **A WAF count is approximate.** The window is 60 s or more, the minimum limit is 10 per window, and
+  blocking starts some seconds late, so a few extra requests pass. The WAF bills while it exists:
+  about 6 USD per month (ACL 5 + rule 1), 0.20 USD per day, plus 0.60 USD per million requests (US East
+  list price, 2026-11-10). `anonymous_enabled = false` except while measuring.
 - **Usage-plan throttling is best-effort.** AWS: usage plan limits "are not hard limits". The per-user
   limit can let a few extra requests through. `noisy-neighbour` is invalid if the judged user got any
   429.
@@ -276,7 +329,7 @@ Set the dashboard time range to the run's window.
 
 ## Phase 4 — Improve: per-user rate limit (knob 1)
 
-Set `user_rate_limit_rps = <L>` in `dev.tfvars`, then:
+Set `user_rate_limit_rps = <requests per second per key>` in `dev.tfvars`, then:
 
 ```bash
 terraform -chdir=infra/main plan  -var-file=dev.tfvars
@@ -292,7 +345,7 @@ Re-run `noisy-neighbour` with the same rates. Same scripts, same thresholds.
 ## Phase 6 — Improve: reserved, then provisioned concurrency (knobs 2 and 3)
 
 Knob 2: `reserved_concurrency = 100`, plan, apply (approval gate). Knob 3, last:
-`provisioned_concurrency = <N>`, plan, apply (approval gate), `./scripts/deploy-service.sh --config-only` to
+`provisioned_concurrency = <warm instances>`, plan, apply (approval gate), `./scripts/deploy-service.sh --config-only` to
 wait for READY (a full deploy rebuilds, publishes a new version and re-allocates provisioned
 concurrency), then run `spike`; its peak is at most about 80 RPS (see the VU note above). Set it back to 0 and apply (approval gate) straight after.
 
@@ -317,6 +370,8 @@ aws resourcegroupstaggingapi get-resources --region eu-central-1 \
   --query 'ResourceTagMappingList[].ResourceARN' --output table
 
 aws cloudwatch list-dashboards --region eu-central-1 --dashboard-name-prefix lambda-concurrency-limit
+
+aws wafv2 list-web-acls --scope REGIONAL --region eu-central-1 --query 'WebACLs[?starts_with(Name, `lambda-concurrency-limit`)].Name'   # must be empty: WAF bills while it exists
 ```
 
 The dashboard list must be empty: the dashboard is untagged, so the tag query cannot see it. Then the

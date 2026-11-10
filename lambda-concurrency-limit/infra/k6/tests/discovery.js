@@ -11,7 +11,7 @@ const STEP_SECONDS = Number(__ENV.STEP_SECONDS || 120);
 const WARMUP = Number(__ENV.WARMUP_SECONDS || 60);
 
 // The last step whose slo_met and slo_available both pass is the measured capacity at
-// this reserved concurrency; compare it with `npm run capacity`. The run stops once the
+// this reserved concurrency; set the rate limits from it. The run stops once the
 // whole-run availability is clearly gone.
 const scenarios = {
   warmup: {
@@ -25,6 +25,9 @@ const scenarios = {
 const thresholds = {
   ...gate('window:step'),
   slo_available: [{ threshold: `rate>=${AVAILABILITY_RATE}`, abortOnFail: true, delayAbortEval: '60s' }],
+  // A 4xx counts as available, so a wrong or missing API key (403) never trips the gate above.
+  // Not one request met the SLO after the warmup: the setup is broken, so stop at once.
+  slo_met: [{ threshold: 'rate>0', abortOnFail: true, delayAbortEval: '60s' }],
 };
 // Each step is gated by its own scenario tag, so `scenario:rps_N` shows where it broke.
 delete thresholds['slo_met{window:step}'];

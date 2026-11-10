@@ -11,7 +11,7 @@ Lambda has no event loop that outlives a request. `service attainment` is droppe
 service-side SLI (the SLO is judged from k6 only).
 
 ```markdown
-| date | profile | infra change | seed | λ target | RPS | k6 attainment (lat / avail) | throttle % | 429 % normal / noisy | p95 fast/std/heavy | p99 fast/std/heavy | Duration avg / export avg | cold starts | consumed RCU | ddb throttles | reserved / provisioned | otel | k6 run |
+| date | profile | infra change | seed | λ target | RPS | k6 attainment (lat / avail) | throttle % | rate-limited % normal / noisy / anonymous | p95 fast/std/heavy | p99 fast/std/heavy | Duration avg / export avg | cold starts | consumed RCU | ddb throttles | reserved / provisioned | otel | k6 run |
 ```
 
 Completeness column: `throttle %`. Derive its field number with
@@ -36,9 +36,6 @@ limit was set wrong, which is a design failure, not a result.
 2. **Pre-run readings.**
    - `terraform -chdir=infra/main output -json knobs` — reserved and provisioned concurrency, otel.
    - `seed-manifest.json` — the seed id for the `seed` column.
-   - Optional: the predicted `A`, `B` and RCU, to compare with the measured knee (not a column):
-     `npm run capacity -- --c <reserved> --d <mean Duration, s> [--rps N] [--target 0.005] [--manifest file]`
-     (run in `service/`; usage line in `service/scripts/capacity.js`).
 
 ## Load-generator sizing
 
@@ -57,6 +54,7 @@ Caps (the Grafana Cloud subscription allows 100 VUs):
 | `constant`, `discovery` | 100 per scenario (scenarios run one after another) |
 | `spike` | 20 base + 80 surge |
 | `noisy-neighbour` | 4 × 12 + 52 |
+| `tiers` | 20 normal + 20 noisy + 30 anonymous (`TIER_VU_CAP` in `lib/tier.js`) |
 
 A run needs rate × mean client latency ≤ the scenario's VUs (requests in flight; the × 2 in `vus()`
 is headroom, not the limit). Past that the generator runs out of VUs and `dropped_iterations` fails
@@ -64,6 +62,9 @@ the run. Record it as failed; the service did not cause it. Consequences: knob 2
 C = 100 at about 300 RPS (about 300 × 0.22 s ≈ 66 in flight), not at C = 100's 404 RPS capacity; the
 spike peak is at most about 80 RPS, because each request in the cold-start head holds a VU for about
 1 s against the surge scenario's 80 VUs.
+
+Start every run with `./scripts/upload-k6.sh --only <profile> <flags>` (it uploads the keys, then runs).
+A bare `k6 cloud run` sends no API key and every request gets 403.
 
 `upload-k6.sh` flags and the `-e` names they set:
 
@@ -77,6 +78,11 @@ spike peak is at most about 80 RPS, because each request in the cold-start head 
 | `spike` | `--peak-rate` | `PEAK_RATE` |
 | `noisy-neighbour` | `--normal-rate` | `NORMAL_RATE` |
 | `noisy-neighbour` | `--noisy-rate` | `NOISY_RATE` |
+| `tiers` | `--normal-rate`, `--noisy-rate` | `NORMAL_RATE`, `NOISY_RATE` (per caller) |
+| `tiers` | `--normal-callers` | `NORMAL_CALLERS` (1 to 4) |
+| `tiers` | `--anon-callers` | `ANON_CALLERS` (default 20) |
+| `tiers` | `--anon-rate` | `ANON_RATE` (per caller, 20 callers) |
+| `tiers` | `--tiers` | `TIERS` (comma list of normal, noisy, anonymous; default all) |
 
 ## Server-side metrics (after the run)
 
@@ -122,7 +128,7 @@ For the run gate, run the last command with `RUN_START` set to 10 minutes ago an
 | `cold starts` | `ColdStarts` Sum, namespace `lambda-concurrency-limit` | custom metric |
 | `consumed RCU` | `ConsumedReadCapacityUnits` Sum | total over the window |
 | `ddb throttles` | `ReadThrottleEvents` Sum | |
-| `429 % normal / noisy`, `p95`, `p99`, `RPS`, `k6 attainment` | k6 summary and run | not CloudWatch; see the skill |
+| `rate-limited % …`, `p95`, `p99`, `RPS`, `k6 attainment` | k6 summary and run | not CloudWatch; see the skill |
 
 What an empty result means:
 

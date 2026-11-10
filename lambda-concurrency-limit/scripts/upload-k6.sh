@@ -5,8 +5,9 @@
 # upload-k6.sh [--rate N] [--base-url URL] [--only NAME] [--check] [--dry-run] [--run]
 #              [--start-rate N] [--max-rate N] [--step-rps N] [--step-seconds N]
 #              [--peak-rate N] [--normal-rate N] [--noisy-rate N]
+#              [--anon-rate N] [--normal-callers N] [--anon-callers N] [--tiers LIST]
 #
-# Puts this project's four load profiles (discovery, constant, spike, noisy-neighbour) into the
+# Puts this project's five load profiles (discovery, constant, spike, noisy-neighbour, tiers) into the
 # Grafana Cloud k6 project, with BASE_URL, the API keys, the seed shape and any rates given baked
 # into each archive, and reads back what the project now holds.
 #
@@ -14,16 +15,19 @@
 #     ./scripts/upload-k6.sh                      # all four, at their provisional default rates
 #     ./scripts/upload-k6.sh --rate <n> --peak-rate <n> --normal-rate <n> --noisy-rate <n>
 #                                                 # the rates frozen after capacity measurement
-#     ./scripts/upload-k6.sh --start-rate 300 --step-rps 100 --max-rate 900 --only discovery --run
+#     ./scripts/upload-k6.sh --start-rate 300 --step-rps 100 --max-rate 900 --only discovery
 #                                                 # discovery from 300 to 900 rps, then start it from here
 #
 # Every profile is uploaded every time: each has provisional default rates, and the rates plan 3
-# freezes come from `npm run capacity`. The archive also carries the six API keys and the seed
+# freezes come from the discovery run. The archive also carries the six API keys and the seed
 # shape, so it holds secrets: a key identifies a test user, and the stack is private.
 #
+# --anon-rate (per caller), --normal-callers (1..4 keyed users), --anon-callers (keyless addresses) and
+# --tiers (a comma list of normal, noisy, anonymous) are tiers.js's ANON_RATE, NORMAL_CALLERS,
+# ANON_CALLERS and TIERS.
 # --rate is constant's RATE; --start-rate, --max-rate, --step-rps and --step-seconds set the discovery
 # steps; --peak-rate is spike's PEAK_RATE; --normal-rate and --noisy-rate are noisy-neighbour's. All
-# are frozen into the archive like BASE_URL. --run starts the one profile named by --only from
+# are frozen into the archive like BASE_URL. --only NAME (with --run implied) starts that profile from
 # this terminal (`k6 cloud run --summary-export`) after the upload, and prints k6's exit code
 # (0 = every threshold held, 99 = at least one breached). It still never applies Terraform.
 #
@@ -75,6 +79,10 @@ STEP_SECONDS=""
 PEAK_RATE=""
 NORMAL_RATE=""
 NOISY_RATE=""
+ANON_RATE=""
+NORMAL_CALLERS=""
+ANON_CALLERS=""
+TIERS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --rate)     RATE="${2:-}";          shift 2 ;;
@@ -90,15 +98,23 @@ while [ $# -gt 0 ]; do
     --peak-rate)    PEAK_RATE="${2:-}";    shift 2 ;;
     --normal-rate)  NORMAL_RATE="${2:-}";  shift 2 ;;
     --noisy-rate)   NOISY_RATE="${2:-}";   shift 2 ;;
-    *) die "unknown flag '$1' (usage: ./scripts/upload-k6.sh [--rate N] [--base-url URL] [--only discovery|constant|spike|noisy-neighbour] [--start-rate N] [--max-rate N] [--step-rps N] [--step-seconds N] [--peak-rate N] [--normal-rate N] [--noisy-rate N] [--run] [--check] [--dry-run])" ;;
+    --anon-rate)    ANON_RATE="${2:-}";    shift 2 ;;
+    --normal-callers) NORMAL_CALLERS="${2:-}"; shift 2 ;;
+    --anon-callers) ANON_CALLERS="${2:-}"; shift 2 ;;
+    --tiers)        TIERS="${2:-}";        shift 2 ;;
+    *) die "unknown flag '$1' (usage: ./scripts/upload-k6.sh [--rate N] [--base-url URL] [--only discovery|constant|spike|noisy-neighbour|tiers] [--start-rate N] [--max-rate N] [--step-rps N] [--step-seconds N] [--peak-rate N] [--normal-rate N] [--noisy-rate N] [--anon-rate N] [--normal-callers N] [--anon-callers N] [--tiers LIST] [--run] [--check] [--dry-run])" ;;
   esac
 done
-case "${ONLY:-discovery}" in discovery|constant|spike|noisy-neighbour) ;; *) die "--only takes discovery, constant, spike or noisy-neighbour, got '$ONLY'" ;; esac
-for pair in "rate:$RATE" "start-rate:$START_RATE" "max-rate:$MAX_RATE" "step-rps:$STEP_RPS" "step-seconds:$STEP_SECONDS" "peak-rate:$PEAK_RATE" "normal-rate:$NORMAL_RATE" "noisy-rate:$NOISY_RATE"; do
+case "${ONLY:-discovery}" in discovery|constant|spike|noisy-neighbour|tiers) ;; *) die "--only takes discovery, constant, spike, noisy-neighbour or tiers, got '$ONLY'" ;; esac
+for pair in "rate:$RATE" "start-rate:$START_RATE" "max-rate:$MAX_RATE" "step-rps:$STEP_RPS" "step-seconds:$STEP_SECONDS" "peak-rate:$PEAK_RATE" "normal-rate:$NORMAL_RATE" "noisy-rate:$NOISY_RATE" "anon-rate:$ANON_RATE" "normal-callers:$NORMAL_CALLERS" "anon-callers:$ANON_CALLERS"; do
   [ -z "${pair#*:}" ] || [[ "${pair#*:}" =~ ^[1-9][0-9]*$ ]] || die "--${pair%%:*} takes a positive whole number, got '${pair#*:}'"
 done
+[ -z "$TIERS" ] || [[ "$TIERS" =~ ^(normal|noisy|anonymous)(,(normal|noisy|anonymous))*$ ]] || die "--tiers takes a comma list of normal, noisy, anonymous, got '$TIERS'"
 [ -z "$START_RATE" ] || [ -z "$MAX_RATE" ] || [ "$START_RATE" -le "$MAX_RATE" ] || die "--start-rate ($START_RATE) is above --max-rate ($MAX_RATE)"
-# --run starts ONE profile; four are uploaded, so say which one to run.
+# --only NAME uploads one profile and runs it: the run must use this archive (it carries the API keys;
+# a bare `k6 cloud run` sends none and every request gets 403). --run is kept for old command lines.
+[ -z "$ONLY" ] || [ "$CHECK" -eq 1 ] || [ "$DRY" -eq 1 ] || RUN=1
+# --run starts ONE profile; the rest are uploaded, so say which one to run.
 [ "$RUN" -eq 0 ] || [ -n "$ONLY" ] || die "--run needs --only discovery|constant|spike|noisy-neighbour"
 [ "$RUN" -eq 0 ] || [ "$CHECK" -eq 0 ] || die "--run and --check do not go together"
 
@@ -282,12 +298,12 @@ KEYS_JSON=$(d terraform -chdir="$PROJECT_DIR/infra/main" output -json 2>/dev/nul
 MANIFEST="$PROJECT_DIR/service/seed-manifest.json"
 [ -f "$MANIFEST" ] || blocked "k6 upload" "service/seed-manifest.json is missing — the table is not seeded from this checkout" \
   "(cd service && TABLE_NAME=<table_name output> direnv exec ../.. npm run seed)" "./scripts/upload-k6.sh"
-ok "6 API keys; seed $(jq -r '.params | "feeds=\(.feeds)x\(.itemsPerFeed) reports=\(.reports)x\(.itemsPerReport)"' "$MANIFEST")"
+ok "$(jq length <<<"$KEYS_JSON") API keys; seed $(jq -r '.params | "feeds=\(.feeds)x\(.itemsPerFeed) reports=\(.reports)x\(.itemsPerReport)"' "$MANIFEST")"
 
-# Which profiles to upload: all four, every time. Rates not given here fall back to the provisional
+# Which profiles to upload: all five, every time. Rates not given here fall back to the provisional
 # defaults in tests/lib/env.js and the profiles, and tag samples rate_source=default -- such a run
 # must not be recorded as a capacity measurement until the rates are frozen with the flags.
-TESTS=(discovery constant spike noisy-neighbour)
+TESTS=(discovery constant spike noisy-neighbour tiers)
 [ -z "$ONLY" ] || TESTS=("$ONLY")
 
 # --- 4. upload ---------------------------------------------------------------
@@ -309,6 +325,10 @@ E_ARGS+=(-e "REPORTS=$(jq -r .params.reports "$MANIFEST")" -e "ITEMS_PER_REPORT=
 [ -n "$PEAK_RATE" ] && E_ARGS+=(-e "PEAK_RATE=$PEAK_RATE")
 [ -n "$NORMAL_RATE" ] && E_ARGS+=(-e "NORMAL_RATE=$NORMAL_RATE")
 [ -n "$NOISY_RATE" ] && E_ARGS+=(-e "NOISY_RATE=$NOISY_RATE")
+[ -n "$ANON_RATE" ] && E_ARGS+=(-e "ANON_RATE=$ANON_RATE")
+[ -n "$NORMAL_CALLERS" ] && E_ARGS+=(-e "NORMAL_CALLERS=$NORMAL_CALLERS")
+[ -n "$ANON_CALLERS" ] && E_ARGS+=(-e "ANON_CALLERS=$ANON_CALLERS")
+[ -n "$TIERS" ] && E_ARGS+=(-e "TIERS=$TIERS")
 true  # the lines above end on `[ ] &&`; a false test must not trip set -e
 # Never print E_ARGS whole: it holds the keys.
 MASKED=$(printf '%s ' "${E_ARGS[@]}" | sed -E 's/(API_KEY_[A-Z0-9_]+=)[^ ]+/\1***/g')

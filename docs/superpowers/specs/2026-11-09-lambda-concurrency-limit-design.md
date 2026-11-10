@@ -45,11 +45,11 @@ All answered by the user on 2026-11-08 and 2026-11-09.
 | # | question | answer |
 |---|---|---|
 | 1 | Front door | **API Gateway REST API** — per-client throttling exists only on REST APIs |
-| 2 | Per-user rate limit | **Yes, as knob 1**: one API key and one usage plan per test user |
+| 2 | Per-user rate limit | **Yes, as knob 1**: one API key and one usage plan per test user. **Amended 2026-11-10** (draft): two keyed usage plans plus a keyless WAF tier, see `2026-11-10-lambda-concurrency-limit-tiered-rate-limits-design.md` |
 | 3 | Database | **DynamoDB**, on-demand for every comparison; capacity is configurable for exploration |
 | 4 | Knobs and order | per-user limit (at reserved concurrency 20), then reserved concurrency 20 → 100, then provisioned concurrency |
 | 5 | SLI | **k6 only**; CloudWatch and traces are evidence, not a second attainment |
-| 6 | Is a per-user 429 a miss? | **No** — the limit working; the SLO is judged over the normal users |
+| 6 | Is a per-user 429 a miss? | **No** — the limit working; the SLO is judged over the normal users. **Amended 2026-11-10** (draft): the rule covers every tier and a rate-limit 429 carries the header `x-throttle`, see `2026-11-10-lambda-concurrency-limit-tiered-rate-limits-design.md` |
 | 7 | Queue for writes (SQS) | **No** |
 | 8 | Step Functions as a "wait for a free Lambda" layer | **No** |
 | 9 | Arrival process | **Random (Poisson) arrivals**, so measurements match Erlang B |
@@ -365,6 +365,8 @@ Rates and step sizes come from `capacity.js` after calibration and are passed th
 flags; once frozen, a profile does not change.
 
 ### 6.4 The per-user limit (knob 1)
+
+> **Amended 2026-11-10 (draft):** knob 1 becomes three limits (normal, partner, anonymous) and the sizing rule below adds all of them. See `2026-11-10-lambda-concurrency-limit-tiered-rate-limits-design.md`, section 6.
 
 Simulated 2026-11-09 (random arrivals into a token bucket of rate 12 RPS):
 

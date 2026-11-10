@@ -65,6 +65,98 @@ locals {
   }
 }
 
+# The anonymous tier: a keyless copy of each route under /public (spec section 4.1). A usage plan
+# counts a call only when the method needs a key, and a method that does not ignores any key sent,
+# so the keyless routes are separate resources. The handler strips the /public prefix.
+locals {
+  anon = var.anonymous_enabled ? 1 : 0
+}
+
+resource "aws_api_gateway_resource" "public" {
+  count       = local.anon
+  rest_api_id = aws_api_gateway_rest_api.app.id
+  parent_id   = aws_api_gateway_rest_api.app.root_resource_id
+  path_part   = "public"
+}
+
+resource "aws_api_gateway_resource" "public_items" {
+  count       = local.anon
+  rest_api_id = aws_api_gateway_rest_api.app.id
+  parent_id   = aws_api_gateway_resource.public[0].id
+  path_part   = "items"
+}
+
+resource "aws_api_gateway_resource" "public_items_pk" {
+  count       = local.anon
+  rest_api_id = aws_api_gateway_rest_api.app.id
+  parent_id   = aws_api_gateway_resource.public_items[0].id
+  path_part   = "{pk}"
+}
+
+resource "aws_api_gateway_resource" "public_items_sk" {
+  count       = local.anon
+  rest_api_id = aws_api_gateway_rest_api.app.id
+  parent_id   = aws_api_gateway_resource.public_items_pk[0].id
+  path_part   = "{sk}"
+}
+
+resource "aws_api_gateway_resource" "public_feeds" {
+  count       = local.anon
+  rest_api_id = aws_api_gateway_rest_api.app.id
+  parent_id   = aws_api_gateway_resource.public[0].id
+  path_part   = "feeds"
+}
+
+resource "aws_api_gateway_resource" "public_feeds_pk" {
+  count       = local.anon
+  rest_api_id = aws_api_gateway_rest_api.app.id
+  parent_id   = aws_api_gateway_resource.public_feeds[0].id
+  path_part   = "{pk}"
+}
+
+resource "aws_api_gateway_resource" "public_reports" {
+  count       = local.anon
+  rest_api_id = aws_api_gateway_rest_api.app.id
+  parent_id   = aws_api_gateway_resource.public[0].id
+  path_part   = "reports"
+}
+
+resource "aws_api_gateway_resource" "public_reports_pk" {
+  count       = local.anon
+  rest_api_id = aws_api_gateway_rest_api.app.id
+  parent_id   = aws_api_gateway_resource.public_reports[0].id
+  path_part   = "{pk}"
+}
+
+locals {
+  public_routes = var.anonymous_enabled ? {
+    fast     = aws_api_gateway_resource.public_items_sk[0].id
+    standard = aws_api_gateway_resource.public_feeds_pk[0].id
+    heavy    = aws_api_gateway_resource.public_reports_pk[0].id
+  } : {}
+}
+
+resource "aws_api_gateway_method" "public" {
+  for_each = local.public_routes
+
+  rest_api_id      = aws_api_gateway_rest_api.app.id
+  resource_id      = each.value
+  http_method      = "GET"
+  authorization    = "NONE"
+  api_key_required = false # the anonymous tier; the WAF rule limits it per address
+}
+
+resource "aws_api_gateway_integration" "public" {
+  for_each = local.public_routes
+
+  rest_api_id             = aws_api_gateway_rest_api.app.id
+  resource_id             = each.value
+  http_method             = aws_api_gateway_method.public[each.key].http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = aws_lambda_alias.live.invoke_arn
+}
+
 resource "aws_api_gateway_method" "get" {
   for_each = local.routes
 
@@ -105,6 +197,9 @@ resource "aws_api_gateway_deployment" "app" {
       local.routes,
       [for m in aws_api_gateway_method.get : m.id],
       [for i in aws_api_gateway_integration.get : i.id],
+      aws_api_gateway_gateway_response.throttled.response_parameters,
+      [for m in aws_api_gateway_method.public : m.id],
+      [for i in aws_api_gateway_integration.public : i.id],
     ]))
   }
 
@@ -154,6 +249,19 @@ resource "aws_api_gateway_usage_plan" "users" {
       rate_limit  = var.user_rate_limit_rps
       burst_limit = 2 * var.user_rate_limit_rps # random arrivals bunch (spec, the knob 1 simulation)
     }
+  }
+}
+
+# A throttled request gets 429 from API Gateway whichever limit it crossed (usage plan or stage).
+# The header marks it as a limit working; k6 counts only marked 429s as rate limited
+# (infra/k6/tests/lib/tier.js). A Lambda or DynamoDB capacity problem is a 500, never a 429.
+resource "aws_api_gateway_gateway_response" "throttled" {
+  rest_api_id   = aws_api_gateway_rest_api.app.id
+  response_type = "THROTTLED"
+  status_code   = "429"
+
+  response_parameters = {
+    "gatewayresponse.header.x-throttle" = "'apigw'"
   }
 }
 

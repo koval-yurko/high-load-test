@@ -27,6 +27,18 @@ variable "table_name" {
   type = string
 }
 
+variable "anonymous_enabled" {
+  description = "Adds the rate-limiting row (WAF blocked requests) to the dashboard."
+  type        = bool
+  default     = false
+}
+
+variable "web_acl_name" {
+  description = "The WAF web ACL name, a dimension of the BlockedRequests metric. Used only when anonymous_enabled."
+  type        = string
+  default     = ""
+}
+
 variable "reserved_concurrency" {
   description = "Drawn as the ceiling line on the concurrency panel."
   type        = number
