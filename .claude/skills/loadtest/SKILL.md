@@ -151,6 +151,11 @@ project's header starts with the same spine:
 | date | profile | infra change | RPS | k6 attainment | service attainment | budget burn x | p95 fast/std/heavy | db ms | cpu ms | EL lag p99 | <project columns> | $/hr |
 ```
 
+Beside the row, write the finding as a picture (CLAUDE.md, "Write results as pictures, not
+paragraphs"): one chart or small table with a one-line headline, a legend table for definitions, one
+`Not measured:` line. No explanatory paragraphs. If you catch yourself writing a third sentence,
+draw it instead.
+
 Never carry one project's columns into another's `results.md`: an empty cell for a metric that does
 not apply is not a result.
 

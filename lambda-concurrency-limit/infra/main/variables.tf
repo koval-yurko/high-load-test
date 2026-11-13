@@ -37,13 +37,23 @@ variable "provisioned_concurrency" {
   }
 }
 
-variable "user_rate_limit_rps" {
-  description = "Knob 1. Per-API-key throttle on the users usage plan (normal-1..4, noisy). 0 = no throttle. Burst is 2 x rate (spec: random arrivals need it). Takes effect at apply."
+variable "user_rate_limit_requests" {
+  description = "Knob 1. Requests per API key per window on the users usage plan (normal-1..4, noisy). 0 = no throttle. API Gateway has no fixed window: this becomes a token bucket (rate = requests / window, burst = requests), so a key can send up to about twice this in one window. Takes effect at apply."
   type        = number
   default     = 0
   validation {
-    condition     = var.user_rate_limit_rps >= 0 && floor(var.user_rate_limit_rps) == var.user_rate_limit_rps
-    error_message = "user_rate_limit_rps must be a whole number >= 0."
+    condition     = var.user_rate_limit_requests >= 0 && floor(var.user_rate_limit_requests) == var.user_rate_limit_requests
+    error_message = "user_rate_limit_requests must be a whole number >= 0."
+  }
+}
+
+variable "user_rate_limit_window_seconds" {
+  description = "Knob 1. The window, in seconds, that user_rate_limit_requests is spread over. Any positive whole number (a token bucket has no fixed windows)."
+  type        = number
+  default     = 60
+  validation {
+    condition     = var.user_rate_limit_window_seconds > 0 && floor(var.user_rate_limit_window_seconds) == var.user_rate_limit_window_seconds
+    error_message = "user_rate_limit_window_seconds must be a whole number > 0."
   }
 }
 

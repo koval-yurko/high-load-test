@@ -1,7 +1,9 @@
 # lambda-concurrency-limit — Lambda concurrency as the binding constraint
 
 - **Date:** 2026-11-09
-- **Status:** **approved** (2026-11-09, by the user, after reviewing the written spec). Every design
+- **Status:** **complete** (2026-11-14, marked done by the user; provisioned concurrency and reserved
+  concurrency 100 were not run — see `lambda-concurrency-limit/results.md`). Earlier status:
+  **approved** (2026-11-09, by the user, after reviewing the written spec). Every design
   section was approved in the terminal on 2026-11-08 and 2026-11-09. Plans 1–3 are written as the
   work reaches them. Corrected during plan 2 (2026-11-09): region, load zone, VU cap, alias
   versions, Grafana SLO rows — see the marked paragraphs.

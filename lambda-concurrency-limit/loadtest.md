@@ -123,7 +123,7 @@ For the run gate, run the last command with `RUN_START` set to 10 minutes ago an
 
 | column | source | rule |
 |---|---|---|
-| `throttle %` | `Throttles` Sum, `Invocations` Sum | `Throttles ÷ (Throttles + Invocations) × 100`. Throttled requests are in neither `Invocations` nor `Errors`, so the denominator is the sum |
+| `throttle %` | `Throttles` Sum (Lambda), `Count` Sum (API Gateway) | `Throttles ÷ Count × 100`, whole run. `Count` is every request the clients sent, so a per-key limit that sheds requests at the gateway does not shrink the denominator. Rows before 2026-11-12 used `Throttles ÷ (Throttles + Invocations)` (marked †) |
 | `Duration avg / export avg` | `Duration` Average, `PostRuntimeExtensionsDuration` Average | milliseconds; export is the OTel extension's flush time after the handler returns |
 | `cold starts` | `ColdStarts` Sum, namespace `lambda-concurrency-limit` | custom metric |
 | `consumed RCU` | `ConsumedReadCapacityUnits` Sum | total over the window |

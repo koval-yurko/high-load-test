@@ -2,7 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-- **Status:** **partially executed (on hold)** (2026-11-09) — executed subagent-driven, one commit
+- **Status:** **complete** (2026-11-14, marked done by the user). The platform apply, the `infra/main`
+  apply and the runs recorded in `lambda-concurrency-limit/results.md` followed the history below.
+  Not run: provisioned concurrency (knob 3) and reserved concurrency 100.
+  *History (2026-11-09), when the plan was* **partially executed (on hold)** — executed subagent-driven, one commit
   for the whole plan (the user's instruction; no per-task commits). **Done:** Tasks 1–10, each
   reviewed (Tasks 1, 6, 7, 9 and 10 needed one fix round), and Task 11 steps 1–2 (the
   `platform/tfc.tf` line; `platform` plan: 2 to add, 0 to change, 0 to destroy). A final whole-branch

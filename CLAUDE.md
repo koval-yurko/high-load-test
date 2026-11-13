@@ -81,8 +81,8 @@ version and moves the alias, Terraform ignores both, and a setting frozen into a
 scenario something else again. Sharing one script across projects would mean a flag per platform,
 which is exactly the coupling the rest of this section forbids. Only the output helpers are shared,
 from the root `scripts/lib.sh` (sourced as `../../scripts/lib.sh`). No project script may run
-`terraform apply`: the `permissions.ask` rules match on command text, so an apply buried in a script
-is an apply that never reaches the approval gate.
+`terraform apply`: an apply buried in a script is an apply nobody sees coming, so it skips the
+approval step of the plan and the `env` skill.
 
 This layout was chosen in
 `docs/superpowers/specs/2026-09-02-ecs-dynamodb-rps-restructure-design.md` (section 4); the working
@@ -322,9 +322,11 @@ Verified against the installed k6 v2.3.0 (and v1.4.0 before it):
   **97** when the run was aborted for any other reason (user, system, timeout, script error). Capture the code off the k6
   command itself — behind a pipe you get the pipe's status instead.
 
-`.claude/settings.json` allows Bash broadly (`"allow": ["Bash"]`), but `terraform apply` and
-`terraform destroy` are listed under `permissions.ask`, so they prompt — `ask` outranks `allow`.
-**This is the only protection that is actually wired.** Do not move apply/destroy out of `ask`.
+`.claude/settings.json` allows Bash broadly (`"allow": ["Bash"]`), and `terraform apply` and
+`terraform destroy` run **without a permission prompt**. They were under `permissions.ask` until
+2026-11-14; the user removed that gate on purpose, so do not re-add it unprompted. The only
+remaining gate is the conversational one: plans and the `env` skill still stop for approval
+before an apply or destroy.
 
 `.claude/hooks/guard-terraform.sh` is a stronger guard — it matches apply/destroy in any spelling
 (`-chdir=`, env prefixes, after a `&&`) and returns `deny` for `-auto-approve`, and a hook decision
@@ -333,13 +335,8 @@ Claude Code does not auto-discover scripts in `.claude/hooks/`; activating it me
 `PreToolUse` entry pointing at it. Treat the script as available and unused, not as a guard in
 force.
 
-Two things therefore weaken the gate, and both are easy to miss. A local
-`.claude/settings.local.json` setting `permissions.defaultMode` to `bypassPermissions` turns off the
-`ask` prompts entirely — that file is gitignored and per-machine, so a session can be running
-without any terraform gate while this file says otherwise. And the sole remaining protection is a
-permission prompt, which means **an unattended or auto-approving session has no mechanical guard
-against AWS spend at all.** Check `/hooks` and your permission mode before a session that will
-touch infrastructure.
+So **no session has a mechanical guard against AWS spend.** An apply or destroy happens as soon as
+the command runs.
 
 ## Working commands
 
@@ -392,6 +389,22 @@ Verified locally: Node 22.13, npm 10.9, Terraform 1.14, AWS CLI 2.23, k6 2.3, Do
 - A Lambda project sends random arrivals by thinning a `constant-arrival-rate` executor (4 × the
   rate, each iteration sends with p = 0.25), so throttles match Erlang B; even arrivals understate
   them.
+
+### Write results as pictures, not paragraphs
+
+`<project>/results.md` is read to understand a run at a glance. Every finding is one chart or one
+small table, with a headline of at most one line above it (20 words). Rules:
+
+- **No explanatory paragraphs.** If a mechanism needs explaining, draw it (a text diagram or a
+  two-column table), do not describe it. A section holds at most 3 lines of prose in total.
+- **Compare A against B in one block**, same scale, units and block size stated in the title
+  (`1 block = 20 requests`). Never make the reader hold two charts in mind.
+- **Definitions go in a legend table** (`column | meaning | source`), not in running text.
+- **One caveat line per section**, starting `Not measured:`. Name what was not read; do not argue.
+- A chart must show only figures read in that session; mark inferred values `(inferred)` in the
+  chart itself.
+
+The `/loadtest` skill applies this when it records a run.
 
 ## Database notes
 

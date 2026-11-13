@@ -36,6 +36,15 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$CLAUDE_ENV_FILE\" ] && cd \"$CLAUDE_PROJECT_DIR\" && direnv export bash >> \"$CLAUDE_ENV_FILE\" 2>/dev/null; exit 0",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -54,12 +63,6 @@
   "permissions": {
     "allow": [
       "Bash"
-    ],
-    "ask": [
-      "Bash(terraform apply*)",
-      "Bash(terraform -chdir=* apply*)",
-      "Bash(terraform destroy*)",
-      "Bash(terraform -chdir=* destroy*)"
     ],
     "deny": [
       "Bash(aws secretsmanager get-secret-value*)",

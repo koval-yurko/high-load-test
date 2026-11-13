@@ -133,7 +133,7 @@ profile to chase a passing run.
 |---|---|---|---|---|
 | 0. Calibrate | two edits: `otel_enabled = false`, apply, `--config-only`, run; then `true`, apply, `--config-only`, run. Then freeze thresholds and rates | `otel_enabled = false`, then `true` | **yes**, after each apply | `constant`, low rate, once per edit |
 | 1. Baseline | none; reserved 20, no per-user limit | — | no | `discovery`, `constant`, `noisy-neighbour` |
-| 2. Knob 1 | rate limits per tier | `user_rate_limit_rps = <requests per second per key>`, `anonymous_enabled = true` with `anonymous_rate_limit = <requests per address per window>` | no | `noisy-neighbour`, `tiers` |
+| 2. Knob 1 | rate limits per tier | `user_rate_limit_requests = <requests per key per window>` with `user_rate_limit_window_seconds`, `anonymous_enabled = true` with `anonymous_rate_limit = <requests per address per window>` | no | `noisy-neighbour`, `tiers` |
 | 3. Knob 2 | reserved concurrency | `reserved_concurrency = 100` | no | `constant` at about 300 RPS (not C = 100's 404 RPS capacity), then `discovery` |
 | 4. Knob 3 | provisioned concurrency | `provisioned_concurrency = <warm instances>` | no | `spike` |
 | 5. Knob 4 | DynamoDB read capacity | `max_read_request_units = <reads per second>` (on-demand cap), or `billing_mode = "PROVISIONED"` with `read_capacity = <reads per second>` | no | `discovery`: the RPS where `ddb throttles` first rises |
@@ -160,13 +160,13 @@ Knobs live in `infra/main/dev.tfvars`. A 429 **with** `x-throttle` means a rate 
 
 | knob | variable | what it limits | client sees |
 |---|---|---|---|
-| normal user limit | `user_rate_limit_rps` | requests per second per normal key | 429 + `x-throttle: apigw` |
+| normal user limit | `user_rate_limit_requests`, `user_rate_limit_window_seconds` | requests per normal key per window (a token bucket: rate = requests / window, burst = requests) | 429 + `x-throttle: apigw` |
 | anonymous limit | `anonymous_enabled`, `anonymous_rate_limit`, `anonymous_window_seconds` | requests per address per window (WAF) | 429 + `x-throttle: waf` |
 | Lambda concurrency | `reserved_concurrency` | parallel executions | 500; CloudWatch `Throttles` |
 | DynamoDB capacity | `billing_mode`, `read_capacity`, `max_read_request_units` | reads per second | 500; CloudWatch `ReadThrottleEvents` |
 | warm Lambdas | `provisioned_concurrency` | cold starts only | none, only slower |
 
-**Authorised limit (normal keys).** Set `user_rate_limit_rps = 20`, apply, then
+**Authorised limit (normal keys).** Set `user_rate_limit_requests = 1200` and `user_rate_limit_window_seconds = 60` (20 per second), apply, then
 `./scripts/upload-k6.sh --only tiers --tiers normal,noisy --normal-rate 10 --noisy-rate 60 --run`.
 Pass: `rate_limited{tier:noisy}` is high, `rate_limited{tier:normal}` is 0, the normal SLO holds. Each key has its own limit.
 
@@ -329,7 +329,7 @@ Set the dashboard time range to the run's window.
 
 ## Phase 4 — Improve: per-user rate limit (knob 1)
 
-Set `user_rate_limit_rps = <requests per second per key>` in `dev.tfvars`, then:
+Set `user_rate_limit_requests = <requests per key per window>` with `user_rate_limit_window_seconds` in `dev.tfvars`, then:
 
 ```bash
 terraform -chdir=infra/main plan  -var-file=dev.tfvars

@@ -244,10 +244,11 @@ resource "aws_api_gateway_usage_plan" "users" {
   }
 
   dynamic "throttle_settings" {
-    for_each = var.user_rate_limit_rps > 0 ? [1] : []
+    for_each = var.user_rate_limit_requests > 0 ? [1] : []
     content {
-      rate_limit  = var.user_rate_limit_rps
-      burst_limit = 2 * var.user_rate_limit_rps # random arrivals bunch (spec, the knob 1 simulation)
+      # A token bucket: the full allowance can arrive at once (burst), then it refills evenly over the window.
+      rate_limit  = var.user_rate_limit_requests / var.user_rate_limit_window_seconds
+      burst_limit = var.user_rate_limit_requests
     }
   }
 }

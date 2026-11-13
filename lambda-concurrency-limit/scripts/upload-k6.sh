@@ -106,9 +106,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "${ONLY:-discovery}" in discovery|constant|spike|noisy-neighbour|tiers) ;; *) die "--only takes discovery, constant, spike, noisy-neighbour or tiers, got '$ONLY'" ;; esac
-for pair in "rate:$RATE" "start-rate:$START_RATE" "max-rate:$MAX_RATE" "step-rps:$STEP_RPS" "step-seconds:$STEP_SECONDS" "peak-rate:$PEAK_RATE" "normal-rate:$NORMAL_RATE" "noisy-rate:$NOISY_RATE" "anon-rate:$ANON_RATE" "normal-callers:$NORMAL_CALLERS" "anon-callers:$ANON_CALLERS"; do
+for pair in "rate:$RATE" "start-rate:$START_RATE" "max-rate:$MAX_RATE" "step-rps:$STEP_RPS" "step-seconds:$STEP_SECONDS" "peak-rate:$PEAK_RATE" "normal-rate:$NORMAL_RATE" "noisy-rate:$NOISY_RATE" "normal-callers:$NORMAL_CALLERS" "anon-callers:$ANON_CALLERS"; do
   [ -z "${pair#*:}" ] || [[ "${pair#*:}" =~ ^[1-9][0-9]*$ ]] || die "--${pair%%:*} takes a positive whole number, got '${pair#*:}'"
 done
+# --anon-rate is per address, so 0.5 (one request every 2 s) is a valid rate; tiers.js reads it as a number.
+[ -z "$ANON_RATE" ] || [[ "$ANON_RATE" =~ ^([1-9][0-9]*|0?\.[0-9]*[1-9][0-9]*|[1-9][0-9]*\.[0-9]+)$ ]] || die "--anon-rate takes a positive number, got '$ANON_RATE'"
 [ -z "$TIERS" ] || [[ "$TIERS" =~ ^(normal|noisy|anonymous)(,(normal|noisy|anonymous))*$ ]] || die "--tiers takes a comma list of normal, noisy, anonymous, got '$TIERS'"
 [ -z "$START_RATE" ] || [ -z "$MAX_RATE" ] || [ "$START_RATE" -le "$MAX_RATE" ] || die "--start-rate ($START_RATE) is above --max-rate ($MAX_RATE)"
 # --only NAME uploads one profile and runs it: the run must use this archive (it carries the API keys;

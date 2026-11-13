@@ -4,7 +4,8 @@
 - **Amended 2026-11-10:** the `partner` tier is removed (decisions 4 and 6 and the tier table say so).
   Two tiers remain: authorised (`normal`, `noisy`) and anonymous. Sections below that mention partners
   are historical.
-- **Status:** **approved** (2026-11-10, by the user, after reviewing the written spec). The user chose
+- **Status:** **complete** (2026-11-14; the plan is complete and the tiers were measured, see
+  `lambda-concurrency-limit/results.md`). Earlier status: **approved** (2026-11-10, by the user, after reviewing the written spec). The user chose
   the direction the same day (three tiers, per-IP WAF limit for anonymous callers, k6 spoofing
   `X-Forwarded-For`) and answered the sizing and switch questions (decisions 6 to 9). Plan:
   `docs/superpowers/plans/2026-11-10-lambda-concurrency-limit-tiered-rate-limits.md`.
