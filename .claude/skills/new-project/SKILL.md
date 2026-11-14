@@ -45,6 +45,7 @@ survive `terraform destroy`.
   slo.yaml              SLO source of truth (window 7d..14d — see its comments in either sibling)
   loadtest.md           the project side of /loadtest — see the loadtest skill, "The project contract"
   results.md            run ledger, header copied from loadtest.md, no rows until a run exists
+  verify/               the project side of /verify: target.sh + feature map — see the verify skill
   README.md             written with /readme
   infra/main/           ROOT MODULE
   infra/grafana/        module: dashboards, SLO, alert rules (part generated from slo.yaml)
@@ -91,6 +92,29 @@ file. `ecs-rds-postgres-pool`'s `DB_PASSWORD` is the worked example.
 - `options.cloud.distribution` is Frankfurt (`amazon:de:frankfurt`); `preAllocatedVUs` stays under
   the 100-VU subscription cap; `dropped_iterations: ['count==0']` is a threshold.
 
+**`verify/`** (the project side of `/verify`, `.claude/skills/verify/SKILL.md`). It is required: the
+git pre-commit hook runs `verify.sh lint` on every directory with `infra/main` and refuses the commit
+when `verify/` is missing or broken.
+- **Deployed environment only.** No local launch, no DynamoDB Local, no database container: the user
+  decided this on 2026-11-14 for every project. Recipes call the real `base_url`.
+- Fork the nearest sibling's `verify/` (same header rule as above), then rewrite every recipe for this
+  project's routes. Do not keep a sibling route that this service does not have.
+- `target.sh` is sourced with `$TF_OUT` (`terraform output -json`). It must set `PROBE_PATH` to a
+  seeded record, so `doctor` proves the data path and not only a health route. Set `TABLE_NAME` when
+  there is a DynamoDB table (it turns on `ddb-get`), and `AUTH_HEADER` when the API needs a key. Read
+  every value from an output; add the output to `infra/main/outputs.tf` if it is missing.
+- `README.md`: baseline preconditions (`/env up`, the deploy and seed step, `attach`, `doctor`, no
+  load test running), driving and proof conventions, the feature entry contract, and `## Features`
+  with a link to every feature file.
+- One file per user-facing route or behavior, taken from the route table in `service/src/` and the
+  API resources in `infra/main/`. Exactly these H2s, in order: `Sub-features`,
+  `How to get to it (user POV)`, `Driving it with verify.sh`, `Gotchas`. Each `Driving` section
+  starts with `Preconditions:` and pairs each action with an exact `$V ...` command and the status
+  and body it must return. A write needs a read-back step. A step that needs a knob that is off in
+  `dev.tfvars` says so, and is reported as not run.
+- `verify/target.sh` is not Terraform, so `.terraformignore` may leave it in the upload; it is
+  harmless there.
+
 **Scripts**
 - `deploy-service.sh` is per platform — ECS pushes an image and forces a deployment; Lambda
   publishes a version. Never share one script across projects.
@@ -101,7 +125,8 @@ file. `ecs-rds-postgres-pool`'s `DB_PASSWORD` is the worked example.
 ## 4. The repo-wide files that must name the project
 
 Nothing else outside `<project>/` changes. The git pre-commit hook and the Claude edit hook find the
-root module from the path, so they need no entry.
+root module from the path, and the hook finds every project for its `verify/` lint by `*/infra/main`,
+so they need no entry. The `/verify` skill finds the project by its directory, so it needs none either.
 
 1. **`platform/tfc.tf`** — one line in `local.projects`:
    `"<project>" = { working_directory = "infra/main" }`. This creates the TFC workspace, in remote
@@ -121,6 +146,7 @@ terraform -chdir=$P/infra/main init -backend=false && terraform -chdir=$P/infra/
 (cd $P/service && npm ci && npm test && npm run slo:check)
 for f in $P/infra/k6/tests/*.js; do k6 inspect "$f" >/dev/null || echo "BROKEN: $f"; done
 grep -rn 'Project *=' $P/infra --include='*.tf'   # only in default_tags, nowhere per resource
+.claude/skills/verify/scripts/verify.sh lint $P   # verify/ contract; the pre-commit hook runs it too
 ```
 
 `k6 inspect` loads each profile with its imports and evaluates `options` and `thresholds` without
@@ -128,6 +154,12 @@ sending a request — the cheap check before a cloud run costs VU-hours.
 
 After the platform apply: `./scripts/04-verify-setup.sh <project>` runs `terraform init` against the
 real workspace. Then `terraform plan -var-file=dev.tfvars`, reviewed, and `/env up <project>`.
+
+After the first `/env up` and `deploy-service.sh`, the project is not ready until `/verify <project>`
+has run once on the live environment: `attach`, `doctor` with only `ok` lines, and at least one
+feature file driven end to end, with its evidence. Fix the map, not the service, when a recipe is
+wrong. When the service is wrong, keep the step and record the failure in that feature's `Gotchas`.
+`lint` proves only the shape of the files; this run proves that the recipes are true.
 
 ## 6. Commit
 

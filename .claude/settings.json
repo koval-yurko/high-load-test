@@ -2,7 +2,16 @@
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,
     "vercel@claude-plugins-official": false,
-    "postman@claude-plugins-official": false
+    "postman@claude-plugins-official": false,
+    "pstack@cursor-plugins": true
+  },
+  "extraKnownMarketplaces": {
+    "cursor-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "cursor/plugins"
+      }
+    }
   },
   "hooks": {
     "PreToolUse": [

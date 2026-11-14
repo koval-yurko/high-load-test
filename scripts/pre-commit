@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # git pre-commit: terraform fmt -check on the staged .tf/.tfvars files, then validate every root
 # module they belong to (the same check .claude/hooks/terraform-check.sh runs after Claude's edits,
-# here for every commit, whoever writes it); and k6 inspect on every load profile whose directory
-# has a staged change. Installed as a symlink by scripts/03-wire-repo.sh —
+# here for every commit, whoever writes it); k6 inspect on every load profile whose directory
+# has a staged change; and the /verify contract lint on every project. Installed as a symlink by scripts/03-wire-repo.sh —
 # git does not clone hooks. Bypass once with `git commit --no-verify`.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 1
@@ -23,6 +23,18 @@ for t in $(git diff --cached --name-only --diff-filter=ACMR -- '*/infra/k6/tests
       fail=1
     }
   done
+done
+
+# --- verify maps -------------------------------------------------------------------------------
+# Every project (a directory with infra/main) must carry the /verify contract: verify/target.sh and
+# a feature map. Checked on every commit, not only when verify/ is staged, so a new project cannot
+# land without one. Static and offline; see .claude/skills/verify/SKILL.md.
+for m in */infra/main/; do
+  [ -d "$m" ] || continue
+  out=$(.claude/skills/verify/scripts/verify.sh lint "${m%/infra/main/}" 2>&1) || {
+    printf 'pre-commit: %s\n' "$out" | grep -v ' ok$' >&2
+    fail=1
+  }
 done
 
 # --- terraform ---------------------------------------------------------------------------------

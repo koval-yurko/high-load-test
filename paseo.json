@@ -1,5 +1,5 @@
 {
   "worktree": {
-    "setup": "set -e\nsrc=\"$PASEO_SOURCE_CHECKOUT_PATH\"\ncd \"$PASEO_WORKTREE_PATH\"\nfor f in .env .claude/settings.local.json; do\n  if [ -f \"$src/$f\" ]; then cp \"$src/$f\" \"$f\"; else echo \"worktree setup: $src/$f missing, skipped\" >&2; fi\ndone\ndirenv allow .\nfor d in */service; do\n  if [ -f \"$d/package-lock.json\" ]; then (cd \"$d\" && npm ci --no-audit --no-fund); fi\ndone"
+    "setup": "set -e\ncd \"$PASEO_WORKTREE_PATH\"\nif [ -f \"$PASEO_SOURCE_CHECKOUT_PATH/.env\" ]; then cp \"$PASEO_SOURCE_CHECKOUT_PATH/.env\" .env; else echo \"worktree setup: $PASEO_SOURCE_CHECKOUT_PATH/.env missing, skipped\" >&2; fi\ndirenv allow .\nfor d in */service; do\n  if [ -f \"$d/package-lock.json\" ]; then (cd \"$d\" && npm ci --no-audit --no-fund); fi\ndone"
   }
 }
