@@ -1,7 +1,7 @@
 # ecs-dynamodb-rps-ceiling — design
 
 - **Date:** 2026-08-29
-- **Status:** **partially executed** — revision 4 (2026-09-01).
+- **Status:** **complete** (2026-11-19, marked done by the user after hands-on runs; the tasks listed as not done below were not executed as written, and no ledger rows were added for them). State before closure: partially executed — revision 4 (2026-09-01).
   **Built and in force:** §4 infrastructure, §5 service, §6 capacity and cost model, §7 SLO,
   §8 load profiles and run protocol.
   **Not executed:** §9, the deliverable — no load test has been run against this environment, and

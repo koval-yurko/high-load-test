@@ -46,7 +46,7 @@ Phases 5–7 there are now marked history.
 
 ---
 
-## Status — **draft**, 2026-09-02. Ready to start.
+## Status — **complete** (2026-11-19, marked done by the user after hands-on runs; the tasks listed as not done below were not executed as written, and no ledger rows were added for them). State before closure: draft, 2026-09-02, never started.
 
 > **Renamed and re-pathed 2026-09-03 by the restructure plan**
 > (`docs/superpowers/plans/2026-09-03-ecs-dynamodb-rps-restructure.md`): the project is now

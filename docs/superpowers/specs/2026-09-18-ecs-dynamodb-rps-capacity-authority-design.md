@@ -1,7 +1,7 @@
 # ecs-dynamodb-rps — provisioned capacity is set by hand, and the model advises
 
 - **Date:** 2026-09-18
-- **Status:** **approved** (2026-09-18, by the user) and **executed the same day** — the change is
+- **Status:** **complete** (2026-11-19, marked done by the user). Before closure: approved (2026-09-18, by the user) and **executed the same day** — the change is
   four files and needed no plan; see §6 for what was run.
 - **Project directory:** `ecs-dynamodb-rps/`
 - **Amends:** reverses the arrangement in which `read_capacity` / `write_capacity` were *generated*

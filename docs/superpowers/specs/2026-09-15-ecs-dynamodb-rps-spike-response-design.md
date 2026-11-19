@@ -1,7 +1,7 @@
 # ecs-dynamodb-rps — spike response from a floor of one task
 
 - **Date:** 2026-09-15
-- **Status:** **approved** (2026-09-15, by the user). Plan:
+- **Status:** **complete** (2026-11-19, marked done by the user). Before closure: approved (2026-09-15, by the user). Plan:
   `docs/superpowers/plans/2026-09-15-ecs-dynamodb-rps-spike-response.md`.
 - **Correction, 2026-09-15, after approval and before execution:** §5 and §6 originally required the
   shed threshold to sit *below* the scale-out threshold. That is backwards and would have broken the

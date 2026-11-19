@@ -1,7 +1,7 @@
 # ecs-dynamodb-rps — relaxing the latency objective so a burn is legible
 
 - **Date:** 2026-09-09
-- **Status:** **in progress** — `slo.yaml` and every generated and hand-maintained output are
+- **Status:** **complete** (2026-11-19, marked done by the user after hands-on runs; the tasks listed as not done below were not executed as written, and no ledger rows were added for them). State before closure: in progress — `slo.yaml` and every generated and hand-maintained output are
   changed and the test suite passes (98/98). **Not applied.** `terraform -chdir=infra/main apply`
   and `./scripts/upload-k6.sh` have not been run, so Grafana Cloud and the k6 project still carry
   the 99% / 99.9% configuration. *(2026-09-14: that holds only until the next `/env down`, which now

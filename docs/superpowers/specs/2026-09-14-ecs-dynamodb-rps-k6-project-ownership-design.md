@@ -1,7 +1,7 @@
 # ecs-dynamodb-rps — the k6 project lives in the project stack
 
 - **Date:** 2026-09-14
-- **Status:** approved — every open question was answered on the review page
+- **Status:** **complete** (2026-11-19, marked done by the user). Before closure: approved — every open question was answered on the review page
   <https://claude.ai/code/artifact/7bd700f1-df4e-4651-8f4c-fc0185808f68> on 2026-09-14. Plan:
   `docs/superpowers/plans/2026-09-14-ecs-dynamodb-rps-k6-project-ownership.md`.
 - **Project directory:** `ecs-dynamodb-rps/` (plus the lines of `platform/` that own its k6 project)

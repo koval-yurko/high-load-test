@@ -1,7 +1,7 @@
 # repo — replace the graffiti code map with graphify
 
 - **Date:** 2026-09-19
-- **Status:** **approved** (2026-09-19) — the user directed proceeding to the implementation plan.
+- **Status:** **complete** (2026-11-19, marked done by the user). Before closure: approved (2026-09-19) — the user directed proceeding to the implementation plan.
   The §12 probe has been run and resolved. Nothing has been installed, changed or deleted in the
   repo itself.
 - **Scope:** repo-wide tooling. This is not a project directory; like `platform/`, it is one of the

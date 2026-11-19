@@ -1,6 +1,6 @@
 # ecs-dynamodb-rps — spike response from a floor of one task
 
-- **Status:** partially executed (on hold) — updated 2026-09-16. **Done** on branch
+- **Status:** **complete** (2026-11-19, marked done by the user after hands-on runs; the tasks listed as not done below were not executed as written, and no ledger rows were added for them). State before closure: partially executed (on hold) — updated 2026-09-16. **Done** on branch
   `spike-response/ecs-dynamodb-rps`: Tasks 1, 2, 5, 7 and 9 (all code, documentation and reviewed
   `plan` output; nothing applied by them). **Attempted and failed:** Task 3 — the 2026-09-15 apply
   created the AWS and Grafana resources but stopped on a 409 Conflict creating the k6 project,

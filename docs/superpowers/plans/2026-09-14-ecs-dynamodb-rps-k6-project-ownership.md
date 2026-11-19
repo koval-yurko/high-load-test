@@ -1,6 +1,6 @@
 # ecs-dynamodb-rps — move the k6 project into the project stack
 
-- **Status:** partially executed (on hold) — Tasks 1–6 done: committed as one commit and pushed to
+- **Status:** **complete** (2026-11-19, marked done by the user after hands-on runs; the tasks listed as not done below were not executed as written, and no ledger rows were added for them). State before closure: partially executed (on hold) — Tasks 1–6 done: committed as one commit and pushed to
   `origin/master`. **Blocking the rest:** Tasks 7–8 are applies, which stop for approval by repo rule;
   and the main checkout must pull the commit first (Task 6's after-merge items).
 - **Spec:** `docs/superpowers/specs/2026-09-14-ecs-dynamodb-rps-k6-project-ownership-design.md`
