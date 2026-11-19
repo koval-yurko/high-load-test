@@ -1,0 +1,1 @@
+{"nodes": [{"id": "ecs_dynamodb_rps_verify_feed", "label": "Read a feed (ecs-dynamodb-rps)", "file_type": "document", "source_file": "ecs-dynamodb-rps/verify/feed.md", "_origin": "semantic"}], "edges": [], "hyperedges": []}
